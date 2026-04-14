@@ -1,0 +1,10 @@
+[package]
+name = "qlang-core"
+version.workspace = true
+edition.workspace = true
+description = "Core graph data structures for QLANG"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

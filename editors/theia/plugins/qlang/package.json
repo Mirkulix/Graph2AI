@@ -1,0 +1,87 @@
+{
+  "name": "qlang",
+  "displayName": "QLANG",
+  "description": "QLANG language support - Graph-based AI-to-AI Programming with LSP",
+  "version": "0.2.0",
+  "publisher": "mirkulix",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:qlang"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "qlang",
+        "aliases": [
+          "QLANG"
+        ],
+        "extensions": [
+          ".qlang"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "qlang",
+        "scopeName": "source.qlang",
+        "path": "./syntaxes/qlang.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "qlang.run",
+        "title": "QLANG: Run Current File",
+        "icon": "$(play)"
+      },
+      {
+        "command": "qlang.repl",
+        "title": "QLANG: Open REPL"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "qlang.run",
+        "key": "ctrl+shift+r",
+        "mac": "cmd+shift+r",
+        "when": "editorLangId == qlang"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "qlang.run",
+          "when": "editorLangId == qlang",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "type": "object",
+      "title": "QLANG",
+      "properties": {
+        "qlang.lsp.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable QLANG Language Server for diagnostics, completions, and hover info"
+        },
+        "qlang.lsp.path": {
+          "type": "string",
+          "default": "qlang-cli",
+          "description": "Path to the qlang-cli binary (must support 'lsp' subcommand)"
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "@types/vscode": "^1.110.0",
+    "typescript": "^6.0.2",
+    "vscode-languageclient": "^9.0.1"
+  }
+}

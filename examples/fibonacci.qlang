@@ -1,0 +1,12 @@
+// Fibonacci sequence in QLANG
+fn fib(n) {
+  if n <= 1 {
+    return n
+  }
+  return fib(n - 1) + fib(n - 2)
+}
+
+print("Fibonacci sequence:")
+for i in 0..10 {
+  print("fib(" + str(i) + ") = " + str(fib(i)))
+}

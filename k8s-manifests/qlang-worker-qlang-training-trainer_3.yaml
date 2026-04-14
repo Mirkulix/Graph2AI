@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qlang-worker-qlang-training-trainer_3
+  namespace: qlang-system
+  labels:
+    app: qlang
+    job: qlang-training
+    role: trainer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: qlang
+      job: qlang-training
+      worker: trainer_3
+  template:
+    metadata:
+      labels:
+        app: qlang
+        job: qlang-training
+        worker: trainer_3
+        role: trainer
+    spec:
+      serviceAccountName: qlang-worker
+      containers:
+        - name: qlang-node
+          image: mirkulix/qlang:latest
+          command: ["qlang-cli", "agent", "--role", "trainer", "--job", "qlang-training", "--id", "trainer_3"]
+          ports:
+            - containerPort: 9900
+              name: tcp-qlms
+          resources:
+            requests:
+            cpu: "2"
+            memory: "4Gi"
+          env:
+            - name: QLANG_COORDINATOR_URL
+              value: "tcp://qlang-job-qlang-training.qlang-system.svc.cluster.local:9900"

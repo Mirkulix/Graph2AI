@@ -1,0 +1,19 @@
+// IGQK Compression Pipeline
+// Compresses neural network weights to ternary {-1, 0, +1}
+// With formal proof guarantee (Theorem 5.2)
+
+graph igqk_compression {
+  input weights: f32[768, 768]
+  input data: f32[32, 768]
+
+  // Forward pass
+  node hidden = matmul(data, weights)
+  node activated = relu(hidden)
+
+  // IGQK ternary compression with proof
+  node compressed = to_ternary(weights) @proof theorem_5_2
+
+  // Output both original and compressed
+  output activations = activated
+  output ternary_weights = compressed
+}

@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: qlang-job-qlang-training
+  namespace: qlang-system
+  labels:
+    app: qlang
+    job: qlang-training
+spec:
+  clusterIP: None
+  selector:
+    job: qlang-training
+  ports:
+    - name: tcp-qlms
+      port: 9900
+      targetPort: 9900

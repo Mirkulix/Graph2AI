@@ -1,0 +1,38 @@
+{
+    "private": true,
+    "name": "qlang-ide",
+    "version": "0.1.0",
+    "description": "QLANG IDE - AI-to-AI Programming Language",
+    "dependencies": {
+        "@theia/core": "1.70.0",
+        "@theia/editor": "1.70.0",
+        "@theia/filesystem": "1.70.0",
+        "@theia/markers": "1.70.0",
+        "@theia/messages": "1.70.0",
+        "@theia/monaco": "1.70.0",
+        "@theia/navigator": "1.70.0",
+        "@theia/preferences": "1.70.0",
+        "@theia/process": "1.70.0",
+        "@theia/terminal": "1.70.0",
+        "@theia/workspace": "1.70.0",
+        "@theia/plugin-ext": "1.70.0",
+        "@theia/plugin-ext-vscode": "1.70.0",
+        "@theia/search-in-workspace": "1.70.0",
+        "@theia/outline-view": "1.70.0",
+        "@theia/output": "1.70.0",
+        "@theia/mini-browser": "1.70.0"
+    },
+    "devDependencies": {
+        "@theia/cli": "1.70.0"
+    },
+    "scripts": {
+        "prepare": "yarn build",
+        "build": "theia build --mode production",
+        "build:dev": "theia build --mode development",
+        "start": "theia start --plugins=local-dir:./plugins --hostname=0.0.0.0 --port=3000",
+        "watch": "theia build --watch --mode development"
+    },
+    "theia": {
+        "target": "browser"
+    }
+}

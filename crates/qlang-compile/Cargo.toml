@@ -1,0 +1,24 @@
+[package]
+name = "qlang-compile"
+version.workspace = true
+edition.workspace = true
+description = "QLANG graph compiler - Graph to machine code via LLVM"
+
+[dependencies]
+qlang-core = { workspace = true }
+qlang-runtime = { workspace = true }
+qlang-agent = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+inkwell = { version = "0.5", features = ["llvm18-0"], optional = true }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[features]
+default = ["llvm"]
+llvm = ["inkwell"]
+
+[[bin]]
+name = "qlang-cli"
+path = "src/main.rs"

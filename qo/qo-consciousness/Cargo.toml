@@ -1,0 +1,12 @@
+[package]
+name = "qo-consciousness"
+version.workspace = true
+edition.workspace = true
+description = "QO consciousness — state machine + broadcast stream"
+
+[dependencies]
+qo-values = { path = "../qo-values" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }

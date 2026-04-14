@@ -1,0 +1,161 @@
+[package]
+name = "qlang"
+version = "0.1.0"
+edition = "2021"
+description = "QLANG - Graph-based AI-to-AI programming language"
+
+[workspace]
+members = [
+    "crates/qlang-core",
+    "crates/qlang-compile",
+    "crates/qlang-runtime",
+    "crates/qlang-agent",
+    "crates/qlang-python",
+    "crates/qlang-sdk",
+    "qo/qo-server",
+    "qo/qo-llm",
+    "qo/qo-memory",
+    "qo/qo-consciousness",
+    "qo/qo-values",
+    "qo/qo-agents",
+    "qo/qo-evolution",
+    "qo/qo-simulation",
+    "qo/qo-telegram",
+    "qo/qo-embed",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "QLANG - Graph-based AI-to-AI programming language"
+
+[workspace.dependencies]
+qlang-core = { path = "crates/qlang-core" }
+qlang-compile = { path = "crates/qlang-compile", default-features = false }
+qlang-runtime = { path = "crates/qlang-runtime" }
+qlang-agent = { path = "crates/qlang-agent" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+axum = { version = "0.8", features = ["ws"] }
+tower-http = { version = "0.6", features = ["fs", "cors"] }
+reqwest = { version = "0.12", features = ["json"] }
+redb = "2"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+tokio = { version = "1.51.0", features = ["full"] }
+
+[dependencies]
+qlang-core = { workspace = true }
+qlang-compile = { workspace = true }
+qlang-runtime = { workspace = true }
+qlang-agent = { workspace = true }
+bincode = "1.3"
+rayon = "1.10"
+serde = { workspace = true }
+serde_json = { workspace = true }
+inkwell = { version = "0.5", features = ["llvm18-0"], optional = true }
+tokio = { version = "1.51.0", features = ["full"] }
+qo-embed = { path = "qo/qo-embed" }
+qo-server = { path = "qo/qo-server" }
+qo-telegram = { path = "qo/qo-telegram" }
+qo-memory = { path = "qo/qo-memory" }
+qo-agents = { path = "qo/qo-agents" }
+qo-consciousness = { path = "qo/qo-consciousness" }
+qo-evolution = { path = "qo/qo-evolution" }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+axum = { workspace = true }
+
+[[bin]]
+name = "qo"
+path = "src/main.rs"
+
+[[bin]]
+name = "qlang"
+path = "src/cli.rs"
+
+[[bin]]
+name = "gpu_train"
+path = "src/gpu_train_bin.rs"
+
+[[bin]]
+name = "classify-request"
+path = "src/classify_request.rs"
+
+[features]
+default = ["llvm"]
+llvm = ["inkwell", "qlang-compile/llvm"]
+gpu = ["qlang-runtime/gpu"]
+cuda = ["qlang-runtime/cuda"]
+mlx = ["qlang-runtime/mlx"]
+
+[[example]]
+name = "hello_qlang"
+path = "examples/hello_qlang.rs"
+
+[[example]]
+name = "neural_network"
+path = "examples/neural_network.rs"
+
+[[example]]
+name = "jit_compile"
+path = "examples/jit_compile.rs"
+
+[[example]]
+name = "benchmark"
+path = "examples/benchmark.rs"
+
+[[example]]
+name = "quantum_training"
+path = "examples/quantum_training.rs"
+
+[[example]]
+name = "train_model"
+path = "examples/train_model.rs"
+
+[[example]]
+name = "train_autograd"
+path = "examples/train_autograd.rs"
+
+[[example]]
+name = "train_mnist"
+path = "examples/train_mnist.rs"
+
+[[example]]
+name = "transformer"
+path = "examples/transformer.rs"
+
+[[example]]
+name = "full_pipeline"
+path = "examples/full_pipeline.rs"
+
+[[example]]
+name = "full_mnist_pipeline"
+path = "examples/full_mnist_pipeline.rs"
+
+[[example]]
+name = "onnx_import_compress"
+path = "examples/onnx_import_compress.rs"
+
+[[example]]
+name = "benchmark_qlang_vs_json"
+path = "examples/benchmark_qlang_vs_json.rs"
+
+[[example]]
+name = "benchmark_binary_format"
+path = "examples/benchmark_binary_format.rs"
+
+[[example]]
+name = "hybrid_llm_router"
+path = "examples/hybrid_llm_router.rs"
+
+[[example]]
+name = "benchmark_suite"
+path = "examples/benchmark_suite.rs"
+
+[[example]]
+name = "multi_agent"
+path = "examples/multi_agent.rs"

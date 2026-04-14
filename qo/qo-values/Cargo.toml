@@ -1,0 +1,8 @@
+[package]
+name = "qo-values"
+version.workspace = true
+edition.workspace = true
+description = "QO values system — 5 core values scoring"
+
+[dependencies]
+serde = { workspace = true }

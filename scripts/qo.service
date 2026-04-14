@@ -1,0 +1,18 @@
+[Unit]
+Description=QO — QLANG + Orbit AI Companion
+After=network.target
+
+[Service]
+Type=simple
+User=mirkulix
+WorkingDirectory=/home/mirkulix/neoqlang/.worktrees/qo-phase1/qlang
+Environment=LLVM_SYS_180_PREFIX=/opt/llvm18
+Environment=QO_PORT=4747
+Environment=RUST_LOG=info
+EnvironmentFile=-/home/mirkulix/.openclaw/.env
+ExecStart=/home/mirkulix/neoqlang/.worktrees/qo-phase1/qlang/target/release/qo
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

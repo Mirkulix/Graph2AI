@@ -1,0 +1,1387 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QLANG</title>
+<style>
+:root{--void:#0A0A0F;--surface:#12121A;--border:#1E1E2E;--text:#E0E0E0;--dim:#6B7280;--cyan:#00D4FF;--green:#00FF88;--magenta:#FF00FF;--orange:#FF8800;--red:#FF3366;--blue:#0080FF}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--void);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,sans-serif;font-size:14px;height:100vh;overflow:hidden}
+button{cursor:pointer;font-family:'SF Mono',Menlo,Consolas,monospace;border:none;font-size:11px;font-weight:600;padding:10px 16px;transition:all .2s;letter-spacing:1px;text-transform:uppercase}
+select,input[type=number]{background:var(--void);color:var(--text);border:1px solid var(--border);padding:6px 8px;font-size:12px;font-family:'SF Mono',Menlo,Consolas,monospace}
+select:focus,input:focus{border-color:var(--cyan);outline:none;box-shadow:0 0 6px rgba(0,212,255,.15)}
+textarea{background:var(--void);color:var(--text);border:1px solid var(--border);padding:10px;font-size:12px;font-family:'SF Mono',Menlo,Consolas,monospace;resize:none;width:100%;line-height:1.6}
+textarea:focus{border-color:var(--cyan);outline:none;box-shadow:0 0 6px rgba(0,212,255,.15)}
+
+/* Layout - Fullscreen Node Canvas Vision */
+.app{position:relative;width:100vw;height:100vh;overflow:hidden;background:var(--void);}
+
+/* Header (Floating) */
+.hdr{position:absolute;top:0;left:0;right:0;height:40px;z-index:100;background:rgba(10,10,15,0.8);backdrop-filter:blur(10px);border-bottom:1px solid rgba(0,212,255,0.2);display:flex;align-items:center;padding:0 20px;gap:16px}
+.hdr h1{font-family:'SF Mono',Menlo,Consolas,monospace;font-size:14px;font-weight:700;color:var(--cyan);letter-spacing:3px;text-shadow:0 0 8px rgba(0,212,255,.4)}
+.hdr .sep{width:1px;height:18px;background:var(--border)}
+.status{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--dim);font-family:'SF Mono',Menlo,Consolas,monospace}
+.dot{width:6px;height:6px;border-radius:50%}
+.dot.ok{background:var(--green);box-shadow:0 0 6px var(--green)}
+.dot.off{background:var(--red);box-shadow:0 0 4px rgba(255,51,102,.3)}
+.hdr-right{margin-left:auto;display:flex;gap:10px;align-items:center}
+.hdr a{color:var(--dim);font-size:11px;text-decoration:none;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:.5px;padding:4px 8px;border:1px solid transparent;transition:all .2s}
+.hdr a:hover{color:var(--cyan);border-color:var(--border)}
+.hdr a:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+
+/* Feed (Floating Bottom Terminal) */
+.feed{position:absolute;bottom:30px;left:260px;right:400px;height:200px;z-index:90;overflow-y:auto;padding:12px 16px;background:rgba(10,10,15,0.9);backdrop-filter:blur(8px);border:1px solid rgba(0,212,255,0.2);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,0.5)}
+.feed::-webkit-scrollbar{width:3px}
+.feed::-webkit-scrollbar-track{background:var(--void)}
+.feed::-webkit-scrollbar-thumb{background:var(--border)}
+
+/* Messages */
+.msg{padding:8px 12px;margin-bottom:6px;border-left:2px solid var(--border);font-family:'SF Mono',Menlo,Consolas,monospace;font-size:13px;line-height:1.6;animation:fadeIn .2s ease}
+@media(prefers-reduced-motion:reduce){.msg,.live-chart,.swarm-grid,.pipe-steps,.iter-card{animation:none}}
+@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+.msg .time{color:var(--cyan);font-size:11px;margin-right:8px;text-shadow:0 0 6px rgba(0,212,255,.3)}
+.msg .tag{display:inline-block;padding:1px 6px;border-radius:2px;font-size:10px;font-weight:600;margin-right:6px;letter-spacing:.5px;background:rgba(0,212,255,.1);border:1px solid rgba(0,212,255,.2);color:var(--cyan)}
+.msg.sys{border-left-color:var(--cyan)} .msg.sys .tag{background:rgba(0,212,255,.08);border-color:rgba(0,212,255,.2);color:var(--cyan)}
+.msg.ai{border-left-color:var(--orange)} .msg.ai .tag{background:rgba(255,136,0,.08);border-color:rgba(255,136,0,.2);color:var(--orange)}
+.msg.train{border-left-color:var(--green)} .msg.train .tag{background:rgba(0,255,136,.08);border-color:rgba(0,255,136,.2);color:var(--green)}
+.msg.igqk{border-left-color:var(--magenta)} .msg.igqk .tag{background:rgba(255,0,255,.08);border-color:rgba(255,0,255,.2);color:var(--magenta)}
+.msg.err{border-left-color:var(--red)} .msg.err .tag{background:rgba(255,51,102,.08);border-color:rgba(255,51,102,.2);color:var(--red)}
+.msg.ok{border-left-color:var(--green)} .msg.ok .tag{background:rgba(0,255,136,.12);border-color:rgba(0,255,136,.25);color:var(--green)}
+.msg.step{border-left-color:var(--orange)} .msg.step .tag{background:rgba(255,136,0,.08);border-color:rgba(255,136,0,.2);color:var(--orange)}
+
+.msg-big{font-size:15px;font-weight:600;padding:12px 16px;margin:10px 0;text-shadow:0 0 6px rgba(0,212,255,.2)}
+.msg-result{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}
+.msg-result .stat{background:var(--surface);border:1px solid var(--border);padding:8px 14px;text-align:center;min-width:80px;position:relative}
+.msg-result .stat::before{content:'';position:absolute;top:-1px;left:-1px;width:8px;height:8px;border-top:1px solid var(--cyan);border-left:1px solid var(--cyan)}
+.msg-result .stat::after{content:'';position:absolute;bottom:-1px;right:-1px;width:8px;height:8px;border-bottom:1px solid var(--cyan);border-right:1px solid var(--cyan)}
+.msg-result .stat .v{font-size:18px;font-weight:700;font-family:'SF Mono',Menlo,Consolas,monospace;text-shadow:0 0 6px rgba(0,212,255,.3)}
+.msg-result .stat .l{font-size:9px;color:var(--dim);text-transform:uppercase;margin-top:2px;letter-spacing:.5px}
+
+/* Sidebar (Floating Right Panel) */
+.side{position:absolute;top:60px;right:20px;bottom:30px;width:360px;z-index:90;background:rgba(18,18,26,0.85);backdrop-filter:blur(12px);border:1px solid rgba(0,212,255,0.2);border-radius:8px;overflow-y:auto;padding:0;box-shadow:0 10px 30px rgba(0,0,0,0.5);display:flex;flex-direction:column;}
+.side::-webkit-scrollbar{width:3px}
+.side::-webkit-scrollbar-track{background:var(--surface)}
+.side::-webkit-scrollbar-thumb{background:var(--border)}
+
+/* Tabs */
+.tabs{display:flex;gap:6px;padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:5}
+.tab-btn{background:transparent;border:1px solid var(--border);color:var(--text);padding:8px 12px;font-family:'SF Mono',Menlo,Consolas,monospace;font-size:11px;letter-spacing:.5px;cursor:pointer}
+.tab-btn.active{border-color:var(--cyan);color:var(--cyan);box-shadow:0 0 8px rgba(0,212,255,.15)}
+
+/* Cards layout */
+.cards{display:grid;grid-template-columns:1fr;gap:12px;padding:8px}
+@media(min-width:1100px){.cards{grid-template-columns:1fr}}
+@media(min-width:1400px){.cards{grid-template-columns:1fr}}
+.panel{border-bottom:1px solid var(--border);padding:16px;position:relative;border-radius:8px;background:var(--surface)}
+.panel::before{content:'';position:absolute;top:-1px;left:-1px;width:12px;height:12px;border-top:2px solid var(--cyan);border-left:2px solid var(--cyan);pointer-events:none;border-top-left-radius:8px}
+.panel::after{content:'';position:absolute;top:-1px;right:-1px;width:12px;height:12px;border-top:2px solid var(--cyan);border-right:2px solid var(--cyan);pointer-events:none;border-top-right-radius:8px}
+.panel h3{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--cyan);margin-bottom:10px;font-family:'SF Mono',Menlo,Consolas,monospace;text-shadow:0 0 6px rgba(0,212,255,.3)}
+.panel .desc{font-size:12px;color:var(--dim);margin-bottom:10px;line-height:1.6}
+.badge{display:inline-block;padding:2px 6px;border:1px solid var(--border);border-radius:6px;font-size:10px;font-family:'SF Mono',Menlo,Consolas,monospace;color:var(--dim)}
+.badge.ok{color:var(--green);border-color:rgba(0,255,136,.3)}
+.badge.err{color:var(--orange);border-color:rgba(255,136,0,.3)}
+
+/* Theme */
+body.light{
+  --void:#f6f7fb;--surface:#ffffff;--border:#e2e6ef;--text:#131722;--dim:#697386;--cyan:#0077ff;--green:#008a4b;--magenta:#a000a0;--orange:#b35c00;--red:#d32f2f;--blue:#0055cc
+}
+
+/* HUD Panels */
+.panel{border-bottom:1px solid var(--border);padding:16px;position:relative}
+.panel::before{content:'';position:absolute;top:-1px;left:-1px;width:12px;height:12px;border-top:2px solid var(--cyan);border-left:2px solid var(--cyan);pointer-events:none}
+.panel::after{content:'';position:absolute;top:-1px;right:-1px;width:12px;height:12px;border-top:2px solid var(--cyan);border-right:2px solid var(--cyan);pointer-events:none}
+.panel h3{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--cyan);margin-bottom:10px;font-family:'SF Mono',Menlo,Consolas,monospace;text-shadow:0 0 6px rgba(0,212,255,.3)}
+.panel .desc{font-size:12px;color:var(--dim);margin-bottom:10px;line-height:1.5}
+.field{margin-bottom:8px}
+.field label{display:block;font-size:10px;color:var(--dim);margin-bottom:4px;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:.5px;text-transform:uppercase}
+.row{display:flex;gap:8px}
+.row>*{flex:1}
+
+/* HUD Buttons */
+.btn-main{width:100%;background:transparent;border:1px solid var(--cyan);color:var(--cyan);padding:10px 16px;font-family:'SF Mono',Menlo,Consolas,monospace;font-weight:600;text-transform:uppercase;letter-spacing:1px;font-size:11px;cursor:pointer;transition:all .2s}
+.btn-main:hover{background:rgba(0,212,255,.1);box-shadow:0 0 12px rgba(0,212,255,.2)}
+.btn-main:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+.btn-main:disabled{opacity:.3;cursor:not-allowed;box-shadow:none}
+.btn-main.running{border-color:var(--green);color:var(--green);animation:hud-pulse 2s infinite}
+.btn-green{width:100%;background:transparent;border:1px solid var(--green);color:var(--green);padding:10px 16px;font-family:'SF Mono',Menlo,Consolas,monospace;font-weight:600;text-transform:uppercase;letter-spacing:1px;font-size:11px;cursor:pointer;transition:all .2s}
+.btn-green:hover{background:rgba(0,255,136,.08);box-shadow:0 0 12px rgba(0,255,136,.2)}
+.btn-green:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+.btn-green:disabled{opacity:.3;cursor:not-allowed;box-shadow:none}
+.btn-green.running{animation:hud-pulse 2s infinite}
+.btn-magenta{width:100%;background:transparent;border:1px solid var(--magenta);color:var(--magenta);padding:10px 16px;font-family:'SF Mono',Menlo,Consolas,monospace;font-weight:600;text-transform:uppercase;letter-spacing:1px;font-size:11px;cursor:pointer;transition:all .2s}
+.btn-magenta:hover{background:rgba(255,0,255,.08);box-shadow:0 0 12px rgba(255,0,255,.2)}
+.btn-magenta:focus-visible{outline:2px solid var(--magenta);outline-offset:2px}
+.btn-magenta:disabled{opacity:.3;cursor:not-allowed;box-shadow:none}
+.btn-magenta.running{animation:hud-pulse 2s infinite}
+.btn-orange{width:100%;background:transparent;border:1px solid var(--orange);color:var(--orange);padding:10px 16px;font-family:'SF Mono',Menlo,Consolas,monospace;font-weight:600;text-transform:uppercase;letter-spacing:1px;font-size:11px;cursor:pointer;transition:all .2s}
+.btn-orange:hover{background:rgba(255,136,0,.08);box-shadow:0 0 12px rgba(255,136,0,.2)}
+.btn-orange:focus-visible{outline:2px solid var(--orange);outline-offset:2px}
+.btn-orange:disabled{opacity:.3;cursor:not-allowed;box-shadow:none}
+.btn-orange.running{animation:hud-pulse 2s infinite}
+
+@keyframes hud-pulse{0%,100%{opacity:1}50%{opacity:.5}}
+@media(prefers-reduced-motion:reduce){.btn-main.running,.btn-green.running,.btn-magenta.running,.btn-orange.running{animation:none}}
+.btn-spinner{display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,.2);border-top-color:currentColor;border-radius:50%;animation:spin .6s linear infinite;margin-right:6px;vertical-align:middle}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* Progress bar */
+.pbar{height:4px;background:var(--border);overflow:hidden;margin:8px 0}
+.pbar .fill{height:100%;background:linear-gradient(90deg,var(--cyan),var(--green));transition:width .3s;width:0%;box-shadow:0 0 8px rgba(0,212,255,.3)}
+.pbar-label{display:flex;justify-content:space-between;font-size:10px;color:var(--dim);font-family:'SF Mono',Menlo,Consolas,monospace}
+
+/* Welcome */
+.welcome{padding:40px;text-align:center;max-width:460px;margin:60px auto}
+.welcome h2{font-size:20px;margin-bottom:8px;font-family:'SF Mono',Menlo,Consolas,monospace;color:var(--cyan);letter-spacing:2px;text-shadow:0 0 10px rgba(0,212,255,.3)}
+.welcome p{color:var(--dim);font-size:13px;line-height:1.6;margin-bottom:16px}
+.welcome .arrow{font-size:28px;color:var(--border)}
+
+/* Live Charts */
+.live-chart{background:var(--surface);border:1px solid var(--border);padding:12px;margin:8px 0;position:relative;animation:fadeIn .3s ease}
+.live-chart::before{content:'';position:absolute;top:-1px;left:-1px;width:10px;height:10px;border-top:2px solid var(--cyan);border-left:2px solid var(--cyan)}
+.live-chart::after{content:'';position:absolute;bottom:-1px;right:-1px;width:10px;height:10px;border-bottom:2px solid var(--cyan);border-right:2px solid var(--cyan)}
+.live-chart canvas{width:100%;height:120px;display:block}
+.live-chart .chart-title{font-size:10px;color:var(--cyan);margin-bottom:6px;font-weight:600;text-transform:uppercase;letter-spacing:1px;font-family:'SF Mono',Menlo,Consolas,monospace}
+.live-chart .chart-legend{display:flex;gap:14px;margin-top:6px;font-size:10px;color:var(--dim);font-family:'SF Mono',Menlo,Consolas,monospace}
+.live-chart .chart-legend span::before{content:'';display:inline-block;width:8px;height:8px;margin-right:4px;vertical-align:middle}
+.live-chart .leg-loss::before{background:var(--orange)}
+.live-chart .leg-acc::before{background:var(--green)}
+.live-chart .leg-best::before{background:var(--magenta)}
+
+/* Swarm grid */
+.swarm-grid{display:flex;flex-wrap:wrap;gap:6px;padding:8px;background:var(--surface);border:1px solid var(--border);margin:8px 0;animation:fadeIn .3s ease}
+.swarm-dot{width:40px;height:40px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;font-family:'SF Mono',Menlo,Consolas,monospace;border:1px solid var(--border);transition:all .3s}
+.swarm-dot.best{border-color:var(--green);box-shadow:0 0 8px rgba(0,255,136,.3)}
+
+/* Pipeline steps */
+.pipe-steps{display:flex;align-items:center;gap:2px;padding:10px 14px;background:var(--surface);border:1px solid var(--border);margin:8px 0;overflow-x:auto;animation:fadeIn .3s ease}
+.pipe-step{padding:6px 10px;font-size:10px;font-weight:600;color:var(--dim);background:var(--void);border:1px solid var(--border);white-space:nowrap;transition:all .3s;font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:.5px}
+.pipe-step.active{color:var(--cyan);border-color:var(--cyan);background:rgba(0,212,255,.06);box-shadow:0 0 8px rgba(0,212,255,.15)}
+.pipe-step.done{color:var(--green);border-color:rgba(0,255,136,.3);background:rgba(0,255,136,.04)}
+.pipe-arrow{color:var(--border);font-size:12px;font-family:'SF Mono',Menlo,Consolas,monospace}
+.pipe-arrow.active{color:var(--cyan)}
+
+/* Autonomous iteration cards */
+.iter-card{background:var(--surface);border:1px solid var(--border);padding:12px;margin:8px 0;display:flex;align-items:center;gap:12px;animation:fadeIn .3s ease}
+.iter-num{width:36px;height:36px;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;font-family:'SF Mono',Menlo,Consolas,monospace;border:1px solid var(--border);flex-shrink:0}
+.iter-num.pass{border-color:var(--green);color:var(--green)}
+.iter-num.fail{border-color:var(--orange);color:var(--orange)}
+.iter-num.win{border-color:var(--green);color:var(--void);background:var(--green);box-shadow:0 0 8px rgba(0,255,136,.3)}
+.iter-body{flex:1;font-size:12px;line-height:1.5;font-family:'SF Mono',Menlo,Consolas,monospace}
+.iter-arch{color:var(--cyan);font-weight:600}
+.iter-metrics{display:flex;gap:10px;margin-top:4px}
+.iter-metric{font-size:11px;color:var(--dim)}
+.iter-metric b{color:var(--text)}
+
+/* Status bar (Floating Bottom) */
+.statusbar{position:absolute;bottom:0;left:0;right:0;background:rgba(10,10,15,0.8);backdrop-filter:blur(5px);border-top:1px solid rgba(0,212,255,0.2);padding:0 16px;height:24px;display:flex;align-items:center;gap:16px;font-family:'SF Mono',Menlo,Consolas,monospace;font-size:10px;color:var(--dim);z-index:100}
+.statusbar .sep{width:1px;height:12px;background:var(--border)}
+.statusbar .val{color:var(--text)}
+
+/* Scanline effect - very subtle */
+.app::before{content:'';position:fixed;top:0;left:0;right:0;bottom:0;pointer-events:none;z-index:999;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.03) 2px,rgba(0,0,0,.03) 4px)}
+/* Graph Node Styles */
+.gnode { position:absolute; background:rgba(18,18,26,0.9); backdrop-filter:blur(8px); border:1px solid rgba(0,212,255,0.4); padding:8px 12px; border-radius:6px; font-family:'SF Mono',Menlo,Consolas,monospace; font-size:11px; cursor:move; user-select:none; box-shadow:0 8px 24px rgba(0,0,0,.6); min-width:120px; z-index:10; transition:border-color .2s, box-shadow .2s; }
+.gnode:hover { border-color:var(--cyan); box-shadow:0 0 15px rgba(0,212,255,.2); }
+.gnode.selected { border-color:var(--cyan); box-shadow:0 0 10px rgba(0,212,255,.3); z-index:20; }
+.gnode.ai-agent { border-color:var(--orange); background:rgba(255,136,0,.05); }
+.gnode.ai-agent .gnode-title { color:var(--orange); border-bottom-color:var(--orange); }
+.gnode.ai-agent .gport { border-color:var(--orange); }
+.gnode.ai-agent .gport:hover { background:var(--orange); }
+.gnode-title { color:var(--cyan); font-weight:700; margin-bottom:6px; border-bottom:1px solid var(--border); padding-bottom:4px; }
+.gport { width:10px; height:10px; background:var(--surface); border:1px solid var(--cyan); border-radius:50%; position:absolute; cursor:crosshair; transition:all .2s; }
+.gport:hover { background:var(--cyan); transform:scale(1.2); }
+.gport.in { left:-5px; top:50%; transform:translateY(-50%); }
+.gport.out { right:-5px; top:50%; transform:translateY(-50%); }
+.gedge { stroke:var(--cyan); stroke-width:2; fill:none; stroke-dasharray:4; animation:dash 1s linear infinite; }
+@keyframes dash { to { stroke-dashoffset: -8; } }
+@media(prefers-reduced-motion:reduce){.app::before{display:none} .gedge{animation:none;stroke-dasharray:none;}}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- Header -->
+  <header class="hdr">
+    <h1>QLANG</h1>
+    <span class="sep"></span>
+    <div class="status"><div class="dot off" id="wsDot"></div><span id="wsLbl">Verbinde...</span></div>
+    <span class="sep"></span>
+    <div class="status"><div class="dot off" id="olDot"></div><span id="olLbl">Ollama...</span></div>
+    <div class="hdr-right">
+      <a href="/docs.html">DOCS</a>
+      <button class="tab-btn" id="btnTheme">Theme</button>
+    </div>
+  </header>
+
+  <!-- FULLSCREEN GRAPH CANVAS (Always visible background) -->
+  <div id="graphContainer" style="position:absolute; top:0; left:0; right:0; bottom:0; overflow:hidden; z-index:1; background-color: var(--void); background-image: radial-gradient(rgba(0,212,255,0.15) 1px, transparent 1px); background-size: 30px 30px;">
+    <div id="graphCanvas" style="width:100vw; height:100vh; position:relative; cursor:grab;">
+      <svg id="graphLines" style="position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none;"></svg>
+    </div>
+  </div>
+
+  <!-- Floating Left Toolbar (Node Palette) -->
+  <div style="position:absolute; top:60px; left:20px; width:220px; z-index:90; background:rgba(18,18,26,0.85); backdrop-filter:blur(12px); border:1px solid rgba(0,212,255,0.2); border-radius:8px; padding:16px; box-shadow:0 10px 30px rgba(0,0,0,0.5);">
+    <h3 style="font-size:11px; color:var(--cyan); margin-bottom:12px; font-family:'SF Mono',monospace; text-transform:uppercase; letter-spacing:1px; text-shadow:0 0 6px rgba(0,212,255,.3)">Nodes</h3>
+    <select id="selNodeType" style="width:100%; margin-bottom:8px;">
+      <option value="Input">Input (Datenquelle)</option>
+      <option value="Linear">Linear (MatMul + Add)</option>
+      <option value="Relu">ReLU (Aktivierung)</option>
+      <option value="Sigmoid">Sigmoid (Aktivierung)</option>
+      <option value="Output">Output (Ergebnis)</option>
+      <option value="AI_Agent" style="color:var(--orange)">AI Agent (Ollama LLM)</option>
+    </select>
+    <button class="btn-main" onclick="addGraphNode()">+ Add Node</button>
+    
+    <div class="row" style="margin-top:8px;">
+      <button class="btn-orange" onclick="clearGraph()">Leeren</button>
+      <button class="btn-green" onclick="compileGraph()">Compile</button>
+    </div>
+    
+    <div style="margin-top:20px; padding-top:16px; border-top:1px dashed rgba(0,212,255,0.2)">
+      <h4 style="font-size:10px; color:var(--orange); margin-bottom:8px; text-transform:uppercase; font-family:'SF Mono',monospace; text-shadow:0 0 6px rgba(255,136,0,.3)">KI-Auto-Builder</h4>
+      <textarea id="aiPrompt" rows="3" placeholder="Z.B.: Baue mir ein einfaches MLP mit Input, Linear, Relu..." style="background:rgba(0,0,0,0.3)"></textarea>
+      <button class="btn-orange" style="margin-top:8px" onclick="askAIToBuild()">KI Graph generieren</button>
+    </div>
+  </div>
+
+  <!-- Floating Bottom Terminal (Live Feed) -->
+  <div class="feed" id="feed">
+    <div class="welcome" id="welcome" style="margin:20px auto; padding:20px">
+      <h2 style="font-size:14px; margin-bottom:4px; color:var(--cyan); text-shadow:0 0 8px rgba(0,212,255,.4)">// QLANG TERMINAL</h2>
+      <p style="font-size:11px; color:var(--dim)">Live Logs & System Output. Waehle eine Aktion im Panel rechts.</p>
+    </div>
+  </div>
+
+  <!-- Right: Actions -->
+  <div class="side">
+    <div class="tabs" id="tabs">
+      <button class="tab-btn active" data-tab="swarm">Schwarm</button>
+      <button class="tab-btn" data-tab="pipeline">Pipeline</button>
+      <button class="tab-btn" data-tab="auto">Autonom</button>
+      <button class="tab-btn" data-tab="provider">Provider</button>
+      <button class="tab-btn" data-tab="code">Code</button>
+      <button class="tab-btn" data-tab="predict">Testen</button>
+    </div>
+    <div class="cards"></div>
+
+    <!-- 1. Schwarm -->
+    <div class="panel" id="panelSwarm" style="display:block">
+      <h3>Schwarm</h3>
+      <div class="desc">6 kleine Sprachmodelle evolvieren sich. Das beste wird gespeichert.</div>
+      <div class="field">
+        <label>Trainingsdaten</label>
+        <select id="selData" style="width:100%">
+          <option value="quick">Eingebaut (schnell, 5 Sek)</option>
+          <option value="data/text/wiki_small.txt">WikiText-2 klein (500 KB)</option>
+          <option value="data/text/wiki2_train.txt">WikiText-2 voll (10 MB)</option>
+        </select>
+      </div>
+      <div class="row">
+        <div class="field"><label>Modelle</label><input type="number" id="inPop" value="6" min="2" max="20" style="width:100%"></div>
+        <div class="field"><label>Generationen</label><input type="number" id="inGen" value="3" min="1" max="20" style="width:100%"></div>
+      </div>
+      <button class="btn-green" id="btnSwarm" onclick="doSwarm()" disabled>Schwarm starten</button>
+      <div class="pbar" id="swarmBar" style="display:none"><div class="fill" id="swarmFill"></div></div>
+      <div class="pbar-label" id="swarmLbl" style="display:none"><span id="swarmL">-</span><span id="swarmR">-</span></div>
+    </div>
+
+    <!-- 2. KI Pipeline -->
+    <div class="panel" id="panelPipeline" style="display:none">
+      <h3>KI Pipeline</h3>
+      <div class="desc">Ollama-LLM entwirft Architektur, QLANG trainiert, LLM bewertet.</div>
+      <div class="field">
+        <label>Aufgabe</label>
+        <textarea id="taskText" rows="2" placeholder="z.B. Baue einen Ziffern-Erkenner">Baue einen Ziffern-Erkenner</textarea>
+      </div>
+      <div class="row">
+        <div class="field"><label>Architekt</label><select id="selArch" style="width:100%"><option>deepseek-r1:1.5b</option></select></div>
+        <div class="field"><label>Evaluator</label><select id="selEval" style="width:100%"><option>llama3.2</option></select></div>
+      </div>
+      <div class="row">
+        <div class="field"><label>Epochen</label><input type="number" id="inEpochs" value="10" min="1" max="50" style="width:100%"></div>
+        <div class="field"><label>Dataset</label><select id="selDataset" style="width:100%"><option value="synthetic">synthetic</option><option value="mnist">mnist</option></select></div>
+      </div>
+      <div class="field" style="display:flex;align-items:center;gap:8px;">
+        <input type="checkbox" id="chkCompress" checked>
+        <label for="chkCompress" style="margin:0;cursor:pointer;">Modell am Ende komprimieren (IGQK)</label>
+      </div>
+      <button class="btn-main" id="btnPipeline" onclick="doPipeline()" disabled>Pipeline starten</button>
+    </div>
+
+    <!-- 3. Autonom -->
+    <div class="panel" id="panelAuto" style="display:none">
+      <h3>Self-Healing QLANG Agent</h3>
+      <div class="desc">Der Agent schreibt QLANG-Code, führt ihn aus und repariert ihn selbst bei Syntax- oder Runtime-Fehlern.</div>
+      <div class="field">
+        <label>Aufgabe</label>
+        <textarea id="autoTaskText" rows="2" placeholder="z.B. Schreibe eine Funktion, die Fibonaccizahlen berechnet">Schreibe eine Funktion, die Fibonaccizahlen berechnet</textarea>
+      </div>
+      <div class="field">
+        <label>Architekt-Modell</label>
+        <select id="autoSelArch" style="width:100%"><option>deepseek-r1:1.5b</option></select>
+      </div>
+      <div class="row">
+        <div class="field"><label>Max Iter</label><input type="number" id="inMaxIter" value="5" min="1" max="20" style="width:100%"></div>
+      </div>
+      <button class="btn-magenta" id="btnAuto" onclick="doAutonomous()" disabled>Autonom starten</button>
+    </div>
+
+    <!-- 4. Provider / API Keys -->
+    <div class="panel" id="panelProvider" style="display:none">
+      <h3>Provider</h3>
+      <div class="desc">Verwalte API Keys (lokal gespeichert in <code>data/config/providers.json</code>).</div>
+      <div class="field"><label>OpenAI API Key</label><input type="password" id="keyOpenAI" placeholder="sk-..." style="width:100%"></div>
+      <div class="field"><label>Anthropic API Key</label><input type="password" id="keyAnth" placeholder="sk-ant-..." style="width:100%"></div>
+      <div class="field"><label>Google Gemini API Key</label><input type="password" id="keyGemini" placeholder="AIza..." style="width:100%"></div>
+      <div class="field"><label>Groq API Key</label><input type="password" id="keyGroq" placeholder="gsk_..." style="width:100%"></div>
+      <div class="field"><label>Azure OpenAI API Key</label><input type="password" id="keyAzure" placeholder="..." style="width:100%"></div>
+      <div class="field"><label>Cohere API Key</label><input type="password" id="keyCohere" placeholder="..." style="width:100%"></div>
+      <div class="field"><label>Mistral API Key</label><input type="password" id="keyMistral" placeholder="..." style="width:100%"></div>
+      <div class="field"><label>HuggingFace API Key</label><input type="password" id="keyHF" placeholder="hf_..." style="width:100%"></div>
+      <div class="field"><label>Together AI API Key</label><input type="password" id="keyTogether" placeholder="..." style="width:100%"></div>
+      <div class="field"><label>Perplexity API Key</label><input type="password" id="keyPerplexity" placeholder="..." style="width:100%"></div>
+      <div class="field"><label>xAI API Key</label><input type="password" id="keyXAI" placeholder="..." style="width:100%"></div>
+      <button class="btn-main" id="btnSaveKeys" onclick="doSaveKeys()">Keys speichern</button>
+      <div id="keyStatus" style="margin-top:8px;font-size:12px;color:#888"></div>
+    </div>
+
+    <!-- 5. Code -->
+    <div class="panel" id="panelCode" style="display:none">
+      <h3>Code</h3>
+      <textarea id="codeText" rows="6" style="font-size:12px">let x: int = 42
+print("Hello QLANG!")
+print("x^2 = " + str(x ** 2))
+
+fn fib(n) {
+  if n <= 1 { return n }
+  return fib(n-1) + fib(n-2)
+}
+
+for i in 0..8 {
+  print("fib(" + str(i) + ") = " + str(fib(i)))
+}</textarea>
+      <button class="btn-orange" id="btnRun" onclick="doRun()" disabled style="margin-top:8px">Ausfuehren</button>
+    </div>
+
+    <!-- 6. Testen (Ziffern-Erkenner) -->
+    <div class="panel" id="panelPredict" style="display:none">
+      <h3>Ziffern-Erkenner (MNIST)</h3>
+      <div class="desc">Zeichne eine Ziffer (0-9) und teste das trainierte Modell.</div>
+      <div style="display:flex;justify-content:center;margin:10px 0;">
+        <canvas id="drawPad" width="280" height="280" style="border:1px solid var(--cyan);background:#000;cursor:crosshair;touch-action:none;"></canvas>
+      </div>
+      <div class="row">
+        <button class="btn-main" id="btnClearPad" onclick="clearPad()">Löschen</button>
+        <button class="btn-green" id="btnPredict" onclick="doPredict()" disabled>Vorhersagen</button>
+      </div>
+      <div id="predResult" style="margin-top:10px;text-align:center;font-size:18px;font-weight:bold;color:var(--green);text-shadow:0 0 6px rgba(0,255,136,.3);min-height:24px;"></div>
+    </div>
+
+    <!-- 7. Predict -->
+    <div class="panel" id="panelPredict" style="display:none">
+      <h3>Vorhersage Testen</h3>
+      <div class="desc">Male eine Ziffer in das weisse Feld.</div>
+      <div class="field" style="margin-bottom:12px">
+        <label>Modell</label>
+        <select id="selPredictModel" style="width:100%"></select>
+      </div>
+      <div style="background:#fff; border-radius:4px; margin-bottom:16px; overflow:hidden; border:2px solid var(--border)">
+        <canvas id="drawCanvas" width="280" height="280" style="display:block; width:100%; cursor:crosshair; touch-action:none"></canvas>
+      </div>
+      <div class="row">
+        <button class="btn-orange" onclick="clearCanvas()">Löschen</button>
+        <button class="btn-green" id="btnPredict" onclick="doPredict()" disabled>Testen</button>
+      </div>
+    </div>
+
+    </div><!-- /cards -->
+  </div>
+
+  <!-- Status bar -->
+  <div class="statusbar">
+    <span>QLANG <span class="val">v2</span></span>
+    <span class="sep"></span>
+    <span>Rust <span class="val">54K</span></span>
+    <span class="sep"></span>
+    <span>Tests <span class="val">855</span></span>
+    <span class="sep"></span>
+    <span>Models <span class="val" id="sbModels">0</span></span>
+    <span class="sep"></span>
+    <span id="sbClock">--:--:--</span>
+  </div>
+
+</div>
+
+<script>
+var ws = null, connected = false;
+
+// ============================================================
+// STATUS BAR CLOCK
+// ============================================================
+(function tick(){
+  var el = document.getElementById('sbClock');
+  if(el) el.textContent = new Date().toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  setTimeout(tick, 1000);
+})();
+
+// ============================================================
+// FEED
+// ============================================================
+function addMsg(cls, tag, html) {
+  var w = document.getElementById('welcome');
+  if (w) w.remove();
+  var feed = document.getElementById('feed');
+  var d = document.createElement('div');
+  d.className = 'msg ' + cls;
+  var t = new Date().toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  d.innerHTML = '<span class="time">' + t + '</span><span class="tag">' + tag + '</span>' + html;
+  feed.appendChild(d);
+  feed.scrollTop = feed.scrollHeight;
+}
+
+function addBig(cls, html) {
+  var w = document.getElementById('welcome');
+  if (w) w.remove();
+  var feed = document.getElementById('feed');
+  var d = document.createElement('div');
+  d.className = 'msg msg-big ' + cls;
+  d.innerHTML = html;
+  feed.appendChild(d);
+  feed.scrollTop = feed.scrollHeight;
+}
+
+function addResult(stats) {
+  var feed = document.getElementById('feed');
+  var d = document.createElement('div');
+  d.className = 'msg-result';
+  d.innerHTML = stats.map(function(s) {
+    return '<div class="stat"><div class="v" style="color:' + (s.c||'var(--text)') + '">' + s.v + '</div><div class="l">' + s.l + '</div></div>';
+  }).join('');
+  feed.appendChild(d);
+  feed.scrollTop = feed.scrollHeight;
+}
+
+// ============================================================
+// WEBSOCKET
+// ============================================================
+function connect() {
+  var url = 'ws://' + location.host + '/ws';
+  ws = new WebSocket(url);
+  ws.onopen = function() {
+    connected = true;
+    document.getElementById('wsDot').className = 'dot ok';
+    document.getElementById('wsLbl').textContent = 'Verbunden';
+    addMsg('sys','SYSTEM','Verbunden mit QLANG Server');
+    ws.send(JSON.stringify({type:'list_models'}));
+    ['btnSwarm','btnPipeline','btnAuto','btnRun','btnSaveKeys','btnPredict'].forEach(function(id){document.getElementById(id).disabled=false});
+  };
+  ws.onclose = function() {
+    connected = false;
+    document.getElementById('wsDot').className = 'dot off';
+    document.getElementById('wsLbl').textContent = 'Getrennt';
+    ['btnSwarm','btnPipeline','btnAuto','btnRun','btnPredict'].forEach(function(id){document.getElementById(id).disabled=true});
+    addMsg('err','WS','Verbindung getrennt. Reconnect in 3s...');
+    setTimeout(connect, 3000);
+  };
+  ws.onerror = function() { addMsg('err','WS','Verbindungsfehler'); };
+  ws.onmessage = function(ev) {
+    var m; try { m = JSON.parse(ev.data); } catch(e) { return; }
+    handle(m);
+  };
+}
+
+function send(obj) { if (ws && connected) ws.send(JSON.stringify(obj)); }
+
+// ============================================================
+// MESSAGE HANDLER
+// ============================================================
+function handle(m) {
+  switch(m.type) {
+    case 'models_list':
+      var models = m.models || [];
+      document.getElementById('olDot').className = 'dot ok';
+      document.getElementById('olLbl').textContent = 'Ollama: ' + models.length;
+      document.getElementById('sbModels').textContent = models.length;
+      addMsg('sys','OLLAMA','Gefunden: ' + models.join(', '));
+      ['selArch','selEval','autoSelArch'].forEach(function(id){
+        var s = document.getElementById(id); s.innerHTML = '';
+        models.forEach(function(n){var o=document.createElement('option');o.value=n;o.textContent=n;s.appendChild(o)});
+      });
+      break;
+
+    case 'pipeline_status':
+      updatePipelineViz(m.step, m.total_steps);
+      addMsg('step','STEP ' + m.step + '/' + m.total_steps, m.description);
+      break;
+    case 'agent_thinking':
+      addMsg('ai','OLLAMA', '<b>' + m.agent + '</b> (' + m.model + ') denkt nach...');
+      break;
+    case 'agent_response':
+      addMsg('ai','OLLAMA', '<b>' + m.agent + '</b>: ' + m.response);
+      break;
+
+    case 'training':
+      var pct = (m.accuracy * 100).toFixed(1);
+      trainLoss.push(m.loss);
+      trainAcc.push(m.accuracy);
+      updateTrainChart();
+      addMsg('train','EPOCH ' + m.epoch, 'Loss=' + m.loss.toFixed(4) + ' Accuracy=' + pct + '%');
+      break;
+
+    case 'compression':
+      addMsg('igqk','IGQK', m.original_size + ' &rarr; ' + m.compressed_size + ' (' + m.ratio + ')');
+      addResult([
+        {v:m.original_size, l:'Original', c:'var(--dim)'},
+        {v:m.compressed_size, l:'Komprimiert', c:'var(--green)'},
+        {v:m.ratio, l:'Ratio', c:'var(--magenta)'}
+      ]);
+      break;
+
+    case 'system':
+      addMsg('sys','INFO', m.text || '');
+      break;
+    case 'graph':
+      addMsg('sys','GRAPH', (m.nodes||[]).length + ' Nodes geladen');
+      break;
+    case 'model_ready':
+      addMsg('ok','MODELL', 'Trainiertes Modell bereit');
+      break;
+
+    case 'self_healing_done':
+      document.getElementById('btnAuto').disabled = false;
+      document.getElementById('btnAuto').classList.remove('running');
+      document.getElementById('btnAuto').innerHTML = 'Autonom starten';
+      break;
+
+    case 'autonomous_status':
+      if (m.phase === 'start') {
+        autoIterations = [];
+        addBig('sys', 'Autonomer Modus gestartet (Ziel: ' + (m.target_accuracy*100).toFixed(0) + '%)');
+      } else if (m.phase === 'success') {
+        addBig('ok', 'ZIEL ERREICHT nach ' + m.iteration + ' Versuchen!');
+        document.getElementById('btnAuto').disabled = false;
+        document.getElementById('btnAuto').classList.remove('running');
+        document.getElementById('btnAuto').innerHTML = 'Autonom starten';
+      } else if (m.phase === 'max_reached') {
+        addMsg('step','ENDE', 'Maximum erreicht. Bestes: ' + (m.best_accuracy*100).toFixed(1) + '%');
+        document.getElementById('btnAuto').disabled = false;
+        document.getElementById('btnAuto').classList.remove('running');
+        document.getElementById('btnAuto').innerHTML = 'Autonom starten';
+      } else if (m.phase === 'training' && m.config) {
+        addIterCard(m.iteration, m.config.h1, m.config.h2, null, null, 'active');
+      }
+      break;
+    case 'autonomous_result':
+      updateIterCard(m.iteration, m.test_accuracy, m.compression_ratio, m.test_accuracy >= 0.95);
+      addResult([
+        {v:(m.test_accuracy*100).toFixed(1)+'%', l:'Accuracy', c:'var(--green)'},
+        {v:m.compression_ratio.toFixed(1)+'x', l:'Kompression', c:'var(--magenta)'},
+        {v:m.params, l:'Parameter', c:'var(--cyan)'}
+      ]);
+      break;
+    case 'autonomous_feedback':
+      addMsg('ai','FEEDBACK', m.feedback);
+      break;
+    case 'autonomous_summary':
+      addMsg('ok','ERGEBNIS', m.summary);
+      break;
+    case 'autonomous_design':
+      addMsg('ai','DESIGN', m.response);
+      break;
+
+    case 'swarm_status':
+      addMsg('sys','SWARM', m.phase + (m.vocab_size ? ' (Vocab: ' + m.vocab_size + ' Tokens)' : ''));
+      break;
+    case 'swarm_model':
+      swarmModels.push({id:m.id, d:m.d_model, l:m.layers, p:m.params, loss:null});
+      addMsg('sys','MODELL', '#' + (m.id+1) + ': d=' + m.d_model + ' L=' + m.layers + ' (' + m.params + ' Params)');
+      break;
+    case 'swarm_generation':
+      swarmCurrentGen = m.gen;
+      addBig('step', 'Generation ' + m.gen + ' / ' + m.total);
+      addSwarmGrid();
+      document.getElementById('swarmBar').style.display = 'block';
+      document.getElementById('swarmLbl').style.display = 'flex';
+      var pct = (m.gen / m.total * 100);
+      document.getElementById('swarmFill').style.width = pct + '%';
+      document.getElementById('swarmL').textContent = 'Gen ' + m.gen + '/' + m.total;
+      break;
+    case 'swarm_fitness':
+      updateSwarmDot(m.id, m.loss, m.d_model, m.layers);
+      swarmLosses.push(m.loss);
+      var sample = m.sample ? ' &rarr; "' + m.sample.substring(0,30) + '"' : '';
+      addMsg('train','MODELL ' + (m.id+1), 'd=' + m.d_model + ' L=' + m.layers + ' Loss=' + m.loss.toFixed(4) + sample);
+      break;
+    case 'swarm_best':
+      swarmBestLoss.push(m.loss);
+      updateSwarmChart();
+      addMsg('ok','BESTES', 'd=' + m.d_model + ' L=' + m.layers + ' Loss=' + m.loss.toFixed(4) + ' (' + m.params + ' Params)');
+      break;
+    case 'swarm_complete':
+      addBig('ok', 'Schwarm-Training abgeschlossen!');
+      if (m.results) {
+        addResult(m.results.slice(0,3).map(function(r){
+          return {v:'#'+r.rank+' d='+r.d_model, l:r.loss.toFixed(3)+' Loss', c:r.rank===1?'var(--green)':'var(--text)'};
+        }));
+      }
+      document.getElementById('btnSwarm').disabled = false;
+      document.getElementById('btnSwarm').classList.remove('running');
+      document.getElementById('btnSwarm').innerHTML = 'Schwarm starten';
+      document.getElementById('swarmFill').style.width = '100%';
+      document.getElementById('swarmR').textContent = 'Fertig!';
+      break;
+    case 'swarm_saved':
+      addMsg('ok','GESPEICHERT', 'Modell: ' + m.model_path + '<br>Tokenizer: ' + m.tokenizer_path);
+      break;
+
+    case 'exec_result':
+      if (m.error) {
+        addMsg('err','FEHLER', m.error);
+      } else if (m.output) {
+        m.output.forEach(function(line) { addMsg('sys','OUTPUT', line); });
+      }
+      document.getElementById('btnRun').disabled = false;
+      document.getElementById('btnRun').classList.remove('running');
+      break;
+    case 'repl_result':
+      if (m.error) addMsg('err','FEHLER', m.error);
+      else addMsg('sys','REPL', m.output || '');
+      break;
+
+    case 'prediction':
+      var el = document.getElementById('predResult');
+      if (m.error) {
+        if (el) { el.textContent = m.error; el.style.color = 'var(--red)'; }
+        addMsg('err','PREDICT', m.error);
+      } else {
+        if (el) { el.textContent = 'Ziffer: ' + m.digit; el.style.color = 'var(--green)'; }
+        addMsg('ok','PREDICT', 'Ziffer: ' + m.digit + ' (Confidence: ' + m.confidence[m.digit] + ')');
+      }
+      var btn = document.getElementById('btnPredict');
+      if (btn) { btn.disabled = false; btn.classList.remove('running'); btn.innerHTML = 'Vorhersagen'; }
+      break;
+
+    default:
+      addMsg('sys', m.type.toUpperCase(), JSON.stringify(m).substring(0,100));
+  }
+}
+
+// ============================================================
+// ACTIONS
+// ============================================================
+function doSwarm() {
+  resetViz();
+  var pop = parseInt(document.getElementById('inPop').value) || 6;
+  var gen = parseInt(document.getElementById('inGen').value) || 3;
+  var data = document.getElementById('selData').value;
+  swarmModels = []; swarmLosses = []; swarmBestLoss = []; swarmCurrentGen = 0;
+  send({type:'start_swarm', population:pop, generations:gen, data:data});
+  document.getElementById('btnSwarm').disabled = true;
+  document.getElementById('btnSwarm').classList.add('running');
+  document.getElementById('btnSwarm').innerHTML = '<span class="btn-spinner"></span>Trainiert...';
+  document.getElementById('swarmBar').style.display = 'block';
+  document.getElementById('swarmLbl').style.display = 'flex';
+  document.getElementById('swarmFill').style.width = '0%';
+  document.getElementById('swarmL').textContent = 'Startet...';
+  document.getElementById('swarmR').textContent = '';
+  addBig('sys', 'Schwarm-Training gestartet (' + pop + ' Modelle, ' + gen + ' Generationen)');
+}
+
+function doPipeline() {
+  resetViz();
+  var task = document.getElementById('taskText').value.trim();
+  if (!task) { document.getElementById('taskText').focus(); return; }
+  var epochs = parseInt(document.getElementById('inEpochs').value) || 10;
+  var dataset = document.getElementById('selDataset').value || 'synthetic';
+  var compress = document.getElementById('chkCompress').checked;
+  send({
+    type:'start_pipeline',
+    task:task,
+    architect_model: document.getElementById('selArch').value,
+    evaluator_model: document.getElementById('selEval').value,
+    epochs: epochs,
+    dataset: dataset,
+    compress: compress
+  });
+  document.getElementById('btnPipeline').disabled = true;
+  document.getElementById('btnPipeline').classList.add('running');
+  document.getElementById('btnPipeline').innerHTML = '<span class="btn-spinner"></span>Pipeline laeuft...';
+  addBig('sys', 'KI-Pipeline gestartet: "' + task + '"');
+}
+
+function doAutonomous() {
+  resetViz();
+  var maxIter = parseInt(document.getElementById('inMaxIter').value) || 5;
+  send({
+    type:'start_self_healing',
+    task: document.getElementById('autoTaskText').value || 'Build a classifier',
+    model: document.getElementById('autoSelArch').value,
+    max_iterations: maxIter
+  });
+  document.getElementById('btnAuto').disabled = true;
+  document.getElementById('btnAuto').classList.add('running');
+  document.getElementById('btnAuto').innerHTML = '<span class="btn-spinner"></span>KI arbeitet...';
+}
+
+function doRun() {
+  var code = document.getElementById('codeText').value;
+  if (!code.trim()) return;
+  send({type:'exec', code:code});
+  document.getElementById('btnRun').disabled = true;
+  document.getElementById('btnRun').classList.add('running');
+  addMsg('sys','CODE','Ausfuehren...');
+}
+
+function doSaveKeys() {
+  var payload = {
+    openai: { api_key: document.getElementById('keyOpenAI').value.trim() || null },
+    anthropic: { api_key: document.getElementById('keyAnth').value.trim() || null },
+    gemini: { api_key: document.getElementById('keyGemini').value.trim() || null },
+    groq: { api_key: document.getElementById('keyGroq').value.trim() || null },
+    azure: { api_key: document.getElementById('keyAzure').value.trim() || null },
+    cohere: { api_key: document.getElementById('keyCohere').value.trim() || null },
+    mistral: { api_key: document.getElementById('keyMistral').value.trim() || null },
+    huggingface: { api_key: document.getElementById('keyHF').value.trim() || null },
+    together: { api_key: document.getElementById('keyTogether').value.trim() || null },
+    perplexity: { api_key: document.getElementById('keyPerplexity').value.trim() || null },
+    xai: { api_key: document.getElementById('keyXAI').value.trim() || null }
+  };
+  var hasAny = Object.values(payload).some(function(p) { return p.api_key; });
+  if (!hasAny) { addMsg('err','PROVIDER','Keine Keys eingegeben'); return; }
+  var cleanPayload = {};
+  for (var k in payload) {
+    if (payload[k].api_key) cleanPayload[k] = payload[k];
+  }
+  fetch('/api/config/providers', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(cleanPayload)
+  }).then(function(r){
+    if (r.ok) {
+      document.getElementById('keyStatus').textContent = 'Keys gespeichert!';
+      document.getElementById('keyStatus').style.color = '#4caf50';
+      addMsg('ok','PROVIDER','Keys gespeichert');
+    } else {
+      document.getElementById('keyStatus').textContent = 'Fehler: ' + r.status;
+      document.getElementById('keyStatus').style.color = '#f44336';
+      addMsg('err','PROVIDER','Speichern fehlgeschlagen (' + r.status + ')');
+    }
+  }).catch(function(e){
+    document.getElementById('keyStatus').textContent = 'Fehler: ' + e;
+    document.getElementById('keyStatus').style.color = '#f44336';
+    addMsg('err','PROVIDER','Fehler: ' + e);
+  });
+}
+
+function loadProviderKeys() {
+  fetch('/api/config/providers').then(function(r){ return r.json(); })
+    .then(function(config) {
+      if (config.openai && config.openai.api_key) document.getElementById('keyOpenAI').value = config.openai.api_key;
+      if (config.anthropic && config.anthropic.api_key) document.getElementById('keyAnth').value = config.anthropic.api_key;
+      if (config.gemini && config.gemini.api_key) document.getElementById('keyGemini').value = config.gemini.api_key;
+      if (config.groq && config.groq.api_key) document.getElementById('keyGroq').value = config.groq.api_key;
+      if (config.azure && config.azure.api_key) document.getElementById('keyAzure').value = config.azure.api_key;
+      if (config.cohere && config.cohere.api_key) document.getElementById('keyCohere').value = config.cohere.api_key;
+      if (config.mistral && config.mistral.api_key) document.getElementById('keyMistral').value = config.mistral.api_key;
+      if (config.huggingface && config.huggingface.api_key) document.getElementById('keyHF').value = config.huggingface.api_key;
+      if (config.together && config.together.api_key) document.getElementById('keyTogether').value = config.together.api_key;
+      if (config.perplexity && config.perplexity.api_key) document.getElementById('keyPerplexity').value = config.perplexity.api_key;
+      if (config.xai && config.xai.api_key) document.getElementById('keyXAI').value = config.xai.api_key;
+    }).catch(function(){});
+}
+window.addEventListener('load', loadProviderKeys);
+// Tabs
+function showTab(tab){
+  var ids = { swarm:'panelSwarm', pipeline:'panelPipeline', auto:'panelAuto', provider:'panelProvider', code:'panelCode', predict:'panelPredict', graph:'panelGraph' };
+  Object.keys(ids).forEach(function(k){
+    var el = document.getElementById(ids[k]);
+    if (el) el.style.display = (k===tab ? 'block' : 'none');
+  });
+  var btns = document.querySelectorAll('.tab-btn');
+  btns.forEach(function(b){ b.classList.toggle('active', b.getAttribute('data-tab')===tab); });
+
+  // Switch left pane
+  var feed = document.getElementById('feed');
+  var graphC = document.getElementById('graphContainer');
+  if (tab === 'graph') {
+    feed.style.display = 'none';
+    graphC.style.display = 'block';
+    redrawLines(); // defined later
+  } else {
+    feed.style.display = 'block';
+    graphC.style.display = 'none';
+  }
+}
+
+// Simulated AI Graph Generation
+function askAIToBuild() {
+  var prompt = document.getElementById('aiPrompt').value;
+  if (!prompt) return;
+  
+  clearGraph();
+  addBig('ai', 'KI analysiert Prompt und entwirft Graphen...');
+  
+  // Simulate delay
+  setTimeout(function() {
+    gNodes = [
+      { id: 'node_1', type: 'Input', x: 50, y: 150, in: [], out: [] },
+      { id: 'node_2', type: 'Linear', x: 250, y: 150, in: [], out: [] },
+      { id: 'node_3', type: 'Relu', x: 450, y: 150, in: [], out: [] },
+      { id: 'node_4', type: 'Linear', x: 650, y: 150, in: [], out: [] },
+      { id: 'node_5', type: 'Output', x: 850, y: 150, in: [], out: [] }
+    ];
+    gEdges = [
+      { from: 'node_1', to: 'node_2' },
+      { from: 'node_2', to: 'node_3' },
+      { from: 'node_3', to: 'node_4' },
+      { from: 'node_4', to: 'node_5' }
+    ];
+    nodeCounter = 5;
+    renderGraph();
+    addBig('ai', 'KI hat Graph erfolgreich platziert.');
+  }, 1500);
+}
+document.getElementById('tabs').addEventListener('click', function(e){
+  var b = e.target.closest('.tab-btn'); if(!b) return;
+  var t = b.getAttribute('data-tab'); showTab(t);
+});
+
+// ============================================================
+// DRAWING PAD (MNIST)
+// ============================================================
+var drawPad = document.getElementById('drawPad');
+var ctxPad = drawPad ? drawPad.getContext('2d') : null;
+var drawing = false;
+if (ctxPad) {
+  ctxPad.fillStyle = 'black';
+  ctxPad.fillRect(0, 0, drawPad.width, drawPad.height);
+  ctxPad.lineWidth = 20;
+  ctxPad.lineCap = 'round';
+  ctxPad.strokeStyle = 'white';
+
+  function getPos(e) {
+    var rect = drawPad.getBoundingClientRect();
+    var clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    var clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    return { x: clientX - rect.left, y: clientY - rect.top };
+  }
+  
+  drawPad.addEventListener('mousedown', function(e){ drawing = true; var p = getPos(e); ctxPad.beginPath(); ctxPad.moveTo(p.x, p.y); });
+  drawPad.addEventListener('mousemove', function(e){ if(!drawing) return; var p = getPos(e); ctxPad.lineTo(p.x, p.y); ctxPad.stroke(); });
+  drawPad.addEventListener('mouseup', function(e){ drawing = false; });
+  drawPad.addEventListener('mouseleave', function(e){ drawing = false; });
+  
+  drawPad.addEventListener('touchstart', function(e){ e.preventDefault(); drawing = true; var p = getPos(e); ctxPad.beginPath(); ctxPad.moveTo(p.x, p.y); }, {passive:false});
+  drawPad.addEventListener('touchmove', function(e){ e.preventDefault(); if(!drawing) return; var p = getPos(e); ctxPad.lineTo(p.x, p.y); ctxPad.stroke(); }, {passive:false});
+  drawPad.addEventListener('touchend', function(e){ e.preventDefault(); drawing = false; }, {passive:false});
+}
+
+function clearPad() {
+  if (ctxPad) {
+    ctxPad.fillStyle = 'black';
+    ctxPad.fillRect(0, 0, drawPad.width, drawPad.height);
+    var res = document.getElementById('predResult');
+    if(res) res.textContent = '';
+  }
+}
+
+function doPredict() {
+  if (!ctxPad) return;
+  var tmpCanvas = document.createElement('canvas');
+  tmpCanvas.width = 28;
+  tmpCanvas.height = 28;
+  var tmpCtx = tmpCanvas.getContext('2d');
+  tmpCtx.drawImage(drawPad, 0, 0, 28, 28);
+  var imgData = tmpCtx.getImageData(0, 0, 28, 28);
+  var pixels = [];
+  for (var i = 0; i < 28*28; i++) {
+    var p = imgData.data[i * 4] / 255.0;
+    pixels.push(p);
+  }
+  send({type: 'predict', pixels: pixels});
+  document.getElementById('btnPredict').disabled = true;
+  document.getElementById('btnPredict').classList.add('running');
+  document.getElementById('btnPredict').innerHTML = '<span class="btn-spinner"></span>Denkt...';
+}
+function applyThemeFromStorage(){
+  var t = localStorage.getItem('qlang_theme');
+  if (t === 'light') { document.body.classList.add('light'); } else { document.body.classList.remove('light'); }
+}
+var btnTheme = document.getElementById('btnTheme');
+if (btnTheme) {
+  btnTheme.addEventListener('click', function(){
+    var isLight = document.body.classList.toggle('light');
+    localStorage.setItem('qlang_theme', isLight ? 'light' : 'dark');
+  });
+}
+applyThemeFromStorage();
+document.addEventListener('keydown', function(e){
+  var tag = (e.target && e.target.tagName) || '';
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || e.ctrlKey || e.metaKey || e.altKey) return;
+  var map = { '1':'swarm', '2':'pipeline', '3':'auto', '4':'provider', '5':'code', '6':'predict' };
+  var tab = map[e.key];
+  if (tab) { showTab(tab); }
+});
+// ============================================================
+// LIVE VISUALIZATIONS
+// ============================================================
+
+// --- Training Chart ---
+var trainLoss = [], trainAcc = [], trainChartEl = null;
+
+function updateTrainChart() {
+  if (!trainChartEl) {
+    var feed = document.getElementById('feed');
+    trainChartEl = document.createElement('div');
+    trainChartEl.className = 'live-chart';
+    trainChartEl.innerHTML = '<div class="chart-title">Training Verlauf</div><canvas id="trainCanvas" width="600" height="120"></canvas><div class="chart-legend"><span class="leg-loss">Loss</span><span class="leg-acc">Accuracy</span></div>';
+    feed.appendChild(trainChartEl);
+  }
+  var c = document.getElementById('trainCanvas');
+  if (!c) return;
+  var ctx = c.getContext('2d');
+  var w = c.width, h = c.height;
+  ctx.clearRect(0,0,w,h);
+
+  // Grid
+  ctx.strokeStyle = '#1E1E2E';
+  ctx.lineWidth = 0.5;
+  for (var i = 0; i < 5; i++) {
+    var y = h * i / 4;
+    ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke();
+  }
+
+  if (trainLoss.length < 2) return;
+  var n = trainLoss.length;
+  var maxLoss = Math.max.apply(null, trainLoss) * 1.1;
+
+  // Loss line
+  ctx.beginPath();
+  ctx.strokeStyle = '#FF8800';
+  ctx.lineWidth = 2;
+  for (var i = 0; i < n; i++) {
+    var x = (i/(n-1)) * w;
+    var y = h - (trainLoss[i]/maxLoss) * h;
+    i === 0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+
+  // Accuracy line
+  ctx.beginPath();
+  ctx.strokeStyle = '#00FF88';
+  ctx.lineWidth = 2;
+  for (var i = 0; i < n; i++) {
+    var x = (i/(n-1)) * w;
+    var y = h - trainAcc[i] * h;
+    i === 0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+
+  // Labels
+  ctx.fillStyle = '#6B7280';
+  ctx.font = '10px "SF Mono",Menlo,Consolas,monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('Loss: ' + trainLoss[n-1].toFixed(4), 4, 12);
+  ctx.fillText('Acc: ' + (trainAcc[n-1]*100).toFixed(1) + '%', 4, 24);
+  ctx.textAlign = 'right';
+  ctx.fillText('Epoch ' + n, w-4, h-4);
+
+  trainChartEl.scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+
+// --- Pipeline Visualization ---
+var pipeStepNames = ['Aufgabe','Architekt','Build','Training','IGQK','Evaluator'];
+var pipeVizEl = null;
+
+function updatePipelineViz(step, total) {
+  if (!pipeVizEl) {
+    var feed = document.getElementById('feed');
+    pipeVizEl = document.createElement('div');
+    pipeVizEl.className = 'pipe-steps';
+    pipeVizEl.id = 'pipeViz';
+    var html = '';
+    for (var i = 0; i < pipeStepNames.length; i++) {
+      if (i > 0) html += '<span class="pipe-arrow">&rarr;</span>';
+      html += '<span class="pipe-step" id="ps' + i + '">' + pipeStepNames[i] + '</span>';
+    }
+    pipeVizEl.innerHTML = html;
+    feed.appendChild(pipeVizEl);
+  }
+  for (var i = 0; i < pipeStepNames.length; i++) {
+    var el = document.getElementById('ps' + i);
+    if (!el) continue;
+    if (i < step - 1) el.className = 'pipe-step done';
+    else if (i === step - 1) el.className = 'pipe-step active';
+    else el.className = 'pipe-step';
+  }
+  var arrows = pipeVizEl.querySelectorAll('.pipe-arrow');
+  arrows.forEach(function(a, idx) {
+    a.className = idx < step - 1 ? 'pipe-arrow active' : 'pipe-arrow';
+  });
+}
+
+// --- Swarm Grid ---
+var swarmModels = [], swarmLosses = [], swarmBestLoss = [], swarmCurrentGen = 0;
+var swarmGridEl = null, swarmChartEl = null;
+
+function addSwarmGrid() {
+  var feed = document.getElementById('feed');
+  swarmGridEl = document.createElement('div');
+  swarmGridEl.className = 'swarm-grid';
+  swarmGridEl.id = 'swarmGrid' + swarmCurrentGen;
+  var html = '';
+  for (var i = 0; i < swarmModels.length; i++) {
+    var m = swarmModels[i];
+    html += '<div class="swarm-dot" id="sd' + swarmCurrentGen + '_' + i + '" title="d=' + m.d + ' L=' + m.l + '">' + (i+1) + '</div>';
+  }
+  swarmGridEl.innerHTML = html;
+  feed.appendChild(swarmGridEl);
+  feed.scrollTop = feed.scrollHeight;
+}
+
+function updateSwarmDot(id, loss, d, layers) {
+  var el = document.getElementById('sd' + swarmCurrentGen + '_' + id);
+  if (!el) return;
+  var minL = 5.5, maxL = 7.0;
+  var t = Math.max(0, Math.min(1, (loss - minL) / (maxL - minL)));
+  var r = Math.round(255 * t + 0 * (1-t));
+  var g = Math.round(136 * t + 255 * (1-t));
+  var b = Math.round(0 * t + 136 * (1-t));
+  el.style.background = 'rgb(' + r + ',' + g + ',' + b + ')';
+  el.style.color = '#0A0A0F';
+  el.title = 'd=' + d + ' L=' + layers + ' Loss=' + loss.toFixed(3);
+}
+
+function updateSwarmChart() {
+  if (swarmBestLoss.length < 2) return;
+  if (!swarmChartEl) {
+    var feed = document.getElementById('feed');
+    swarmChartEl = document.createElement('div');
+    swarmChartEl.className = 'live-chart';
+    swarmChartEl.innerHTML = '<div class="chart-title">Bester Loss pro Generation</div><canvas id="swarmCanvas" width="600" height="80"></canvas><div class="chart-legend"><span class="leg-best">Best Loss</span></div>';
+    feed.appendChild(swarmChartEl);
+  }
+  var c = document.getElementById('swarmCanvas');
+  if (!c) return;
+  var ctx = c.getContext('2d');
+  var w = c.width, h = c.height;
+  ctx.clearRect(0,0,w,h);
+
+  var n = swarmBestLoss.length;
+  var maxL = Math.max.apply(null, swarmBestLoss) * 1.05;
+  var minL = Math.min.apply(null, swarmBestLoss) * 0.95;
+
+  var barW = Math.min(60, (w - 20) / n);
+  for (var i = 0; i < n; i++) {
+    var x = 10 + i * (barW + 4);
+    var barH = ((swarmBestLoss[i] - minL) / (maxL - minL)) * (h - 30);
+    var y = h - 20 - barH;
+
+    ctx.fillStyle = i === n-1 ? '#00FF88' : '#FF00FF';
+    ctx.beginPath();
+    ctx.roundRect(x, y, barW, barH, 3);
+    ctx.fill();
+
+    ctx.fillStyle = '#E0E0E0';
+    ctx.font = '9px "SF Mono",Menlo,Consolas,monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(swarmBestLoss[i].toFixed(3), x + barW/2, y - 4);
+    ctx.fillStyle = '#6B7280';
+    ctx.fillText('Gen ' + (i+1), x + barW/2, h - 6);
+  }
+  swarmChartEl.scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+
+// --- Autonomous Iteration Cards ---
+var autoIterations = [];
+
+function addIterCard(iter, h1, h2, acc, ratio, status) {
+  var feed = document.getElementById('feed');
+  var d = document.createElement('div');
+  d.className = 'iter-card';
+  d.id = 'iter' + iter;
+  var numCls = status === 'active' ? '' : (acc && acc >= 0.95 ? 'win' : (acc ? 'fail' : ''));
+  d.innerHTML = '<div class="iter-num ' + numCls + '">' + iter + '</div>' +
+    '<div class="iter-body">' +
+    '<div class="iter-arch">784 &rarr; ' + h1 + ' &rarr; ' + h2 + ' &rarr; 10</div>' +
+    '<div class="iter-metrics">' +
+    '<span class="iter-metric">Accuracy: <b id="iterAcc' + iter + '">' + (acc ? (acc*100).toFixed(1)+'%' : '...') + '</b></span>' +
+    '<span class="iter-metric">Kompression: <b id="iterRatio' + iter + '">' + (ratio ? ratio.toFixed(1)+'x' : '...') + '</b></span>' +
+    '</div></div>';
+  feed.appendChild(d);
+  feed.scrollTop = feed.scrollHeight;
+}
+
+function updateIterCard(iter, acc, ratio, success) {
+  var numEl = document.querySelector('#iter' + iter + ' .iter-num');
+  if (numEl) numEl.className = 'iter-num ' + (success ? 'win' : 'fail');
+  var accEl = document.getElementById('iterAcc' + iter);
+  if (accEl) { accEl.textContent = (acc*100).toFixed(1) + '%'; accEl.style.color = success ? 'var(--green)' : 'var(--orange)'; }
+  var ratEl = document.getElementById('iterRatio' + iter);
+  if (ratEl) ratEl.textContent = ratio.toFixed(1) + 'x';
+}
+
+// ============================================================
+// GRAPH VISUALIZER (DRAG & DROP)
+// ============================================================
+var gNodes = [];
+var gEdges = [];
+var nodeCounter = 0;
+var isDragging = false;
+var dragNode = null;
+var dragOffset = {x:0, y:0};
+var isConnecting = false;
+var connectStartNode = null;
+var connectStartPort = null;
+var mousePos = {x:0, y:0};
+
+function addGraphNode() {
+  var type = document.getElementById('selNodeType').value;
+  nodeCounter++;
+  var id = 'node_' + nodeCounter;
+  var n = { id: id, type: type, x: 50 + (nodeCounter*20)%200, y: 50 + (nodeCounter*20)%200, in: [], out: [] };
+  gNodes.push(n);
+  renderGraph();
+}
+
+function clearGraph() {
+  gNodes = [];
+  gEdges = [];
+  nodeCounter = 0;
+  renderGraph();
+}
+
+function renderGraph() {
+  var canvas = document.getElementById('graphCanvas');
+  // keep only the svg
+  var svg = document.getElementById('graphLines');
+  canvas.innerHTML = '';
+  canvas.appendChild(svg);
+
+  gNodes.forEach(function(n) {
+    var el = document.createElement('div');
+    el.className = 'gnode';
+    if (n.type === 'AI_Agent') el.classList.add('ai-agent');
+    el.id = n.id;
+    el.style.left = n.x + 'px';
+    el.style.top = n.y + 'px';
+    
+    var html = '<div class="gnode-title">' + n.type + '</div>';
+    html += '<div style="color:var(--dim)">ID: ' + n.id + '</div>';
+    
+    // ports
+    if (n.type !== 'Input') {
+      html += '<div class="gport in" data-node="'+n.id+'" data-port="in" title="Eingang"></div>';
+    }
+    if (n.type !== 'Output') {
+      html += '<div class="gport out" data-node="'+n.id+'" data-port="out" title="Ausgang"></div>';
+    }
+    
+    el.innerHTML = html;
+    
+    el.addEventListener('mousedown', function(e) {
+      if (e.target.classList.contains('gport')) return;
+      isDragging = true;
+      dragNode = n;
+      var rect = el.getBoundingClientRect();
+      var containerRect = canvas.getBoundingClientRect();
+      dragOffset.x = e.clientX - rect.left;
+      dragOffset.y = e.clientY - rect.top;
+      
+      document.querySelectorAll('.gnode').forEach(function(node){node.classList.remove('selected')});
+      el.classList.add('selected');
+    });
+    
+    canvas.appendChild(el);
+  });
+  
+  // attach port events
+  document.querySelectorAll('.gport').forEach(function(p) {
+    p.addEventListener('mousedown', function(e) {
+      e.stopPropagation();
+      isConnecting = true;
+      connectStartNode = p.getAttribute('data-node');
+      connectStartPort = p.getAttribute('data-port');
+    });
+    p.addEventListener('mouseup', function(e) {
+      if (isConnecting && connectStartNode !== p.getAttribute('data-node') && connectStartPort !== p.getAttribute('data-port')) {
+        // valid connection
+        var from = connectStartPort === 'out' ? connectStartNode : p.getAttribute('data-node');
+        var to = connectStartPort === 'in' ? connectStartNode : p.getAttribute('data-node');
+        // avoid duplicates
+        if (!gEdges.find(function(ed){return ed.from===from && ed.to===to})) {
+          gEdges.push({from:from, to:to});
+        }
+      }
+    });
+  });
+  
+  redrawLines();
+}
+
+function redrawLines() {
+  var svg = document.getElementById('graphLines');
+  if(!svg) return;
+  var html = '';
+  var canvasRect = document.getElementById('graphCanvas').getBoundingClientRect();
+  
+  gEdges.forEach(function(e) {
+    var n1 = document.getElementById(e.from);
+    var n2 = document.getElementById(e.to);
+    if (!n1 || !n2) return;
+    var p1 = n1.querySelector('.gport.out');
+    var p2 = n2.querySelector('.gport.in');
+    if (!p1 || !p2) return;
+    
+    var r1 = p1.getBoundingClientRect();
+    var r2 = p2.getBoundingClientRect();
+    
+    var x1 = r1.left + r1.width/2 - canvasRect.left;
+    var y1 = r1.top + r1.height/2 - canvasRect.top;
+    var x2 = r2.left + r2.width/2 - canvasRect.left;
+    var y2 = r2.top + r2.height/2 - canvasRect.top;
+    
+    // cubic bezier
+    var cx = (x1 + x2) / 2;
+    html += '<path class="gedge" d="M'+x1+','+y1+' C'+cx+','+y1+' '+cx+','+y2+' '+x2+','+y2+'"></path>';
+  });
+  
+  // draw current connecting line
+  if (isConnecting && connectStartNode) {
+    var n1 = document.getElementById(connectStartNode);
+    var p1 = n1.querySelector('.gport.' + connectStartPort);
+    if (p1) {
+      var r1 = p1.getBoundingClientRect();
+      var x1 = r1.left + r1.width/2 - canvasRect.left;
+      var y1 = r1.top + r1.height/2 - canvasRect.top;
+      var x2 = mousePos.x;
+      var y2 = mousePos.y;
+      
+      if (connectStartPort === 'in') {
+        var tmp = x1; x1 = x2; x2 = tmp;
+        tmp = y1; y1 = y2; y2 = tmp;
+      }
+      var cx = (x1 + x2) / 2;
+      html += '<path class="gedge" d="M'+x1+','+y1+' C'+cx+','+y1+' '+cx+','+y2+' '+x2+','+y2+'" style="stroke:var(--orange)"></path>';
+    }
+  }
+  
+  svg.innerHTML = html;
+}
+
+document.addEventListener('mousemove', function(e) {
+  if (isDragging && dragNode) {
+    var canvasRect = document.getElementById('graphCanvas').getBoundingClientRect();
+    dragNode.x = e.clientX - canvasRect.left - dragOffset.x;
+    dragNode.y = e.clientY - canvasRect.top - dragOffset.y;
+    var el = document.getElementById(dragNode.id);
+    if(el) {
+      el.style.left = dragNode.x + 'px';
+      el.style.top = dragNode.y + 'px';
+    }
+    redrawLines();
+  }
+  
+  if (isConnecting) {
+    var canvasRect = document.getElementById('graphCanvas').getBoundingClientRect();
+    mousePos.x = e.clientX - canvasRect.left;
+    mousePos.y = e.clientY - canvasRect.top;
+    redrawLines();
+  }
+});
+
+document.addEventListener('mouseup', function(e) {
+  isDragging = false;
+  dragNode = null;
+  if (isConnecting) {
+    isConnecting = false;
+    connectStartNode = null;
+    connectStartPort = null;
+    redrawLines();
+  }
+});
+
+function compileGraph() {
+  // convert graph to QLANG code and execute
+  if (gNodes.length === 0) return;
+  
+  var code = "";
+  var vars = {};
+  
+  // Find input nodes
+  gNodes.forEach(function(n) {
+    if (n.type === 'Input') {
+      code += "let " + n.id + " = 1.0\n";
+      vars[n.id] = true;
+    }
+  });
+  
+  // Sort nodes topologically (naive, assume edges order roughly works or we just evaluate based on edges)
+  // For a proper compiler we'd do a topological sort. Let's do a simple one:
+  var inDegree = {};
+  var adj = {};
+  gNodes.forEach(function(n) { inDegree[n.id] = 0; adj[n.id] = []; });
+  gEdges.forEach(function(e) { inDegree[e.to]++; adj[e.from].push(e.to); });
+  
+  var q = [];
+  gNodes.forEach(function(n) { if (inDegree[n.id] === 0) q.push(n.id); });
+  
+  var sorted = [];
+  while(q.length > 0) {
+    var u = q.shift();
+    sorted.push(u);
+    adj[u].forEach(function(v) {
+      inDegree[v]--;
+      if (inDegree[v] === 0) q.push(v);
+    });
+  }
+  
+  sorted.forEach(function(id) {
+    var n = gNodes.find(function(node){return node.id===id});
+    if (n.type === 'Input') return; // already handled
+    
+    // Find inputs to this node
+    var inputs = gEdges.filter(function(e){return e.to===id}).map(function(e){return e.from});
+    
+    if (n.type === 'Linear') {
+      var inp = inputs.length > 0 ? inputs[0] : "0";
+      code += "let " + n.id + " = " + inp + " * 0.5 + 0.1\n";
+    } else if (n.type === 'Relu') {
+      var inp = inputs.length > 0 ? inputs[0] : "0";
+      code += "let " + n.id + " = " + inp + "\nif " + n.id + " < 0.0 { " + n.id + " = 0.0 }\n";
+    } else if (n.type === 'Sigmoid') {
+      var inp = inputs.length > 0 ? inputs[0] : "0";
+      code += "let " + n.id + " = 1.0 / (1.0 + " + inp + " * -1.0) // approx sigmoid\n";
+    } else if (n.type === 'AI_Agent') {
+      var inp = inputs.length > 0 ? inputs[0] : "0";
+      code += "// AI Agent Node: Receives tensor via QLMS and forwards it\n";
+      code += "let " + n.id + " = " + inp + "\n";
+    } else if (n.type === 'Output') {
+      var inp = inputs.length > 0 ? inputs[0] : "0";
+      code += "print(\"Visualizer Output: \" + str(" + inp + "))\n";
+    }
+  });
+  
+  // switch to code tab to show generated code
+  document.getElementById('codeText').value = code;
+  showTab('code');
+  doRun();
+}
+
+// Reset state
+function resetViz() {
+  trainLoss = []; trainAcc = []; trainChartEl = null;
+  pipeVizEl = null;
+  swarmGridEl = null; swarmChartEl = null;
+  autoIterations = [];
+}
+
+// ============================================================
+// INIT
+// ============================================================
+connect();
+</script>
+</body>
+</html>

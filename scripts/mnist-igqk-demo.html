@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>QLANG — MNIST + IGQK 1-Click Demo</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --bg: #f4f6fb; --surface: #fff; --elev: #f0f2f8; --input: #e6e9f0;
+    --text: #0f1219; --text2: #4a5068; --muted: #8b90a0;
+    --primary: #3b7de8; --success: #16a87a; --warning: #d9a007; --danger: #e04545;
+    --border: #d8dce6; --shadow: 0 4px 20px rgba(0,0,0,0.06);
+  }
+  body {
+    font-family: 'JetBrains Mono', 'SF Mono', monospace;
+    background: var(--bg); color: var(--text);
+    min-height: 100vh; padding: 24px;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; }
+  .header { text-align: center; margin-bottom: 24px; }
+  .header h1 {
+    font-size: 28px; font-weight: 800;
+    background: linear-gradient(135deg, var(--primary), var(--success));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    margin-bottom: 4px;
+  }
+  .header p { color: var(--text2); font-size: 13px; }
+
+  .big-card {
+    background: var(--surface); border-radius: 16px;
+    padding: 28px; box-shadow: var(--shadow);
+    border: 1px solid var(--border); margin-bottom: 16px;
+  }
+  .start-btn {
+    width: 100%; padding: 20px; border: none; border-radius: 12px;
+    background: linear-gradient(135deg, var(--primary), #5a94f0);
+    color: white; font-family: inherit; font-size: 18px; font-weight: 700;
+    cursor: pointer; transition: all 0.2s;
+    display: flex; align-items: center; justify-content: center; gap: 12px;
+  }
+  .start-btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(59,125,232,0.3); }
+  .start-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+  .start-btn svg { width: 24px; height: 24px; }
+
+  .phases { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin: 20px 0; }
+  .phase {
+    background: var(--elev); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 10px; text-align: center;
+    transition: all 0.3s; position: relative;
+  }
+  .phase.active { background: #dbeafe; border-color: var(--primary); }
+  .phase.done { background: #d1fae5; border-color: var(--success); }
+  .phase .num { font-size: 20px; font-weight: 700; color: var(--muted); margin-bottom: 2px; }
+  .phase.active .num { color: var(--primary); }
+  .phase.done .num { color: var(--success); }
+  .phase .label { font-size: 10px; color: var(--text2); font-weight: 600; text-transform: uppercase; }
+  .phase .progress {
+    position: absolute; bottom: 0; left: 0; right: 0; height: 3px;
+    background: var(--primary); border-radius: 0 0 10px 10px; width: 0%;
+    transition: width 0.3s;
+  }
+
+  .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 16px 0; }
+  .metric {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 16px; text-align: center;
+    transition: all 0.3s;
+  }
+  .metric.highlight { border-color: var(--success); background: #f0fdf4; }
+  .metric .value {
+    font-size: 32px; font-weight: 800; font-variant-numeric: tabular-nums;
+    margin-bottom: 2px; color: var(--primary);
+  }
+  .metric.highlight .value { color: var(--success); }
+  .metric .label { font-size: 11px; color: var(--muted); text-transform: uppercase; font-weight: 600; }
+
+  .chart-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+  .chart-card h3 { font-size: 13px; font-weight: 700; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+  .chart-card h3 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--primary); }
+
+  .log {
+    background: #0f1219; color: #d4d8e4; border-radius: 12px;
+    padding: 14px; font-size: 11px; line-height: 1.8;
+    max-height: 200px; overflow-y: auto; margin-top: 12px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .log .line { padding: 2px 0; }
+  .log .ts { color: #6b7280; }
+  .log .info { color: #60a5fa; }
+  .log .success { color: #34d399; }
+  .log .warn { color: #fbbf24; }
+  .log .error { color: #f87171; }
+
+  .grid2 { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
+
+  .confusion { display: grid; grid-template-columns: repeat(11, 1fr); gap: 2px; font-size: 10px; }
+  .confusion > div { padding: 6px 2px; text-align: center; border-radius: 3px; background: var(--elev); }
+  .confusion .hdr { font-weight: 700; color: var(--muted); }
+  .confusion .diag { background: var(--success); color: white; font-weight: 700; }
+  .confusion .val0 { background: var(--elev); color: var(--muted); }
+
+  .results-banner {
+    background: linear-gradient(135deg, #10b981, #059669);
+    color: white; padding: 24px; border-radius: 16px; margin-top: 16px;
+    display: none;
+  }
+  .results-banner.show { display: block; animation: fadeIn 0.5s; }
+  .results-banner h2 { font-size: 24px; margin-bottom: 12px; }
+  .results-banner .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  .results-banner .stats > div { text-align: center; }
+  .results-banner .stats .num { font-size: 36px; font-weight: 800; }
+  .results-banner .stats .lbl { font-size: 12px; opacity: 0.9; }
+
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+  .pulsing { animation: pulse 1.5s infinite; }
+
+  .hw-status {
+    display: flex; gap: 8px; justify-content: center; margin-bottom: 16px; font-size: 11px;
+  }
+  .hw-chip { background: var(--surface); border: 1px solid var(--border); padding: 4px 10px; border-radius: 20px; color: var(--text2); }
+  .hw-chip.ok { border-color: var(--success); color: var(--success); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div class="header">
+  <h1>QLANG — MNIST + IGQK Demo</h1>
+  <p>End-to-End Beweis: Training + Ternäre Kompression + Organism auf 2x RTX 2070 Super</p>
+</div>
+
+<div class="hw-status">
+  <span class="hw-chip ok" id="server-status">● Server</span>
+  <span class="hw-chip" id="gpu-status">GPU 0 + GPU 1 NVLink</span>
+  <span class="hw-chip" id="mnist-status">MNIST: 70K Samples</span>
+</div>
+
+<div class="big-card">
+  <button class="start-btn" id="start-btn">
+    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+    <span id="start-label">1-Click Demo starten</span>
+  </button>
+
+  <div class="phases" id="phases">
+    <div class="phase" data-phase="loading"><div class="num">1</div><div class="label">MNIST laden</div><div class="progress"></div></div>
+    <div class="phase" data-phase="training"><div class="num">2</div><div class="label">Training</div><div class="progress"></div></div>
+    <div class="phase" data-phase="compressing"><div class="num">3</div><div class="label">IGQK Compress</div><div class="progress"></div></div>
+    <div class="phase" data-phase="verifying"><div class="num">4</div><div class="label">Verify</div><div class="progress"></div></div>
+    <div class="phase" data-phase="complete"><div class="num">5</div><div class="label">Done</div><div class="progress"></div></div>
+  </div>
+
+  <div class="metrics">
+    <div class="metric" id="m-accuracy">
+      <div class="value"><span id="acc-val">–</span>%</div>
+      <div class="label">Accuracy (f32)</div>
+    </div>
+    <div class="metric" id="m-ternary">
+      <div class="value"><span id="tern-val">–</span>%</div>
+      <div class="label">Accuracy (ternär)</div>
+    </div>
+    <div class="metric" id="m-compression">
+      <div class="value"><span id="comp-val">–</span>x</div>
+      <div class="label">Kompression</div>
+    </div>
+    <div class="metric" id="m-time">
+      <div class="value"><span id="time-val">–</span>s</div>
+      <div class="label">Zeit</div>
+    </div>
+  </div>
+</div>
+
+<div class="grid2">
+  <div class="chart-card">
+    <h3><span class="dot"></span> Accuracy-Verlauf (f32 vs Ternary)</h3>
+    <svg id="acc-chart" viewBox="0 0 600 200" style="width:100%;height:200px"></svg>
+  </div>
+  <div class="chart-card">
+    <h3><span class="dot" style="background:var(--success)"></span> Confusion Matrix (10x10)</h3>
+    <div id="confusion-wrap" style="font-size:10px;color:var(--muted);text-align:center;padding:40px 0">Warten auf Daten...</div>
+  </div>
+</div>
+
+<div class="big-card" style="margin-top:16px">
+  <h3 style="font-size:13px;font-weight:700;margin-bottom:8px">Live Log</h3>
+  <div class="log" id="log"><div class="line"><span class="ts">[ready]</span> Warte auf Start...</div></div>
+</div>
+
+<div class="results-banner" id="results">
+  <h2 id="results-title">✓ Demo erfolgreich abgeschlossen</h2>
+  <div class="stats">
+    <div><div class="num" id="r-accuracy">–</div><div class="lbl">Final Accuracy</div></div>
+    <div><div class="num" id="r-compression">–</div><div class="lbl">Kompressionsrate</div></div>
+    <div><div class="num" id="r-size">–</div><div class="lbl">Model-Größe</div></div>
+  </div>
+  <p style="margin-top:16px;text-align:center;font-size:13px">
+    <span id="r-detail"></span>
+  </p>
+</div>
+
+</div>
+
+<script>
+const QO_URL = window.location.origin.includes('localhost') || window.location.origin.includes('file://') || window.location.origin === 'null'
+  ? 'http://localhost:4646' : window.location.origin;
+
+const accHistory = [];
+const tsStart = Date.now();
+
+function log(msg, kind = 'info') {
+  const el = document.getElementById('log');
+  const t = new Date().toLocaleTimeString('de-DE');
+  const line = document.createElement('div');
+  line.className = 'line';
+  line.innerHTML = `<span class="ts">[${t}]</span> <span class="${kind}">${msg}</span>`;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+
+function setPhase(phase, progress = 0, done = false) {
+  const phases = ['loading', 'training', 'compressing', 'verifying', 'complete'];
+  const idx = phases.indexOf(phase);
+  document.querySelectorAll('.phase').forEach((el, i) => {
+    const p = el.dataset.phase;
+    el.classList.remove('active', 'done');
+    const bar = el.querySelector('.progress');
+    if (i < idx || (i === idx && done)) {
+      el.classList.add('done');
+      bar.style.width = '100%';
+    } else if (i === idx) {
+      el.classList.add('active');
+      bar.style.width = (progress * 100) + '%';
+    } else {
+      bar.style.width = '0%';
+    }
+  });
+}
+
+function drawAccChart() {
+  const svg = document.getElementById('acc-chart');
+  if (accHistory.length < 1) return;
+
+  const w = 600, h = 200, p = { t: 20, r: 20, b: 30, l: 50 };
+  const cw = w - p.l - p.r, ch = h - p.t - p.b;
+  const maxEp = Math.max(...accHistory.map(d => d.epoch), 1);
+
+  const x = e => p.l + (e / maxEp) * cw;
+  const y = a => p.t + ch - a * ch;
+
+  const path = accHistory.map((d, i) => (i === 0 ? 'M' : 'L') + x(d.epoch) + ',' + y(d.acc)).join(' ');
+
+  let grid = '';
+  for (let v of [0.2, 0.4, 0.6, 0.8, 0.95, 1.0]) {
+    grid += `<line x1="${p.l}" y1="${y(v)}" x2="${w-p.r}" y2="${y(v)}" stroke="#d8dce6" stroke-width="0.5" stroke-dasharray="4,4"/>`;
+    grid += `<text x="${p.l-4}" y="${y(v)+4}" text-anchor="end" font-size="10" fill="#8b90a0">${(v*100).toFixed(0)}%</text>`;
+  }
+
+  // 95% target line
+  grid += `<line x1="${p.l}" y1="${y(0.95)}" x2="${w-p.r}" y2="${y(0.95)}" stroke="#16a87a" stroke-width="1.5" stroke-dasharray="6,4"/>`;
+  grid += `<text x="${w-p.r-4}" y="${y(0.95)-4}" text-anchor="end" font-size="10" fill="#16a87a" font-weight="700">95% Ziel</text>`;
+
+  svg.innerHTML = grid +
+    `<path d="${path}" fill="none" stroke="#3b7de8" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>` +
+    accHistory.map(d => `<circle cx="${x(d.epoch)}" cy="${y(d.acc)}" r="4" fill="#3b7de8" stroke="white" stroke-width="2"/>`).join('') +
+    `<text x="${w/2}" y="${h-4}" text-anchor="middle" font-size="10" fill="#8b90a0">Epoch</text>` +
+    (accHistory.length > 0 ? `<text x="${x(accHistory[accHistory.length-1].epoch)+8}" y="${y(accHistory[accHistory.length-1].acc)+4}" font-size="12" font-weight="700" fill="#3b7de8">${(accHistory[accHistory.length-1].acc*100).toFixed(1)}%</text>` : '');
+}
+
+function drawConfusion(matrix) {
+  const wrap = document.getElementById('confusion-wrap');
+  let html = '<div class="confusion">';
+  html += '<div class="hdr">·</div>';
+  for (let j = 0; j < 10; j++) html += `<div class="hdr">${j}</div>`;
+  const max = Math.max(...matrix.flat());
+  for (let i = 0; i < 10; i++) {
+    html += `<div class="hdr">${i}</div>`;
+    for (let j = 0; j < 10; j++) {
+      const v = matrix[i][j];
+      const cls = v === 0 ? 'val0' : i === j ? 'diag' : '';
+      const intensity = v === 0 ? 0 : Math.min(1, v / max);
+      const bg = i === j ? '' : `background: rgba(59,125,232,${intensity * 0.6});`;
+      html += `<div class="${cls}" style="${bg}">${v}</div>`;
+    }
+  }
+  html += '</div>';
+  wrap.innerHTML = html;
+}
+
+async function checkStatus() {
+  try {
+    const r = await fetch(QO_URL + '/api/health');
+    document.getElementById('server-status').textContent = r.ok ? '● Server Online' : '● Offline';
+    document.getElementById('server-status').classList.toggle('ok', r.ok);
+  } catch(e) {
+    document.getElementById('server-status').textContent = '● Offline';
+    document.getElementById('server-status').classList.remove('ok');
+  }
+}
+
+async function startDemo() {
+  const btn = document.getElementById('start-btn');
+  btn.disabled = true;
+  document.getElementById('start-label').textContent = 'Läuft...';
+  document.getElementById('start-label').classList.add('pulsing');
+
+  // Reset
+  accHistory.length = 0;
+  document.getElementById('results').classList.remove('show');
+  document.getElementById('acc-val').textContent = '–';
+  document.getElementById('tern-val').textContent = '–';
+  document.getElementById('comp-val').textContent = '–';
+  document.getElementById('time-val').textContent = '–';
+  log('Starte End-to-End Demo...', 'info');
+
+  try {
+    const res = await fetch(QO_URL + '/api/demo/mnist-igqk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ train_samples: 60000, refine_epochs: 10 }),
+    });
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '', evt = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (line.startsWith('event: ')) evt = line.slice(7).trim();
+        else if (line.startsWith('data: ')) {
+          try {
+            const d = JSON.parse(line.slice(6));
+            handleEvent(evt, d);
+          } catch(e) {}
+        }
+      }
+    }
+  } catch(e) {
+    log('Fehler: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    document.getElementById('start-label').textContent = 'Demo erneut starten';
+    document.getElementById('start-label').classList.remove('pulsing');
+  }
+}
+
+function handleEvent(evt, d) {
+  if (evt === 'loading') {
+    setPhase('loading', d.progress, d.progress >= 1);
+    log(d.message, 'info');
+  } else if (evt === 'training') {
+    setPhase('training', d.progress, d.progress >= 1);
+    if (d.f32_accuracy > 0) {
+      accHistory.push({ epoch: d.epoch, acc: d.f32_accuracy });
+      drawAccChart();
+      document.getElementById('acc-val').textContent = (d.f32_accuracy * 100).toFixed(1);
+      log(`Epoch ${d.epoch}/${d.total_epochs}: Accuracy ${(d.f32_accuracy*100).toFixed(2)}%`,
+          d.f32_accuracy >= 0.95 ? 'success' : 'info');
+    }
+  } else if (evt === 'compressing') {
+    setPhase('compressing', d.progress, d.progress >= 1);
+    log(d.message, 'warn');
+  } else if (evt === 'verifying') {
+    setPhase('verifying', d.progress, true);
+    document.getElementById('tern-val').textContent = (d.ternary_accuracy * 100).toFixed(1);
+    log(`Ternary-Verification: ${(d.ternary_accuracy*100).toFixed(2)}%`, 'success');
+  } else if (evt === 'complete') {
+    setPhase('complete', 1, true);
+    document.getElementById('acc-val').textContent = (d.f32_accuracy * 100).toFixed(1);
+    document.getElementById('tern-val').textContent = (d.ternary_accuracy * 100).toFixed(1);
+    document.getElementById('comp-val').textContent = d.compression_ratio.toFixed(1);
+    document.getElementById('time-val').textContent = d.total_time_secs.toFixed(1);
+    drawConfusion(d.confusion_matrix);
+
+    // Results banner
+    const passed = d.f32_accuracy >= 0.95;
+    const banner = document.getElementById('results');
+    banner.classList.add('show');
+    document.getElementById('results-title').textContent = passed ? '✓ 95% Ziel erreicht!' : `Accuracy ${(d.f32_accuracy*100).toFixed(1)}% (Ziel: 95%)`;
+    document.getElementById('r-accuracy').textContent = (d.f32_accuracy * 100).toFixed(2) + '%';
+    document.getElementById('r-compression').textContent = d.compression_ratio.toFixed(1) + 'x';
+    document.getElementById('r-size').textContent = (d.ternary_size_bytes / 1024).toFixed(1) + ' KB';
+    document.getElementById('r-detail').textContent =
+      `${d.total_weights.toLocaleString()} Gewichte · ${(d.f32_size_bytes/1024).toFixed(0)} KB (f32) → ${(d.ternary_size_bytes/1024).toFixed(1)} KB (ternär) · ${d.total_time_secs.toFixed(1)}s Training auf ${d.train_samples.toLocaleString()} Samples`;
+
+    document.getElementById('mnist-status').textContent = `✓ ${d.train_samples.toLocaleString()} / ${d.test_samples.toLocaleString()} Samples`;
+    document.getElementById('mnist-status').classList.add('ok');
+
+    log(`✓ Demo abgeschlossen: ${(d.f32_accuracy*100).toFixed(2)}% Accuracy · ${d.compression_ratio.toFixed(1)}x Kompression · ${d.total_time_secs.toFixed(1)}s`, 'success');
+  } else if (evt === 'error') {
+    log('FEHLER: ' + d.message, 'error');
+  }
+}
+
+document.getElementById('start-btn').addEventListener('click', startDemo);
+checkStatus();
+setInterval(checkStatus, 5000);
+</script>
+</body>
+</html>

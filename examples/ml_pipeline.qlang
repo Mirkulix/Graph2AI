@@ -1,0 +1,23 @@
+// Complete ML pipeline in QLANG
+let epochs = 10
+let learning_rate = 0.1
+
+print("=== QLANG ML Pipeline ===")
+print("Epochs: " + str(epochs))
+print("Learning rate: " + str(learning_rate))
+
+// Define the model as a graph
+graph classifier {
+  input x: f32[4]
+  input W1: f32[4, 8]
+  input W2: f32[8, 2]
+  node h = matmul(x, W1)
+  node a = relu(h)
+  node out = matmul(a, W2)
+  node pred = softmax(out)
+  output predictions = pred
+}
+
+print("Model defined: classifier")
+print("Architecture: 4 -> 8 -> 2")
+print("Ready for training!")

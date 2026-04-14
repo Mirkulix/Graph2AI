@@ -1,0 +1,20 @@
+// QLANG - Hello World
+print("Hello from QLANG!")
+print("QLANG version: 0.1.0")
+
+let name = "World"
+print("Hello, " + name + "!")
+
+// Variables and math
+let x = 42
+let y = x * 2 + 1
+print("x = " + str(x) + ", y = " + str(y))
+
+// Built-in functions
+print("type(x) = " + type(x))
+print("type(name) = " + type(name))
+print("abs(-7) = " + str(abs(-7)))
+print("min(3, 5) = " + str(min(3, 5)))
+print("max(3, 5) = " + str(max(3, 5)))
+print("sqrt(16) = " + str(sqrt(16)))
+print("len(name) = " + str(len(name)))

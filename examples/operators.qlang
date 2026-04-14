@@ -1,0 +1,53 @@
+// QLANG Operator Test - Alle Logik-Operatoren
+
+print("=== Logische Operatoren ===")
+print("true and false = " + str(true and false))
+print("true or false  = " + str(true or false))
+print("not true       = " + str(not true))
+print("true && false  = " + str(true && false))
+print("true || false  = " + str(true || false))
+print("!true          = " + str(!true))
+
+print("")
+print("=== Vergleich ===")
+print("5 == 5  = " + str(5 == 5))
+print("5 != 3  = " + str(5 != 3))
+print("5 > 3   = " + str(5 > 3))
+print("5 < 3   = " + str(5 < 3))
+print("5 >= 5  = " + str(5 >= 5))
+print("5 <= 4  = " + str(5 <= 4))
+
+print("")
+print("=== Arithmetik ===")
+print("10 + 3  = " + str(10 + 3))
+print("10 - 3  = " + str(10 - 3))
+print("10 * 3  = " + str(10 * 3))
+print("10 / 3  = " + str(10 / 3))
+print("10 % 3  = " + str(10 % 3))
+print("2 ** 10 = " + str(2 ** 10))
+
+print("")
+print("=== Bitweise ===")
+print("5 & 3   = " + str(5 & 3))
+print("5 | 3   = " + str(5 | 3))
+print("5 ^ 3   = " + str(5 ^ 3))
+print("~0      = " + str(~0))
+print("1 << 4  = " + str(1 << 4))
+print("16 >> 2 = " + str(16 >> 2))
+
+print("")
+print("=== Compound Assignment ===")
+let x = 10
+x += 5
+print("x += 5  -> " + str(x))
+x -= 3
+print("x -= 3  -> " + str(x))
+x *= 2
+print("x *= 2  -> " + str(x))
+x /= 4
+print("x /= 4  -> " + str(x))
+x %= 5
+print("x %= 5  -> " + str(x))
+
+print("")
+print("Alle Operatoren funktionieren!")

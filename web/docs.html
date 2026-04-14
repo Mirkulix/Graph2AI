@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QLANG - Dokumentation</title>
+<!-- Zero external dependencies -->
+<style>
+:root { --bg:#000; --surface:#0d1117; --card:#161b22; --border:#21262d; --text:#e6edf3; --dim:#7d8590; --blue:#2563EB; --blue-l:#58a6ff; --green:#3fb950; --orange:#f97316; --purple:#bc8cff; --red:#f85149; }
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;line-height:1.7}
+a{color:var(--blue-l);text-decoration:none}
+a:hover{text-decoration:underline}
+
+.top-bar{background:var(--surface);border-bottom:1px solid var(--border);padding:14px 24px;display:flex;align-items:center;gap:16px;position:sticky;top:0;z-index:10;backdrop-filter:blur(12px)}
+.top-bar .brand{font-family:'SF Mono','Menlo','Consolas',monospace;font-size:18px;font-weight:600;color:var(--blue-l);letter-spacing:2px}
+.top-bar .sep{width:1px;height:24px;background:var(--border)}
+.top-bar nav{display:flex;gap:8px}
+.top-bar nav a{padding:6px 12px;border-radius:6px;font-size:13px;font-weight:500;color:var(--dim);transition:all 0.15s}
+.top-bar nav a:hover,.top-bar nav a.active{background:var(--card);color:var(--text);text-decoration:none}
+.top-bar .back-btn{margin-left:auto;padding:6px 14px;border-radius:6px;background:var(--blue);color:#fff;font-size:13px;font-weight:600;border:none;cursor:pointer;font-family:inherit}
+.top-bar .back-btn:hover{background:#3b82f6}
+
+.layout{display:flex;max-width:1200px;margin:0 auto}
+.sidebar{width:220px;padding:20px 16px;position:sticky;top:56px;height:calc(100vh - 56px);overflow-y:auto;flex-shrink:0;border-right:1px solid var(--border)}
+.sidebar a{display:block;padding:6px 10px;border-radius:6px;font-size:13px;color:var(--dim);margin-bottom:2px;transition:all 0.15s}
+.sidebar a:hover,.sidebar a.active{background:var(--card);color:var(--text);text-decoration:none}
+.sidebar .cat{font-size:10px;text-transform:uppercase;letter-spacing:1.2px;color:var(--dim);margin:16px 0 6px 10px;font-weight:600}
+.sidebar .cat:first-child{margin-top:0}
+
+.content{flex:1;padding:32px 40px;max-width:800px}
+section{margin-bottom:48px;scroll-margin-top:80px}
+h1{font-size:32px;font-weight:700;margin-bottom:8px;color:var(--text)}
+h2{font-size:22px;font-weight:600;margin-bottom:12px;color:var(--text);padding-bottom:8px;border-bottom:1px solid var(--border)}
+h3{font-size:16px;font-weight:600;margin:20px 0 8px;color:var(--blue-l)}
+p{margin-bottom:12px;color:var(--text)}
+.subtitle{font-size:16px;color:var(--dim);margin-bottom:24px}
+
+ul,ol{margin:0 0 16px 20px;color:var(--text)}
+li{margin-bottom:6px}
+
+code{font-family:'SF Mono','Menlo','Consolas',monospace;font-size:13px;background:var(--card);padding:2px 6px;border-radius:4px;color:var(--orange)}
+pre{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px;margin:12px 0 20px;overflow-x:auto;font-family:'SF Mono','Menlo','Consolas',monospace;font-size:13px;line-height:1.6;color:var(--text)}
+
+.card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:16px 0}
+.card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:16px}
+.card h4{font-size:14px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:6px}
+.card p{font-size:13px;color:var(--dim);margin:0}
+.card .icon{width:20px;height:20px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0}
+.card .icon.blue{background:rgba(37,99,235,0.15);color:var(--blue-l)}
+.card .icon.green{background:rgba(63,185,80,0.15);color:var(--green)}
+.card .icon.purple{background:rgba(188,140,255,0.15);color:var(--purple)}
+.card .icon.orange{background:rgba(249,115,22,0.15);color:var(--orange)}
+
+table{width:100%;border-collapse:collapse;margin:12px 0 20px;font-size:13px}
+th{text-align:left;padding:8px 12px;background:var(--surface);border:1px solid var(--border);color:var(--dim);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.5px}
+td{padding:8px 12px;border:1px solid var(--border)}
+
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
+.badge.yes{background:rgba(63,185,80,0.15);color:var(--green)}
+.badge.no{background:rgba(248,81,73,0.15);color:var(--red)}
+.badge.soon{background:rgba(210,153,34,0.15);color:var(--yellow)}
+
+.diagram{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:20px;margin:16px 0;font-family:'SF Mono','Menlo','Consolas',monospace;font-size:12px;line-height:1.8;color:var(--dim);overflow-x:auto;white-space:pre}
+.diagram .hl{color:var(--blue-l)}
+.diagram .gr{color:var(--green)}
+.diagram .or{color:var(--orange)}
+.diagram .pu{color:var(--purple)}
+
+.callout{background:var(--card);border-left:3px solid var(--blue);border-radius:0 8px 8px 0;padding:14px 16px;margin:16px 0;font-size:13px}
+.callout.warn{border-left-color:var(--orange)}
+.callout.ok{border-left-color:var(--green)}
+
+@media(max-width:768px){
+  .sidebar{display:none}
+  .content{padding:20px}
+  .card-grid{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+
+<div class="top-bar">
+  <span class="brand">QLANG</span>
+  <span class="sep"></span>
+  <nav>
+    <a href="#uebersicht" class="active">Uebersicht</a>
+    <a href="#architektur">Architektur</a>
+    <a href="#pipeline">Pipeline</a>
+    <a href="#agenten">Agenten</a>
+    <a href="#cli">CLI</a>
+    <a href="#faq">FAQ</a>
+  </nav>
+  <a href="/" class="back-btn">Zurueck zum Dashboard</a>
+</div>
+
+<div class="layout">
+  <aside class="sidebar">
+    <div class="cat">Grundlagen</div>
+    <a href="#uebersicht">Was ist QLANG?</a>
+    <a href="#ziel">Ziel der Sprache</a>
+    <a href="#nicht">Was QLANG nicht ist</a>
+    <div class="cat">Architektur</div>
+    <a href="#architektur">System-Uebersicht</a>
+    <a href="#komponenten">Komponenten</a>
+    <a href="#igqk">IGQK Kompression</a>
+    <div class="cat">Anwendung</div>
+    <a href="#pipeline">Pipeline benutzen</a>
+    <a href="#agenten">KI-Agenten</a>
+    <a href="#ollama">Ollama Integration</a>
+    <a href="#gpu">MLX / GPU</a>
+    <div class="cat">Referenz</div>
+    <a href="#cli">CLI Befehle</a>
+    <a href="#api">REST API</a>
+    <a href="#qlang-syntax">QLANG Syntax</a>
+    <a href="#faq">FAQ</a>
+  </aside>
+
+  <main class="content">
+
+    <!-- ===== WAS IST QLANG ===== -->
+    <section id="uebersicht">
+      <h1>Was ist QLANG?</h1>
+      <p class="subtitle">Die Programmiersprache fuer KI-Systeme</p>
+
+      <p>QLANG ist eine <strong>Graph-basierte Sprache</strong>, mit der KI-Systeme miteinander kommunizieren, neuronale Netze bauen, komprimieren und ueberall deployen koennen.</p>
+
+      <p>Stell dir vor: Zwei KIs muessen zusammenarbeiten. Normalerweise wuerden sie Text hin- und herschicken (langsam, fehleranfaellig). Mit QLANG senden sie stattdessen <strong>Berechnungsgraphen</strong> - 47x effizienter, fehlerfrei, und sofort ausfuehrbar.</p>
+
+      <div class="card-grid">
+        <div class="card">
+          <h4><span class="icon blue">1</span> Sprache</h4>
+          <p>KIs senden Graphen statt Text. 3 KB statt 50 KB pro Nachricht. Keine Parse-Fehler moeglich.</p>
+        </div>
+        <div class="card">
+          <h4><span class="icon green">2</span> Kompression</h4>
+          <p>IGQK komprimiert Modelle 16x (Float32 zu ternaer). 918 KB wird zu 59 KB.</p>
+        </div>
+        <div class="card">
+          <h4><span class="icon purple">3</span> Compiler</h4>
+          <p>Ein Modell, 9 Ziele: Browser (WASM), GPU, Native, ONNX, Assembly.</p>
+        </div>
+        <div class="card">
+          <h4><span class="icon orange">4</span> Agenten</h4>
+          <p>Lokale LLMs (Ollama) arbeiten autonom zusammen ueber das QLANG Protokoll.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== ZIEL ===== -->
+    <section id="ziel">
+      <h2>Ziel der Sprache</h2>
+      <p>QLANG loest drei Probleme:</p>
+
+      <h3>Problem 1: KIs koennen nicht effizient kommunizieren</h3>
+      <p>Wenn zwei KI-Systeme zusammenarbeiten wollen, schicken sie sich Text. Das ist wie wenn zwei Ingenieure sich Bauplaene per Telefon beschreiben statt sie zu faxen.</p>
+      <pre>Ohne QLANG:  "Bitte erstelle ein neuronales Netz mit 784 Eingaengen,
+              128 versteckten Neuronen, ReLU Aktivierung..."
+              = 500 Bytes Text, muss geparst werden, kann Fehler enthalten
+
+Mit QLANG:   graph { input x:f32[784]; node h=matmul(x,W); node a=relu(h); ... }
+              = 3 KB binaerer Graph, sofort ausfuehrbar, fehlerfrei</pre>
+
+      <h3>Problem 2: ML-Modelle sind zu gross fuer Edge-Geraete</h3>
+      <p>Ein typisches Modell braucht Python + PyTorch (mehrere GB). QLANG komprimiert und kompiliert es zu einer eigenstaendigen Datei.</p>
+      <pre>PyTorch Modell:     918 KB + Python + PyTorch (2 GB Runtime)
+QLANG komprimiert:   59 KB, laeuft standalone, kein Python noetig</pre>
+
+      <h3>Problem 3: Deployment ist komplex</h3>
+      <p>Normalerweise musst du fuer jede Plattform neu exportieren. QLANG kompiliert einmal, laeuft ueberall:</p>
+      <table>
+        <tr><th>Ziel</th><th>Format</th><th>Anwendung</th></tr>
+        <tr><td>Browser</td><td>WebAssembly (.wasm)</td><td>Web-Apps ohne Server</td></tr>
+        <tr><td>GPU</td><td>WGSL Shader</td><td>Parallele Berechnung</td></tr>
+        <tr><td>Native</td><td>.o Objektdatei</td><td>C/C++/Rust Apps einbetten</td></tr>
+        <tr><td>Interpreter</td><td>Direkt</td><td>Entwicklung & Test</td></tr>
+        <tr><td>ONNX</td><td>JSON</td><td>PyTorch Kompatibilitaet</td></tr>
+      </table>
+    </section>
+
+    <!-- ===== WAS QLANG NICHT IST ===== -->
+    <section id="nicht">
+      <h2>Was QLANG nicht ist</h2>
+      <table>
+        <tr><th>Erwartung</th><th></th><th>Realitaet</th></tr>
+        <tr><td>Ersatz fuer ChatGPT</td><td><span class="badge no">Nein</span></td><td>QLANG ist kein Chatbot - es ist eine Sprache fuer KI-Systeme</td></tr>
+        <tr><td>LLM-Training (GPT, Llama)</td><td><span class="badge no">Nein</span></td><td>Braucht Rechenzentren. QLANG trainiert kleine, spezialisierte Modelle</td></tr>
+        <tr><td>Macht Ollama schneller</td><td><span class="badge no">Nein</span></td><td>Ollama-Modelle bleiben gleich. QLANG nutzt sie als Werkzeug</td></tr>
+        <tr><td>Kleine Spezial-Modelle bauen</td><td><span class="badge yes">Ja</span></td><td>Klassifikatoren, Detektoren, Muster-Erkenner</td></tr>
+        <tr><td>Modelle komprimieren</td><td><span class="badge yes">Ja</span></td><td>16x kleiner mit IGQK (Informationsgeometrische Quantenkompression)</td></tr>
+        <tr><td>KI-Agenten orchestrieren</td><td><span class="badge yes">Ja</span></td><td>Mehrere LLMs arbeiten autonom zusammen</td></tr>
+      </table>
+    </section>
+
+    <!-- ===== ARCHITEKTUR ===== -->
+    <section id="architektur">
+      <h2>System-Architektur</h2>
+      <div class="diagram"><span class="hl">Du (Browser)</span>
+    |
+    | WebSocket
+    v
+<span class="hl">QLANG Server</span> (:8081)
+    |
+    |--- <span class="or">Ollama</span> (:11434) --- Deine lokalen LLMs
+    |       deepseek-r1, qwen3, llama3, gemma3n
+    |
+    |--- <span class="gr">Training Engine</span> --- MLX GPU (Apple Silicon)
+    |       Backpropagation, SGD, Adam
+    |
+    |--- <span class="pu">IGQK Kompressor</span> --- Float32 zu Ternaer
+    |       16x Kompression, formaler Beweis
+    |
+    |--- <span class="hl">Compiler</span> --- WASM, GPU, Native, ONNX
+            9 Compilation Targets</div>
+    </section>
+
+    <!-- ===== KOMPONENTEN ===== -->
+    <section id="komponenten">
+      <h2>Komponenten</h2>
+      <div class="card-grid">
+        <div class="card">
+          <h4><span class="icon blue">C</span> qlang-core</h4>
+          <p>Graph, Tensor, Ops, Typen. Die Datenstrukturen der Sprache.</p>
+        </div>
+        <div class="card">
+          <h4><span class="icon green">R</span> qlang-runtime</h4>
+          <p>Executor, Autograd, Training, Ollama-Client, WebSocket-Server.</p>
+        </div>
+        <div class="card">
+          <h4><span class="icon purple">K</span> qlang-compile</h4>
+          <p>Parser, LLVM JIT, WASM, GPU Shader, CLI, ONNX Export.</p>
+        </div>
+        <div class="card">
+          <h4><span class="icon orange">A</span> qlang-agent</h4>
+          <p>Agent-Protokoll (QLMS), TCP Server, Graph Emitter, Packages.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== IGQK ===== -->
+    <section id="igqk">
+      <h2>IGQK Kompression</h2>
+      <p><strong>Informationsgeometrische Quantenkompression</strong> - das mathematische Herzsttueck von QLANG.</p>
+
+      <h3>Was passiert?</h3>
+      <p>Neuronale Netz-Gewichte (Float32, je 4 Bytes) werden auf ternaere Werte reduziert: <code>{-1, 0, +1}</code> (je 2 Bits).</p>
+
+      <pre>Original:    [0.342, -0.891, 0.012, 0.756, -0.234]  = 20 Bytes
+Komprimiert: [  +1,    -1,     0,    +1,    0   ]     =  2 Bytes (2 Bits pro Wert)
+Ratio:       10x Kompression</pre>
+
+      <h3>Mathematische Garantie</h3>
+      <p>Jede Kompression traegt eine formale Beweis-Annotation (<code>@proof theorem_5_2</code>), die eine obere Schranke fuer den Genauigkeitsverlust garantiert:</p>
+      <pre>D &ge; (15n/16) / (2&beta;) &middot; log(1 + &beta; &middot; &sigma;&sup2;_min)</pre>
+      <p>Das bedeutet: Der Genauigkeitsverlust ist <strong>mathematisch begrenzt</strong>, nicht zufaellig.</p>
+    </section>
+
+    <!-- ===== PIPELINE ===== -->
+    <section id="pipeline">
+      <h2>Pipeline benutzen</h2>
+      <p>So benutzt du das Dashboard (die Hauptseite):</p>
+
+      <h3>Schritt 1: Aufgabe definieren</h3>
+      <p>Schreibe in das Textfeld was die KI bauen soll. Beispiele:</p>
+      <ul>
+        <li>"Baue einen Ziffern-Erkenner" (MNIST Klassifikator)</li>
+        <li>"Erstelle einen Muster-Detektor" (Sensordaten)</li>
+        <li>"Trainiere einen einfachen Klassifikator" (allgemein)</li>
+      </ul>
+
+      <h3>Schritt 2: LLM-Modelle waehlen</h3>
+      <p><strong>Architekt</strong>: Das LLM das die Netzwerk-Architektur entwirft (Empfehlung: deepseek-r1:1.5b - schnell).</p>
+      <p><strong>Evaluator</strong>: Das LLM das die Ergebnisse bewertet (Empfehlung: llama3.2 - ausfuehrlich).</p>
+
+      <h3>Schritt 3: Konfiguration</h3>
+      <ul>
+        <li><strong>Epochs</strong>: Wie oft das Netz die Daten sieht. Mehr = besser, aber laenger. 10 reicht fuer einen Test.</li>
+        <li><strong>Dataset</strong>: "Synthetisch" fuer schnelle Tests (5 Sek), "MNIST" fuer echte Handschrift-Erkennung.</li>
+      </ul>
+
+      <h3>Schritt 4: Pipeline starten</h3>
+      <p>Klicke "Pipeline starten". Es passiert automatisch:</p>
+      <ol>
+        <li><strong>Architekt</strong> wird gefragt (Ollama LLM entwirft die Architektur)</li>
+        <li><strong>Build</strong> (QLANG baut das neuronale Netz)</li>
+        <li><strong>Training</strong> (Backpropagation mit MLX GPU-Beschleunigung)</li>
+        <li><strong>IGQK Kompression</strong> (16x kleiner)</li>
+        <li><strong>Evaluator</strong> wird gefragt (zweites LLM bewertet das Ergebnis)</li>
+      </ol>
+
+      <div class="callout ok">
+        <strong>Was du im Dashboard siehst:</strong> Links das 3D-Netzwerk (leuchtet waehrend Training auf), Mitte den Live-Log jeder Kommunikation, rechts die Metriken (Accuracy, Loss, Kompressionsrate).
+      </div>
+    </section>
+
+    <!-- ===== AGENTEN ===== -->
+    <section id="agenten">
+      <h2>KI-Agenten</h2>
+      <p>Ein "Agent" ist ein KI-System das <strong>selbststaendig</strong> Aufgaben erledigt.</p>
+
+      <h3>Ohne Agenten</h3>
+      <pre>Du tippst:  qlang-cli train-mnist --epochs 20
+Du tippst:  qlang-cli ollama generate llama3 "Bewerte das"
+Du tippst:  qlang-cli ...
+= Du machst alles manuell, Schritt fuer Schritt</pre>
+
+      <h3>Mit Agenten</h3>
+      <pre>Du sagst:   "Baue mir einen Spam-Klassifikator"
+
+Agent A (Architekt/qwen3): Entwirft 784 &rarr; 128 &rarr; 64 &rarr; 2
+QLANG:                     Trainiert, komprimiert 16x
+Agent B (Evaluator/llama3): "96% Accuracy, Kompression OK"
+
+= Alles passiert OHNE dich</pre>
+
+      <h3>Das QLMS Protokoll</h3>
+      <p>Agenten kommunizieren ueber das <strong>QLANG Message Stream</strong> Protokoll:</p>
+      <ul>
+        <li>Binaeres Format (Magic Header: QLMS)</li>
+        <li>3 KB pro Nachricht statt 50 KB Text</li>
+        <li>Jeder Agent deklariert seine Faehigkeiten (Execute, Compile, Compress, Train, Verify)</li>
+        <li>Nachrichten enthalten komplette Berechnungsgraphen, keine Text-Beschreibungen</li>
+      </ul>
+    </section>
+
+    <!-- ===== OLLAMA ===== -->
+    <section id="ollama">
+      <h2>Ollama Integration</h2>
+      <p>QLANG spricht direkt mit deinem lokalen Ollama Server (localhost:11434).</p>
+
+      <h3>Was QLANG mit Ollama macht</h3>
+      <table>
+        <tr><th>Aktion</th><th>Beschreibung</th></tr>
+        <tr><td>Architektur-Design</td><td>LLM entwirft die Netzwerk-Struktur (Anzahl Layer, Neuronen)</td></tr>
+        <tr><td>Ergebnis-Bewertung</td><td>LLM bewertet Accuracy, Kompression, schlaegt Verbesserungen vor</td></tr>
+        <tr><td>Direkte Abfrage</td><td><code>qlang-cli ollama generate llama3.2 "Deine Frage"</code></td></tr>
+      </table>
+
+      <h3>Verfuegbare Modelle</h3>
+      <p>QLANG erkennt automatisch alle installierten Ollama-Modelle. Im Dashboard werden sie in den Dropdowns angezeigt.</p>
+
+      <div class="callout">
+        <strong>Umgebungsvariablen:</strong><br>
+        <code>QLANG_OLLAMA_HOST=127.0.0.1</code> (Standard)<br>
+        <code>QLANG_OLLAMA_PORT=11434</code> (Standard)
+      </div>
+    </section>
+
+    <!-- ===== GPU ===== -->
+    <section id="gpu">
+      <h2>MLX / GPU Beschleunigung</h2>
+      <p>Auf Apple Silicon (M1/M2/M3/M4) nutzt QLANG die <strong>GPU</strong> ueber Apples MLX Framework.</p>
+
+      <table>
+        <tr><th>Backend</th><th>20 Epochs MNIST</th><th>Speedup</th></tr>
+        <tr><td>Pure Rust (CPU Loops)</td><td>~16 Minuten</td><td>1x</td></tr>
+        <tr><td>Apple Accelerate (BLAS)</td><td>~16 Minuten</td><td>~1x</td></tr>
+        <tr><td><strong>Apple MLX (GPU)</strong></td><td><strong>5 Sekunden</strong></td><td><strong>~200x</strong></td></tr>
+      </table>
+
+      <h3>Build mit GPU</h3>
+      <pre>cargo build --release --no-default-features --features mlx</pre>
+
+      <div class="callout warn">
+        <strong>Voraussetzung:</strong> Metal Toolchain muss installiert sein:<br>
+        <code>xcodebuild -downloadComponent MetalToolchain</code>
+      </div>
+    </section>
+
+    <!-- ===== CLI ===== -->
+    <section id="cli">
+      <h2>CLI Befehle</h2>
+      <table>
+        <tr><th>Befehl</th><th>Beschreibung</th></tr>
+        <tr><td><code>qlang-cli web --port 8081</code></td><td>Dashboard + WebSocket Server starten</td></tr>
+        <tr><td><code>qlang-cli train-mnist --epochs 20</code></td><td>MNIST Training mit Live-Dashboard</td></tr>
+        <tr><td><code>qlang-cli ai-train --quick</code></td><td>KI entwirft + trainiert + bewertet autonom</td></tr>
+        <tr><td><code>qlang-cli ollama health</code></td><td>Pruefen ob Ollama laeuft</td></tr>
+        <tr><td><code>qlang-cli ollama models</code></td><td>Verfuegbare LLM-Modelle auflisten</td></tr>
+        <tr><td><code>qlang-cli ollama generate MODEL "Prompt"</code></td><td>Text generieren</td></tr>
+        <tr><td><code>qlang-cli ollama chat MODEL "Nachricht"</code></td><td>Chat-Modus</td></tr>
+        <tr><td><code>qlang-cli repl</code></td><td>Interaktive QLANG Shell</td></tr>
+        <tr><td><code>qlang-cli parse datei.qlang</code></td><td>QLANG-Datei parsen</td></tr>
+        <tr><td><code>qlang-cli optimize graph.json</code></td><td>Graph optimieren</td></tr>
+      </table>
+    </section>
+
+    <!-- ===== API ===== -->
+    <section id="api">
+      <h2>REST API</h2>
+      <p>Der QLANG Server bietet eine HTTP API (kein Framework, pure std::net):</p>
+      <table>
+        <tr><th>Endpoint</th><th>Methode</th><th>Beschreibung</th></tr>
+        <tr><td><code>/graph</code></td><td>POST</td><td>.qlang Text zu JSON Graph kompilieren</td></tr>
+        <tr><td><code>/execute</code></td><td>POST</td><td>Graph mit Inputs ausfuehren</td></tr>
+        <tr><td><code>/compress</code></td><td>POST</td><td>Gewichte ternaer komprimieren</td></tr>
+        <tr><td><code>/parse</code></td><td>POST</td><td>QLANG Text parsen, Diagnostics zurueckgeben</td></tr>
+        <tr><td><code>/optimize</code></td><td>POST</td><td>Graph optimieren (6 Passes)</td></tr>
+        <tr><td><code>/info</code></td><td>GET</td><td>Server-Info und Capabilities</td></tr>
+      </table>
+    </section>
+
+    <!-- ===== QLANG SYNTAX ===== -->
+    <section id="qlang-syntax">
+      <h2>QLANG Syntax</h2>
+      <p>Ein QLANG-Programm ist ein <strong>Berechnungsgraph</strong>:</p>
+      <pre>graph classifier {
+  input image: f32[1, 784]        // Eingabe: 28x28 Pixel Bild
+  input W1: f32[784, 128]         // Gewichte Layer 1
+  input W2: f32[128, 10]          // Gewichte Layer 2
+
+  node hidden = matmul(image, W1) // Matrix-Multiplikation
+  node activated = relu(hidden)   // ReLU Aktivierung
+  node logits = matmul(activated, W2)
+  node predictions = softmax(logits)
+
+  // IGQK Kompression mit Beweis-Annotation
+  node compressed = to_ternary(W1) @proof theorem_5_2
+
+  output result = predictions
+}</pre>
+
+      <h3>Verfuegbare Operationen</h3>
+      <table>
+        <tr><th>Op</th><th>Beschreibung</th></tr>
+        <tr><td><code>add, mul, sub</code></td><td>Element-weise Arithmetik</td></tr>
+        <tr><td><code>matmul</code></td><td>Matrix-Multiplikation</td></tr>
+        <tr><td><code>relu, sigmoid, gelu</code></td><td>Aktivierungsfunktionen</td></tr>
+        <tr><td><code>softmax</code></td><td>Normalisierung fuer Klassifikation</td></tr>
+        <tr><td><code>to_ternary</code></td><td>IGQK Kompression zu {-1, 0, +1}</td></tr>
+        <tr><td><code>attention</code></td><td>Multi-Head Attention (Transformer)</td></tr>
+        <tr><td><code>layer_norm</code></td><td>Layer Normalization</td></tr>
+        <tr><td><code>conv2d</code></td><td>2D Faltung (CNN)</td></tr>
+        <tr><td><code>ollama_generate</code></td><td>LLM Text-Generierung via Ollama</td></tr>
+        <tr><td><code>ollama_chat</code></td><td>LLM Chat via Ollama</td></tr>
+      </table>
+    </section>
+
+    <!-- ===== FAQ ===== -->
+    <section id="faq">
+      <h2>Haeufige Fragen</h2>
+
+      <h3>Kann QLANG ein LLM wie GPT trainieren?</h3>
+      <p><strong>Nein.</strong> LLMs brauchen Tausende GPUs und Monate Training. QLANG trainiert kleine, spezialisierte Modelle (Klassifikatoren, Detektoren) in Sekunden.</p>
+
+      <h3>Brauche ich Python?</h3>
+      <p><strong>Nein.</strong> QLANG ist komplett in Rust geschrieben. Kein Python, kein PyTorch, keine Runtime-Abhaengigkeiten.</p>
+
+      <h3>Was bringt die Kompression?</h3>
+      <p>Ein 918 KB Modell wird zu 59 KB - klein genug fuer einen Browser, ein Handy oder einen Mikrocontroller. Es laeuft ohne Server, ohne Cloud.</p>
+
+      <h3>Warum brauche ich Ollama?</h3>
+      <p>Ollama ist <strong>optional</strong>. QLANG kann auch ohne LLMs Modelle trainieren und komprimieren. Ollama wird nur fuer die "KI-entwirft-KI" Pipeline gebraucht (Architekt + Evaluator).</p>
+
+      <h3>Was ist der Unterschied zu TensorFlow/PyTorch?</h3>
+      <p>TensorFlow/PyTorch sind <strong>Trainings-Frameworks</strong> fuer grosse Modelle. QLANG ist eine <strong>Sprache + Compiler + Kompressor</strong> fuer kleine, deploybare Modelle. Sie ergaenzen sich: Du kannst ein PyTorch-Modell als ONNX exportieren und mit QLANG komprimieren.</p>
+
+      <h3>Laeuft QLANG auf Windows/Linux?</h3>
+      <p><strong>Ja</strong>, aber ohne MLX GPU-Beschleunigung (nur auf Apple Silicon). Die CPU-Version funktioniert ueberall wo Rust kompiliert.</p>
+    </section>
+
+  </main>
+</div>
+
+<script>
+// Smooth scroll + active state
+document.querySelectorAll('a[href^="#"]').forEach(function(a){
+  a.addEventListener('click', function(e){
+    e.preventDefault();
+    var t = document.querySelector(this.getAttribute('href'));
+    if(t) t.scrollIntoView({behavior:'smooth'});
+    document.querySelectorAll('.sidebar a, .top-bar nav a').forEach(function(x){x.classList.remove('active')});
+    this.classList.add('active');
+  });
+});
+</script>
+</body>
+</html>

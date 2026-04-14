@@ -1,0 +1,38 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "qlang"
+version = "0.1.0"
+description = "QLANG - Graph-based AI-to-AI Programming Language with IGQK Compression"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+license-files = ["../../LICENSE"]
+authors = [{name = "Aleksandar Barisic"}]
+readme = "README.md"
+keywords = ["ai", "ml", "compiler", "graph", "quantum", "compression", "ternary"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/ABarisic/qlang"
+Repository = "https://github.com/ABarisic/qlang"
+Documentation = "https://github.com/ABarisic/qlang/tree/main/crates/qlang-python"
+"Bug Tracker" = "https://github.com/ABarisic/qlang/issues"
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+manifest-path = "Cargo.toml"
+module-name = "qlang"

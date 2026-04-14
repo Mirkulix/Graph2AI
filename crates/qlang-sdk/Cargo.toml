@@ -1,0 +1,12 @@
+[package]
+name = "qlang-sdk"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "QLANG SDK - Secure AI-to-AI Communication"
+
+[dependencies]
+qlang-core = { path = "../qlang-core" }
+qlang-agent = { path = "../qlang-agent" }
+qlang-runtime = { path = "../qlang-runtime", default-features = false }
+serde_json = "1"
