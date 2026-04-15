@@ -15,9 +15,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::convert::Infallible;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::process::{ChildStdin, Command as TokioCommand};
+use tokio::sync::Mutex;
 use crate::AppState;
 
 const QLMS_MAGIC: &[u8; 4] = b"QLMS";
@@ -32,6 +36,12 @@ pub struct SupervisorDaemonState {
     pub interval_ms: u64,
     pub last_error: Option<String>,
     pub started_at: Option<String>,
+}
+
+pub struct LiveSessionHandle {
+    pub session_id: u64,
+    pub agent_name: String,
+    pub stdin: Arc<Mutex<ChildStdin>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -737,7 +747,7 @@ pub async fn suggest_agent(Json(request): Json<SuggestAgentRequest>) -> Json<Val
 
 /// POST /api/supervisor/dispatch
 pub async fn dispatch_preset(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Json(request): Json<DispatchPresetRequest>,
 ) -> Json<Value> {
     let state_path = resolve_state_path(request.state);
@@ -761,7 +771,7 @@ pub async fn dispatch_preset(
         }));
     }
 
-    let mut state = match load_supervisor_state(&state_path) {
+    let mut supervisor_state = match load_supervisor_state(&state_path) {
         Ok(state) => state,
         Err(err) => {
             return Json(json!({
@@ -772,8 +782,8 @@ pub async fn dispatch_preset(
     };
 
     let agent_name = preset.key.clone();
-    if !state.agents.iter().any(|agent| agent.name == agent_name) {
-        state.agents.push(SupervisorAgent {
+    if !supervisor_state.agents.iter().any(|agent| agent.name == agent_name) {
+        supervisor_state.agents.push(SupervisorAgent {
             name: agent_name.clone(),
             kind: preset.kind.clone(),
             command: preset.command.clone(),
@@ -787,7 +797,7 @@ pub async fn dispatch_preset(
                 labels
             },
         });
-        state.event_log.push(SupervisorEvent {
+        supervisor_state.event_log.push(SupervisorEvent {
             at: now_string(),
             kind: "install-preset".into(),
             message: format!("installed preset '{}' as agent '{}'", preset.key, agent_name),
@@ -796,56 +806,164 @@ pub async fn dispatch_preset(
         });
     }
 
-    let now = now_string();
-    let task_id = state.next_task_id;
-    state.next_task_id += 1;
-    state.tasks.push(SupervisorTask {
-        id: task_id,
-        title: request.title,
-        goal: request.goal,
-        assigned_agent: Some(agent_name.clone()),
-        status: "Queued".into(),
-        depends_on: Vec::new(),
-        created_at: now.clone(),
-        updated_at: now.clone(),
-        next_action: request
-            .next_action
-            .unwrap_or_else(|| preset.default_next_action.clone()),
-        latest_handover_path: None,
-        notes: vec![format!("preset:{}", preset.key), format!("role:{}", preset.role)],
-    });
-    state.event_log.push(SupervisorEvent {
-        at: now,
-        kind: "enqueue".into(),
-        message: format!("enqueued task #{task_id} via preset '{}'", preset.key),
-        task_id: Some(task_id),
-        session_id: None,
-    });
-
-    if let Err(err) = save_supervisor_state(&state_path, &state) {
-        return Json(json!({
-            "state": state_path.display().to_string(),
-            "error": err
-        }));
-    }
-
     let start_now = request.start_now.unwrap_or(false);
     let spawn = request.spawn.unwrap_or(true);
-    let dispatch_result = if start_now {
-        run_tick(&state_path, spawn)
-    } else {
+    let dispatch_result = if start_now && spawn {
+        let now = now_string();
+        let task_id = supervisor_state.next_task_id;
+        supervisor_state.next_task_id += 1;
+        let session_id = supervisor_state.next_session_id;
+        supervisor_state.next_session_id += 1;
+        let next_action = request
+            .next_action
+            .clone()
+            .unwrap_or_else(|| preset.default_next_action.clone());
+
+        let agent = match supervisor_state
+            .agents
+            .iter()
+            .find(|agent| agent.name == agent_name)
+            .cloned()
+        {
+            Some(agent) => agent,
+            None => {
+                return Json(json!({
+                    "state": state_path.display().to_string(),
+                    "error": format!("agent '{}' is missing after preset install", agent_name)
+                }))
+            }
+        };
+
+        let spawned = match spawn_live_agent_process(
+            state.clone(),
+            state_path.clone(),
+            session_id,
+            task_id,
+            &agent,
+        )
+        .await
+        {
+            Ok(spawned) => spawned,
+            Err(err) => {
+                return Json(json!({
+                    "state": state_path.display().to_string(),
+                    "error": err
+                }))
+            }
+        };
+
+        supervisor_state.tasks.push(SupervisorTask {
+            id: task_id,
+            title: request.title.clone(),
+            goal: request.goal.clone(),
+            assigned_agent: Some(agent_name.clone()),
+            status: "Running".into(),
+            depends_on: Vec::new(),
+            created_at: now.clone(),
+            updated_at: now.clone(),
+            next_action,
+            latest_handover_path: None,
+            notes: vec![
+                format!("preset:{}", preset.key),
+                format!("role:{}", preset.role),
+                "mode:live-bridge".into(),
+            ],
+        });
+        supervisor_state.sessions.push(SupervisorSessionWritable {
+            id: session_id,
+            agent_name: agent_name.clone(),
+            tab_label: format!("{}-task-{}", agent_name, task_id),
+            status: "Running".into(),
+            current_task_id: Some(task_id),
+            started_at: now.clone(),
+            last_update: now.clone(),
+            last_handover_path: None,
+            launch_command: render_launch_command(&agent),
+            process_id: Some(spawned.process_id),
+            exit_code: None,
+            stdout_log_path: Some(spawned.stdout_log_path.clone()),
+            stderr_log_path: Some(spawned.stderr_log_path.clone()),
+            prompt_log_path: Some(spawned.prompt_log_path.clone()),
+        });
+        supervisor_state.event_log.push(SupervisorEvent {
+            at: now.clone(),
+            kind: "live-dispatch".into(),
+            message: format!("started live session #{} for preset '{}'", session_id, preset.key),
+            task_id: Some(task_id),
+            session_id: Some(session_id),
+        });
+
+        if let Err(err) = save_supervisor_state(&state_path, &supervisor_state) {
+            return Json(json!({
+                "state": state_path.display().to_string(),
+                "error": err
+            }));
+        }
+
         json!({
             "state": state_path.display().to_string(),
-            "status": "queued",
+            "status": "scheduled",
+            "mode": "live_bridge",
             "task_id": task_id,
-            "agent": agent_name
+            "session_id": session_id,
+            "agent": agent_name,
+            "process_id": spawned.process_id
         })
+    } else {
+        let now = now_string();
+        let task_id = supervisor_state.next_task_id;
+        supervisor_state.next_task_id += 1;
+        supervisor_state.tasks.push(SupervisorTask {
+            id: task_id,
+            title: request.title.clone(),
+            goal: request.goal.clone(),
+            assigned_agent: Some(agent_name.clone()),
+            status: "Queued".into(),
+            depends_on: Vec::new(),
+            created_at: now.clone(),
+            updated_at: now.clone(),
+            next_action: request
+                .next_action
+                .clone()
+                .unwrap_or_else(|| preset.default_next_action.clone()),
+            latest_handover_path: None,
+            notes: vec![format!("preset:{}", preset.key), format!("role:{}", preset.role)],
+        });
+        supervisor_state.event_log.push(SupervisorEvent {
+            at: now,
+            kind: "enqueue".into(),
+            message: format!("enqueued task #{task_id} via preset '{}'", preset.key),
+            task_id: Some(task_id),
+            session_id: None,
+        });
+
+        if let Err(err) = save_supervisor_state(&state_path, &supervisor_state) {
+            return Json(json!({
+                "state": state_path.display().to_string(),
+                "error": err
+            }));
+        }
+
+        if start_now {
+            run_tick(&state_path, spawn)
+        } else {
+            json!({
+                "state": state_path.display().to_string(),
+                "status": "queued",
+                "task_id": task_id,
+                "agent": agent_name
+            })
+        }
     };
+
+    let task_id = dispatch_result.get("task_id").and_then(|value| value.as_u64());
+    let session_id = dispatch_result.get("session_id").and_then(|value| value.as_u64());
 
     Json(json!({
         "preset": preset.key,
         "agent": agent_name,
         "task_id": task_id,
+        "session_id": session_id,
         "dispatched": true,
         "start_now": start_now,
         "dispatch_result": dispatch_result
@@ -975,7 +1093,7 @@ pub async fn task_action(
 
 /// POST /api/supervisor/session-prompt
 pub async fn session_prompt(
-    State(_state): State<Arc<AppState>>,
+    State(app_state): State<Arc<AppState>>,
     Json(request): Json<SessionPromptRequest>,
 ) -> Json<Value> {
     let state_path = resolve_state_path(request.state);
@@ -1024,6 +1142,28 @@ pub async fn session_prompt(
             "state": state_path.display().to_string(),
             "error": err
         }));
+    }
+
+    if let Some(handle) = app_state
+        .live_supervisor_sessions
+        .lock()
+        .await
+        .get(&request.session_id)
+        .cloned()
+    {
+        let mut stdin = handle.stdin.lock().await;
+        if let Err(err) = stdin.write_all(format!("{}\n", request.prompt.trim()).as_bytes()).await {
+            return Json(json!({
+                "state": state_path.display().to_string(),
+                "error": format!("failed to write to live session stdin: {err}")
+            }));
+        }
+        if let Err(err) = stdin.flush().await {
+            return Json(json!({
+                "state": state_path.display().to_string(),
+                "error": format!("failed to flush live session stdin: {err}")
+            }));
+        }
     }
 
     session.prompt_log_path = Some(prompt_path.clone());
@@ -2070,6 +2210,164 @@ struct SpawnedProcess {
     prompt_log_path: String,
 }
 
+async fn spawn_live_agent_process(
+    app_state: Arc<AppState>,
+    state_path: PathBuf,
+    session_id: u64,
+    task_id: u64,
+    agent: &SupervisorAgent,
+) -> Result<SpawnedProcess, String> {
+    let (program, args) = resolve_launch(agent)?;
+    let (stdout_log_path, stderr_log_path) = session_log_paths(&state_path, session_id);
+    let prompt_log_path = session_prompt_path(&state_path, session_id);
+    if let Some(parent) = stdout_log_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create session log directory '{}': {e}", parent.display()))?;
+    }
+    std::fs::File::create(&stdout_log_path)
+        .map_err(|e| format!("failed to create stdout log '{}': {e}", stdout_log_path.display()))?;
+    std::fs::File::create(&stderr_log_path)
+        .map_err(|e| format!("failed to create stderr log '{}': {e}", stderr_log_path.display()))?;
+    std::fs::File::create(&prompt_log_path)
+        .map_err(|e| format!("failed to create prompt log '{}': {e}", prompt_log_path.display()))?;
+
+    let mut command = TokioCommand::new(program);
+    command.args(args);
+    if let Some(cwd) = &agent.working_dir {
+        command.current_dir(cwd);
+    }
+    command.stdin(std::process::Stdio::piped());
+    command.stdout(std::process::Stdio::piped());
+    command.stderr(std::process::Stdio::piped());
+
+    let mut child = command
+        .spawn()
+        .map_err(|e| format!("failed to spawn live session '{}': {e}", render_launch_command(agent)))?;
+    let process_id = child
+        .id()
+        .ok_or_else(|| "failed to resolve child process id".to_string())?;
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| "failed to capture child stdin".to_string())?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "failed to capture child stdout".to_string())?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "failed to capture child stderr".to_string())?;
+
+    let handle = Arc::new(LiveSessionHandle {
+        session_id,
+        agent_name: agent.name.clone(),
+        stdin: Arc::new(Mutex::new(stdin)),
+    });
+    app_state
+        .live_supervisor_sessions
+        .lock()
+        .await
+        .insert(session_id, handle);
+
+    tokio::spawn(stream_child_output(
+        stdout,
+        stdout_log_path.clone(),
+        prompt_log_path.clone(),
+        "assistant".into(),
+    ));
+    tokio::spawn(stream_child_output(
+        stderr,
+        stderr_log_path.clone(),
+        prompt_log_path.clone(),
+        "stderr".into(),
+    ));
+
+    let wait_state = state_path.clone();
+    let wait_app = app_state.clone();
+    tokio::spawn(async move {
+        let exit_code = match child.wait().await {
+            Ok(status) => status.code().unwrap_or(-1),
+            Err(_) => -1,
+        };
+        finish_live_session(wait_app, wait_state, session_id, task_id, exit_code).await;
+    });
+
+    Ok(SpawnedProcess {
+        process_id,
+        stdout_log_path: stdout_log_path.display().to_string(),
+        stderr_log_path: stderr_log_path.display().to_string(),
+        prompt_log_path: prompt_log_path.display().to_string(),
+    })
+}
+
+async fn stream_child_output<R>(
+    reader: R,
+    log_path: PathBuf,
+    prompt_log_path: PathBuf,
+    prefix: String,
+) where
+    R: tokio::io::AsyncRead + Unpin + Send + 'static,
+{
+    let mut lines = BufReader::new(reader).lines();
+    loop {
+        match lines.next_line().await {
+            Ok(Some(line)) => {
+                let _ = append_text_line(&log_path, &line);
+                let chat_line = format!("[{}] {}> {}", now_string(), prefix, line);
+                let _ = append_text_line(&prompt_log_path, &chat_line);
+            }
+            Ok(None) => break,
+            Err(err) => {
+                let _ = append_text_line(
+                    &prompt_log_path,
+                    &format!("[{}] bridge-error> {}", now_string(), err),
+                );
+                break;
+            }
+        }
+    }
+}
+
+async fn finish_live_session(
+    app_state: Arc<AppState>,
+    state_path: PathBuf,
+    session_id: u64,
+    task_id: u64,
+    exit_code: i32,
+) {
+    app_state
+        .live_supervisor_sessions
+        .lock()
+        .await
+        .remove(&session_id);
+
+    let mut state = match load_supervisor_state(&state_path) {
+        Ok(state) => state,
+        Err(_) => return,
+    };
+    let now = now_string();
+    if let Some(session) = state.sessions.iter_mut().find(|session| session.id == session_id) {
+        session.status = if exit_code == 0 { "Done".into() } else { "Failed".into() };
+        session.last_update = now.clone();
+        session.exit_code = Some(exit_code);
+        session.process_id = None;
+    }
+    if let Some(task) = state.tasks.iter_mut().find(|task| task.id == task_id) {
+        task.status = if exit_code == 0 { "Done".into() } else { "Failed".into() };
+        task.updated_at = now.clone();
+        task.notes.push(format!("live session exited with code {}", exit_code));
+    }
+    state.event_log.push(SupervisorEvent {
+        at: now,
+        kind: "live-exit".into(),
+        message: format!("live session #{} exited with code {}", session_id, exit_code),
+        task_id: Some(task_id),
+        session_id: Some(session_id),
+    });
+    let _ = save_supervisor_state(&state_path, &state);
+}
+
 fn spawn_agent_process(state_path: &Path, session_id: u64, agent: &SupervisorAgent) -> Result<SpawnedProcess, String> {
     use std::fs::File;
     use std::process::{Command, Stdio};
@@ -2177,42 +2475,46 @@ const SUPERVISOR_HTML: &str = r#"<!doctype html>
   <title>QLANG Supervisor Cockpit</title>
   <style>
     :root {
-      --bg: #0d1117;
-      --panel: #161b22;
-      --panel-2: #1f2630;
-      --line: #30363d;
-      --text: #e6edf3;
-      --muted: #9da7b3;
-      --ok: #3fb950;
-      --warn: #d29922;
-      --bad: #f85149;
-      --accent: #58a6ff;
+      --bg: #f6f3ee;
+      --bg-soft: #fbfaf8;
+      --panel: #ffffff;
+      --panel-2: #f7f4ef;
+      --line: #ddd3c5;
+      --line-strong: #cbbfae;
+      --text: #1f1a14;
+      --muted: #72685c;
+      --ok: #1f8f59;
+      --warn: #b7791f;
+      --bad: #c74444;
+      --accent: #1463ff;
+      --accent-soft: #e8f0ff;
       --mono: "Cascadia Code", "Consolas", monospace;
-      --sans: "Segoe UI", system-ui, sans-serif;
+      --sans: "Segoe UI", "Helvetica Neue", system-ui, sans-serif;
+      --shadow: 0 16px 40px rgba(54, 38, 17, 0.08);
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
       font-family: var(--sans);
       background:
-        radial-gradient(circle at top right, rgba(88,166,255,0.16), transparent 30%),
-        radial-gradient(circle at left center, rgba(63,185,80,0.12), transparent 28%),
-        var(--bg);
+        radial-gradient(circle at top right, rgba(20,99,255,0.08), transparent 24%),
+        radial-gradient(circle at left top, rgba(183,121,31,0.08), transparent 20%),
+        linear-gradient(180deg, #fcfbf8 0%, var(--bg) 100%);
       color: var(--text);
     }
     .shell {
-      max-width: 1440px;
+      max-width: 1500px;
       margin: 0 auto;
-      padding: 24px;
+      padding: 28px 24px 36px;
     }
     .topbar {
       display: flex;
       justify-content: space-between;
-      gap: 16px;
+      gap: 20px;
       align-items: end;
-      margin-bottom: 18px;
+      margin-bottom: 20px;
     }
-    h1 { margin: 0; font-size: 28px; letter-spacing: 0.02em; }
+    h1 { margin: 0; font-size: 30px; letter-spacing: -0.02em; }
     .muted { color: var(--muted); }
     .controls {
       display: flex;
@@ -2224,19 +2526,22 @@ const SUPERVISOR_HTML: &str = r#"<!doctype html>
       background: var(--panel);
       color: var(--text);
       border: 1px solid var(--line);
-      border-radius: 10px;
+      border-radius: 14px;
       padding: 10px 12px;
       font: inherit;
     }
     button {
       cursor: pointer;
-      background: linear-gradient(180deg, #2381ff, #1766ce);
-      border-color: #1c5fb8;
+      background: linear-gradient(180deg, #1f72ff, #1154d7);
+      border-color: #0d4dc9;
+      color: white;
+      box-shadow: 0 8px 20px rgba(20, 99, 255, 0.2);
     }
-    .grid {
+    .app-grid {
       display: grid;
-      grid-template-columns: 1.05fr 1.25fr 1fr;
-      gap: 16px;
+      grid-template-columns: 300px minmax(0, 1fr) 330px;
+      gap: 18px;
+      align-items: start;
     }
     .toolbar {
       display: flex;
@@ -2245,30 +2550,49 @@ const SUPERVISOR_HTML: &str = r#"<!doctype html>
       margin-bottom: 16px;
     }
     .panel {
-      background: linear-gradient(180deg, rgba(31,38,48,0.92), rgba(22,27,34,0.92));
+      background: var(--panel);
       border: 1px solid var(--line);
-      border-radius: 16px;
-      padding: 16px;
+      border-radius: 20px;
+      padding: 18px;
       min-height: 180px;
-      box-shadow: 0 12px 30px rgba(0,0,0,0.18);
+      box-shadow: var(--shadow);
     }
     .panel h2 {
       margin: 0 0 12px;
-      font-size: 15px;
+      font-size: 13px;
       letter-spacing: 0.06em;
       text-transform: uppercase;
       color: var(--muted);
+    }
+    .sidebar, .rightbar, .workspace {
+      display: grid;
+      gap: 18px;
+    }
+    .hero {
+      padding: 22px;
+      background: linear-gradient(180deg, #fffdfa, #f7f2ea);
+      border: 1px solid #e4d8c8;
+    }
+    .hero-title {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 8px;
+    }
+    .hero-copy {
+      color: var(--muted);
+      max-width: 72ch;
+      line-height: 1.55;
     }
     .stats {
       display: grid;
       grid-template-columns: repeat(5, 1fr);
       gap: 12px;
-      margin-bottom: 16px;
     }
     .stat {
-      background: rgba(13,17,23,0.72);
+      background: var(--bg-soft);
       border: 1px solid var(--line);
-      border-radius: 14px;
+      border-radius: 16px;
       padding: 14px;
     }
     .stat .label { font-size: 12px; color: var(--muted); text-transform: uppercase; }
@@ -2281,7 +2605,7 @@ const SUPERVISOR_HTML: &str = r#"<!doctype html>
       padding: 4px 10px;
       font-size: 12px;
       border: 1px solid var(--line);
-      background: rgba(255,255,255,0.03);
+      background: #fbfaf8;
     }
     .badge.done { color: var(--ok); }
     .badge.running { color: var(--accent); }
@@ -2290,8 +2614,8 @@ const SUPERVISOR_HTML: &str = r#"<!doctype html>
     .list { display: grid; gap: 10px; }
     .card {
       border: 1px solid var(--line);
-      background: rgba(13,17,23,0.58);
-      border-radius: 14px;
+      background: var(--bg-soft);
+      border-radius: 16px;
       padding: 12px;
     }
     .card header {
@@ -2310,18 +2634,89 @@ const SUPERVISOR_HTML: &str = r#"<!doctype html>
       font-family: var(--mono);
       font-size: 12px;
       line-height: 1.45;
-      background: rgba(13,17,23,0.85);
+      background: #f7f4ef;
       border: 1px solid var(--line);
-      border-radius: 12px;
+      border-radius: 14px;
       padding: 12px;
       min-height: 180px;
       overflow: auto;
     }
-    .span-2 { grid-column: span 2; }
+    details.advanced {
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    details.advanced summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 18px 20px;
+      font-weight: 600;
+      background: #fcfaf6;
+      border-bottom: 1px solid transparent;
+    }
+    details.advanced[open] summary {
+      border-bottom-color: var(--line);
+    }
+    details.advanced summary::-webkit-details-marker { display: none; }
+    .advanced-grid {
+      padding: 18px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+    }
+    .chat-panel {
+      display: grid;
+      gap: 16px;
+    }
+    .chat-window {
+      min-height: 420px;
+      background: linear-gradient(180deg, #fffdfa, #f8f5f0);
+    }
+    .composer {
+      display: grid;
+      gap: 12px;
+      padding: 16px;
+      background: #fcfaf6;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+    }
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .ghost {
+      background: #f5f1ea;
+      border-color: var(--line-strong);
+      color: var(--text);
+      box-shadow: none;
+    }
+    .status-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin-top: 10px;
+    }
+    .meta-line {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .session-list .card.active {
+      border-color: #8cb4ff;
+      box-shadow: inset 0 0 0 1px rgba(20,99,255,0.2);
+      background: var(--accent-soft);
+    }
     @media (max-width: 1100px) {
       .stats { grid-template-columns: repeat(2, 1fr); }
-      .grid { grid-template-columns: 1fr; }
-      .span-2 { grid-column: span 1; }
+      .app-grid { grid-template-columns: 1fr; }
+      .advanced-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -2343,126 +2738,184 @@ const SUPERVISOR_HTML: &str = r#"<!doctype html>
       </div>
     </div>
 
-    <div class="stats" id="stats"></div>
-    <div class="toolbar">
-      <button type="button" onclick="runAction('poll')">Poll</button>
-      <button type="button" onclick="runAction('tick')">Tick</button>
-      <button type="button" onclick="runAction('tick_spawn')">Tick + Spawn</button>
-      <button type="button" onclick="runAction('cycle_spawn')">Cycle + Spawn</button>
-      <button type="button" onclick="startDaemon()" style="background:linear-gradient(180deg,#2f8f6f,#226b53); border-color:#205744;">Start Daemon</button>
-      <button type="button" onclick="stopDaemon()" style="background:linear-gradient(180deg,#b64040,#8e2323); border-color:#7a1c1c;">Stop Daemon</button>
-      <span class="small muted" id="actionResult"></span>
-    </div>
-    <div class="small muted" id="daemonStatus" style="margin-bottom:16px;">Daemon: unknown</div>
+    <section class="panel hero">
+      <div class="hero-title">Simple multi-agent chat, powered by QLANG supervision.</div>
+      <div class="hero-copy">
+        Start Claude Code, Codex, Gemini, Kimi, or the built-in demo agent with one click, then work from one bright chat-style workspace.
+        QLANG keeps the heavy machinery underneath: task queue, sessions, logs, handovers, and continuous execution.
+      </div>
+      <div class="status-row">
+        <span class="badge" id="daemonStatus">Daemon: unknown</span>
+        <span class="small muted" id="actionResult"></span>
+      </div>
+    </section>
 
-    <div class="grid">
-      <section class="panel">
-        <h2>Agent Presets</h2>
-        <div class="list" id="presets"></div>
-      </section>
+    <div class="app-grid">
+      <aside class="sidebar">
         <section class="panel">
-        <h2>Quick Routes</h2>
-        <div class="list">
-          <button type="button" onclick="dispatchQuick('demo', 'gui-smoke-test', 'Run a short supervisor smoke test and verify that session logs appear in the cockpit.', 'Run GUI Smoke Test')" style="background:linear-gradient(180deg,#5a6dd8,#3f53bb); border-color:#32449e;">Run GUI Smoke Test</button>
-          <button type="button" onclick="dispatchQuick('claude', 'primary-builder', 'Analyze repository state and plan the next implementation step.', 'Analyze with Claude')">Analyze with Claude</button>
-          <button type="button" onclick="dispatchQuick('codex', 'reviewer-patcher', 'Produce the next targeted patch and verification step.', 'Patch with Codex')">Patch with Codex</button>
-          <button type="button" onclick="dispatchQuick('gemini', 'research-escalation', 'Provide a second-opinion analysis and summarize the best next move.', 'Escalate to Gemini')">Escalate to Gemini</button>
-          <button type="button" onclick="dispatchQuick('kimi', 'long-context-analyst', 'Digest the large context and return a compact structured summary.', 'Summarize with Kimi')">Summarize with Kimi</button>
-          <button type="button" onclick="suggestAgentForTask()" style="background:linear-gradient(180deg,#444f66,#303a4d); border-color:#293244;">Suggest Agent</button>
-          <button type="button" onclick="prepareQuick('claude', 'primary-builder', 'Analyze repository state and plan the next implementation step.', 'Analyze with Claude')" style="background:linear-gradient(180deg,#444f66,#303a4d); border-color:#293244;">Prefill Analyze</button>
-        </div>
-      </section>
-      <section class="panel">
-        <h2>Add Agent</h2>
-        <div class="list">
-          <input id="agentName" placeholder="Agent name" />
-          <input id="agentKind" placeholder="Kind (ClaudeCode/Codex/Gemini/Kimi/Custom)" value="Custom" />
-          <input id="agentCommand" placeholder="Command" />
-          <input id="agentArgs" placeholder="Args, separated by ||" />
-          <button type="button" onclick="addAgent()">Register Agent</button>
-        </div>
-      </section>
-      <section class="panel span-2">
-        <h2>Enqueue Task</h2>
-        <div class="list">
-          <input id="taskTitle" placeholder="Task title" />
-          <input id="taskGoal" placeholder="Goal" />
-          <input id="taskAgent" placeholder="Assigned agent (optional)" />
-          <input id="taskNextAction" placeholder="Next action" value="start work" />
-          <button type="button" onclick="addTask()">Enqueue Task</button>
-        </div>
-      </section>
-      <section class="panel span-2">
-        <h2>QLMS Handover</h2>
-        <div class="list">
-          <input id="handoverTaskId" placeholder="Task id (optional)" />
-          <input id="handoverInput" placeholder="Reply input path (only for reply)" />
-          <input id="handoverOutput" placeholder="Output path" value="handoff.qlms" />
-          <input id="handoverFrom" placeholder="From agent" />
-          <input id="handoverTo" placeholder="To agent" />
-          <input id="handoverPhase" placeholder="Phase" value="analyze" />
-          <input id="handoverSummary" placeholder="Summary" />
-          <input id="handoverRequest" placeholder="Request" />
-          <input id="handoverNextAction" placeholder="Next action" />
-          <input id="handoverFiles" placeholder="Files, separated by ||" />
-          <input id="handoverEvidence" placeholder="Evidence, separated by ||" />
-          <input id="handoverRisks" placeholder="Risks, separated by ||" />
-          <input id="handoverChanges" placeholder="Changes, separated by ||" />
-          <input id="handoverTests" placeholder="Tests, separated by ||" />
-          <input id="handoverNotes" placeholder="Notes, separated by ||" />
-          <div style="display:flex; gap:10px; flex-wrap:wrap;">
-            <button type="button" onclick="createHandover()">Create Handover</button>
-            <button type="button" onclick="replyHandover()" style="background:linear-gradient(180deg,#2f8f6f,#226b53); border-color:#205744;">Reply Handover</button>
-            <button type="button" onclick="showHandover()" style="background:linear-gradient(180deg,#444f66,#303a4d); border-color:#293244;">Show Handover</button>
+          <h2>Launch Agents</h2>
+          <div class="pill-row">
+            <button type="button" onclick="dispatchQuick('demo', 'gui-smoke-test', 'Run a short supervisor smoke test and verify that session logs appear in the cockpit.', 'Run GUI Smoke Test')">Run GUI Smoke Test</button>
+            <button type="button" onclick="dispatchQuick('claude', 'primary-builder', 'Analyze repository state and plan the next implementation step.', 'Analyze with Claude')">Claude Code</button>
+            <button type="button" onclick="dispatchQuick('codex', 'reviewer-patcher', 'Produce the next targeted patch and verification step.', 'Patch with Codex')">Codex</button>
+            <button type="button" onclick="dispatchQuick('gemini', 'research-escalation', 'Provide a second-opinion analysis and summarize the best next move.', 'Escalate to Gemini')">Gemini</button>
+            <button type="button" onclick="dispatchQuick('kimi', 'long-context-analyst', 'Digest the large context and return a compact structured summary.', 'Summarize with Kimi')">Kimi</button>
           </div>
-          <pre id="handoverView"></pre>
-        </div>
-      </section>
-      <section class="panel">
-        <h2>Agents</h2>
-        <div class="list" id="agents"></div>
-      </section>
-      <section class="panel">
-        <h2>Tasks</h2>
-        <div class="small muted" style="margin-bottom:10px;">Select a task and use the inline buttons to complete, fail, or attach a handover path.</div>
-        <div class="list" id="tasks"></div>
-      </section>
-      <section class="panel">
-        <h2>Sessions</h2>
-        <div class="list" id="sessions"></div>
-      </section>
-      <section class="panel span-2">
-        <h2>Recent Events</h2>
-        <div class="list" id="events"></div>
-      </section>
-      <section class="panel">
-        <h2>Selected Session Logs</h2>
-        <div class="small muted" id="logMeta">No session selected.</div>
-        <div style="display:grid; gap:12px; margin-top: 12px;">
-          <div>
-            <div class="small muted" style="margin-bottom:6px;">stdout</div>
-            <pre id="stdoutLog"></pre>
+        </section>
+
+        <section class="panel">
+          <h2>Installed Presets</h2>
+          <div class="list" id="presets"></div>
+        </section>
+
+        <section class="panel">
+          <h2>Sessions</h2>
+          <div class="list session-list" id="sessions"></div>
+        </section>
+      </aside>
+
+      <main class="workspace">
+        <section class="panel chat-panel">
+          <div class="meta-line">
+            <div id="consoleMeta">No session selected.</div>
+            <div id="logMeta">No logs loaded.</div>
           </div>
-          <div>
-            <div class="small muted" style="margin-bottom:6px;">stderr</div>
-            <pre id="stderrLog"></pre>
+          <div class="panel chat-window" style="min-height: 300px;">
+            <h2>Conversation</h2>
+            <pre id="promptLog" style="min-height:260px;"></pre>
           </div>
-        </div>
-      </section>
-      <section class="panel">
-        <h2>Selected Session Console</h2>
-        <div class="small muted" id="consoleMeta">No session selected.</div>
-        <div class="small muted" style="margin-top:6px;">Prompts are queued into the session prompt log. This is the first GUI console path; direct stdin bridging for external CLIs is the next adapter step.</div>
-        <textarea id="sessionPromptInput" placeholder="Type the next instruction for the selected session..." style="margin-top:12px; min-height:110px; width:100%; background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:12px; padding:12px; font:inherit;"></textarea>
-        <div style="display:flex; gap:8px; margin-top:10px;">
-          <button type="button" onclick="sendSessionPrompt()">Send Prompt</button>
-          <button type="button" onclick="clearSessionPrompt()" style="background:linear-gradient(180deg,#444f66,#303a4d); border-color:#293244;">Clear</button>
-        </div>
-        <div style="margin-top: 12px;">
-          <div class="small muted" style="margin-bottom:6px;">prompt log</div>
-          <pre id="promptLog"></pre>
-        </div>
-      </section>
+          <div class="composer">
+            <textarea id="sessionPromptInput" placeholder="Type a request like you would in ChatGPT or Claude..." style="min-height:120px; width:100%; background:#fff; color:var(--text); border:1px solid var(--line); border-radius:16px; padding:14px; font:inherit;"></textarea>
+            <div class="pill-row">
+              <button type="button" onclick="sendSessionPrompt()">Send Prompt</button>
+              <button type="button" class="ghost" onclick="clearSessionPrompt()">Clear</button>
+              <button type="button" class="ghost" onclick="suggestAgentForTask()">Suggest Agent</button>
+              <button type="button" class="ghost" onclick="startDaemon()">Start Daemon</button>
+              <button type="button" class="ghost" onclick="stopDaemon()">Stop Daemon</button>
+            </div>
+            <div class="small muted">This first chat surface writes prompts into the selected session log. Direct interactive tool adapters are the next step.</div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>Workspace Stats</h2>
+          <div class="stats" id="stats"></div>
+        </section>
+
+        <details class="advanced">
+          <summary>Advanced Control Plane</summary>
+          <div class="advanced-grid">
+            <section class="panel">
+              <h2>Supervisor Controls</h2>
+              <div class="toolbar">
+                <button type="button" onclick="runAction('poll')">Poll</button>
+                <button type="button" onclick="runAction('tick')">Tick</button>
+                <button type="button" onclick="runAction('tick_spawn')">Tick + Spawn</button>
+                <button type="button" onclick="runAction('cycle_spawn')">Cycle + Spawn</button>
+              </div>
+              <div class="controls">
+                <input id="statePath" value=".qlang/supervisor.json" size="32" />
+                <select id="logTail">
+                  <option value="40">40 lines</option>
+                  <option value="80" selected>80 lines</option>
+                  <option value="160">160 lines</option>
+                </select>
+                <button id="refreshBtn" type="button" class="ghost">Refresh</button>
+              </div>
+            </section>
+
+            <section class="panel">
+              <h2>Enqueue Task</h2>
+              <div class="list">
+                <input id="taskTitle" placeholder="Task title" />
+                <input id="taskGoal" placeholder="Goal" />
+                <input id="taskAgent" placeholder="Assigned agent (optional)" />
+                <input id="taskNextAction" placeholder="Next action" value="start work" />
+                <button type="button" onclick="addTask()">Enqueue Task</button>
+              </div>
+            </section>
+
+            <section class="panel">
+              <h2>Add Agent</h2>
+              <div class="list">
+                <input id="agentName" placeholder="Agent name" />
+                <input id="agentKind" placeholder="Kind (ClaudeCode/Codex/Gemini/Kimi/Custom)" value="Custom" />
+                <input id="agentCommand" placeholder="Command" />
+                <input id="agentArgs" placeholder="Args, separated by ||" />
+                <button type="button" onclick="addAgent()">Register Agent</button>
+              </div>
+            </section>
+
+            <section class="panel">
+              <h2>Agents</h2>
+              <div class="list" id="agents"></div>
+            </section>
+
+            <section class="panel">
+              <h2>Tasks</h2>
+              <div class="small muted" style="margin-bottom:10px;">Complete, fail, or attach a handover path from here.</div>
+              <div class="list" id="tasks"></div>
+            </section>
+
+            <section class="panel">
+              <h2>Recent Events</h2>
+              <div class="list" id="events"></div>
+            </section>
+
+            <section class="panel">
+              <h2>Selected Session Logs</h2>
+              <div style="display:grid; gap:12px;">
+                <div>
+                  <div class="small muted" style="margin-bottom:6px;">stdout</div>
+                  <pre id="stdoutLog"></pre>
+                </div>
+                <div>
+                  <div class="small muted" style="margin-bottom:6px;">stderr</div>
+                  <pre id="stderrLog"></pre>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel">
+              <h2>QLMS Handover</h2>
+              <div class="list">
+                <input id="handoverTaskId" placeholder="Task id (optional)" />
+                <input id="handoverInput" placeholder="Reply input path (only for reply)" />
+                <input id="handoverOutput" placeholder="Output path" value="handoff.qlms" />
+                <input id="handoverFrom" placeholder="From agent" />
+                <input id="handoverTo" placeholder="To agent" />
+                <input id="handoverPhase" placeholder="Phase" value="analyze" />
+                <input id="handoverSummary" placeholder="Summary" />
+                <input id="handoverRequest" placeholder="Request" />
+                <input id="handoverNextAction" placeholder="Next action" />
+                <input id="handoverFiles" placeholder="Files, separated by ||" />
+                <input id="handoverEvidence" placeholder="Evidence, separated by ||" />
+                <input id="handoverRisks" placeholder="Risks, separated by ||" />
+                <input id="handoverChanges" placeholder="Changes, separated by ||" />
+                <input id="handoverTests" placeholder="Tests, separated by ||" />
+                <input id="handoverNotes" placeholder="Notes, separated by ||" />
+                <div class="pill-row">
+                  <button type="button" onclick="createHandover()">Create Handover</button>
+                  <button type="button" class="ghost" onclick="replyHandover()">Reply Handover</button>
+                  <button type="button" class="ghost" onclick="showHandover()">Show Handover</button>
+                </div>
+                <pre id="handoverView"></pre>
+              </div>
+            </section>
+          </div>
+        </details>
+      </main>
+
+      <aside class="rightbar">
+        <section class="panel">
+          <h2>Quick Actions</h2>
+          <div class="list">
+            <button type="button" class="ghost" onclick="prepareQuick('claude', 'primary-builder', 'Analyze repository state and plan the next implementation step.', 'Analyze with Claude')">Prepare Claude Task</button>
+            <button type="button" class="ghost" onclick="prepareQuick('codex', 'reviewer-patcher', 'Produce the next targeted patch and verification step.', 'Patch with Codex')">Prepare Codex Task</button>
+            <button type="button" class="ghost" onclick="prepareQuick('gemini', 'research-escalation', 'Provide a second-opinion analysis and summarize the best next move.', 'Escalate to Gemini')">Prepare Gemini Task</button>
+          </div>
+        </section>
+      </aside>
     </div>
   </div>
   <script>

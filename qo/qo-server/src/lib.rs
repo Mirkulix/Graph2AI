@@ -12,6 +12,7 @@ use qo_consciousness::{ConsciousnessState, ConsciousnessStream};
 use qo_evolution::{Pattern, PatternDetector, Proposal, ProposalEngine, QuantumState};
 use qo_llm::LlmRouter;
 use qo_memory::{GraphStore, MemoryContext, ObsidianBridge, Store};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
@@ -46,6 +47,7 @@ pub struct AppState {
         Mutex<Option<Arc<qlang_runtime::evolution::real_daemon::RealEvolutionDaemon>>>,
     >,
     pub supervisor_daemon: Mutex<routes::supervisor::SupervisorDaemonState>,
+    pub live_supervisor_sessions: Mutex<HashMap<u64, Arc<routes::supervisor::LiveSessionHandle>>>,
 }
 
 pub struct QoConfig {
@@ -214,6 +216,7 @@ pub async fn build_app(
         evolution_daemon: Arc::new(Mutex::new(None)),
         real_evolution_daemon: Arc::new(Mutex::new(None)),
         supervisor_daemon: Mutex::new(routes::supervisor::SupervisorDaemonState::default()),
+        live_supervisor_sessions: Mutex::new(HashMap::new()),
     });
 
     // Register all QO agents on the message bus.
