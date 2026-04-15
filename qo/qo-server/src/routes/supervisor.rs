@@ -55,8 +55,28 @@ pub struct SupervisorLogsResponse {
     pub task_id: Option<u64>,
     pub stdout_log_path: Option<String>,
     pub stderr_log_path: Option<String>,
+    pub prompt_log_path: Option<String>,
     pub stdout_tail: Vec<String>,
     pub stderr_tail: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SupervisorConsoleQuery {
+    pub state: Option<String>,
+    pub session: Option<u64>,
+    pub task: Option<u64>,
+    pub tail: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SupervisorConsoleResponse {
+    pub state: String,
+    pub session_id: u64,
+    pub agent: String,
+    pub task_id: Option<u64>,
+    pub prompt_log_path: Option<String>,
+    pub prompt_tail: Vec<String>,
+    pub mode: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -77,6 +97,7 @@ struct SupervisorSession {
     current_task_id: Option<u64>,
     stdout_log_path: Option<String>,
     stderr_log_path: Option<String>,
+    prompt_log_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -151,6 +172,7 @@ struct SupervisorSessionWritable {
     exit_code: Option<i32>,
     stdout_log_path: Option<String>,
     stderr_log_path: Option<String>,
+    prompt_log_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -316,6 +338,13 @@ pub struct SupervisorStreamQuery {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct SessionPromptRequest {
+    pub state: Option<String>,
+    pub session_id: u64,
+    pub prompt: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct SupervisorDaemonStartRequest {
     pub state: Option<String>,
     pub spawn: Option<bool>,
@@ -402,6 +431,10 @@ pub async fn logs(
         stderr_log_path: stderr_log_path
             .as_ref()
             .map(|path| path.display().to_string()),
+        prompt_log_path: session
+            .prompt_log_path
+            .as_ref()
+            .map(|path| resolve_log_path(&state_path, path).display().to_string()),
         stdout_tail: stdout_log_path
             .as_ref()
             .map(|path| tail_text_file(path, tail))
@@ -422,6 +455,20 @@ pub async fn logs(
             "error": format!("failed to serialize supervisor logs response: {err}")
         })
     }))
+}
+
+/// GET /api/supervisor/console
+pub async fn console(
+    State(_state): State<Arc<AppState>>,
+    Query(query): Query<SupervisorConsoleQuery>,
+) -> Json<Value> {
+    let state_path = resolve_state_path(query.state.clone());
+    Json(load_console_value(
+        &state_path,
+        query.session,
+        query.task,
+        query.tail.unwrap_or(80),
+    ))
 }
 
 /// POST /api/supervisor/agent
@@ -926,6 +973,91 @@ pub async fn task_action(
     }
 }
 
+/// POST /api/supervisor/session-prompt
+pub async fn session_prompt(
+    State(_state): State<Arc<AppState>>,
+    Json(request): Json<SessionPromptRequest>,
+) -> Json<Value> {
+    let state_path = resolve_state_path(request.state);
+    let mut state = match load_supervisor_state(&state_path) {
+        Ok(state) => state,
+        Err(err) => {
+            return Json(json!({
+                "state": state_path.display().to_string(),
+                "error": err
+            }))
+        }
+    };
+
+    let now = now_string();
+    let session = match state
+        .sessions
+        .iter_mut()
+        .find(|session| session.id == request.session_id)
+    {
+        Some(session) => session,
+        None => {
+            return Json(json!({
+                "state": state_path.display().to_string(),
+                "error": format!("session #{} not found", request.session_id)
+            }))
+        }
+    };
+
+    let prompt_path = session.prompt_log_path.clone().unwrap_or_else(|| {
+        session_prompt_path(&state_path, request.session_id)
+            .display()
+            .to_string()
+    });
+    let resolved_prompt_path = resolve_log_path(&state_path, &prompt_path);
+    if let Some(parent) = resolved_prompt_path.parent() {
+        if let Err(err) = std::fs::create_dir_all(parent) {
+            return Json(json!({
+                "state": state_path.display().to_string(),
+                "error": format!("failed to create prompt log directory '{}': {err}", parent.display())
+            }));
+        }
+    }
+    let line = format!("[{now}] user> {}", request.prompt.trim());
+    if let Err(err) = append_text_line(&resolved_prompt_path, &line) {
+        return Json(json!({
+            "state": state_path.display().to_string(),
+            "error": err
+        }));
+    }
+
+    session.prompt_log_path = Some(prompt_path.clone());
+    session.last_update = now.clone();
+    let task_id = session.current_task_id;
+    if let Some(task_id) = task_id {
+        if let Some(task) = state.tasks.iter_mut().find(|task| task.id == task_id) {
+            task.updated_at = now.clone();
+            task.notes.push(format!("session prompt queued: {}", compact_note(&request.prompt, 120)));
+        }
+    }
+    state.event_log.push(SupervisorEvent {
+        at: now.clone(),
+        kind: "session-prompt".into(),
+        message: format!("queued prompt for session #{}", request.session_id),
+        task_id,
+        session_id: Some(request.session_id),
+    });
+
+    match save_supervisor_state(&state_path, &state) {
+        Ok(()) => Json(json!({
+            "state": state_path.display().to_string(),
+            "status": "queued",
+            "session_id": request.session_id,
+            "prompt_log_path": resolved_prompt_path.display().to_string(),
+            "mode": "session_prompt_log"
+        })),
+        Err(err) => Json(json!({
+            "state": state_path.display().to_string(),
+            "error": err
+        })),
+    }
+}
+
 /// POST /api/supervisor/handover/create
 pub async fn create_handover(
     State(_state): State<Arc<AppState>>,
@@ -1317,9 +1449,11 @@ fn build_stream_snapshot(state_path: &Path, session_id: Option<u64>, task_id: Op
         "error": err
     }));
     let logs = load_logs_value(state_path, session_id, task_id, tail);
+    let console = load_console_value(state_path, session_id, task_id, tail);
     json!({
         "state": state,
-        "logs": logs
+        "logs": logs,
+        "console": console
     })
 }
 
@@ -1374,6 +1508,10 @@ fn load_logs_value(state_path: &Path, session_id: Option<u64>, task_id: Option<u
         task_id: session.current_task_id,
         stdout_log_path: stdout_log_path.as_ref().map(|path| path.display().to_string()),
         stderr_log_path: stderr_log_path.as_ref().map(|path| path.display().to_string()),
+        prompt_log_path: session
+            .prompt_log_path
+            .as_ref()
+            .map(|path| resolve_log_path(state_path, path).display().to_string()),
         stdout_tail: stdout_log_path
             .as_ref()
             .map(|path| tail_text_file(path, tail))
@@ -1389,6 +1527,66 @@ fn load_logs_value(state_path: &Path, session_id: Option<u64>, task_id: Option<u
     }).unwrap_or_else(|err| json!({
         "state": state_path.display().to_string(),
         "error": format!("failed to serialize supervisor logs response: {err}")
+    }))
+}
+
+fn load_console_value(state_path: &Path, session_id: Option<u64>, task_id: Option<u64>, tail: usize) -> Value {
+    let raw = match std::fs::read_to_string(state_path) {
+        Ok(raw) => raw,
+        Err(err) => {
+            return json!({
+                "state": state_path.display().to_string(),
+                "error": format!("failed to read supervisor state: {err}")
+            })
+        }
+    };
+    let parsed: SupervisorStateFile = match serde_json::from_str(&raw) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            return json!({
+                "state": state_path.display().to_string(),
+                "error": format!("failed to parse supervisor state: {err}")
+            })
+        }
+    };
+
+    let session = if let Some(session_id) = session_id {
+        parsed.sessions.iter().find(|session| session.id == session_id)
+    } else if let Some(task_id) = task_id {
+        parsed.sessions.iter().rev().find(|session| session.current_task_id == Some(task_id))
+    } else {
+        parsed.sessions.last()
+    };
+
+    let Some(session) = session else {
+        return json!({
+            "state": state_path.display().to_string(),
+            "error": "no matching supervisor session found"
+        });
+    };
+
+    let prompt_log_path = session
+        .prompt_log_path
+        .as_ref()
+        .map(|path| resolve_log_path(state_path, path))
+        .or_else(|| Some(session_prompt_path(state_path, session.id)));
+
+    serde_json::to_value(SupervisorConsoleResponse {
+        state: state_path.display().to_string(),
+        session_id: session.id,
+        agent: session.agent_name.clone(),
+        task_id: session.current_task_id,
+        prompt_log_path: prompt_log_path.as_ref().map(|path| path.display().to_string()),
+        prompt_tail: prompt_log_path
+            .as_ref()
+            .map(|path| tail_text_file(path, tail))
+            .transpose()
+            .unwrap_or_else(|err| Some(vec![format!("ERROR: {err}")]))
+            .unwrap_or_default(),
+        mode: "session_prompt_log".into(),
+    }).unwrap_or_else(|err| json!({
+        "state": state_path.display().to_string(),
+        "error": format!("failed to serialize supervisor console response: {err}")
     }))
 }
 
@@ -1415,6 +1613,38 @@ fn attach_handover_to_task(state_path: &Path, task_id: u64, path: String) -> Res
         session_id: None,
     });
     save_supervisor_state(state_path, &state)
+}
+
+fn session_prompt_path(state_path: &Path, session_id: u64) -> PathBuf {
+    let base_dir = state_path
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new(".qlang"));
+    base_dir
+        .join("logs")
+        .join(format!("session-{session_id}"))
+        .join("prompt.log")
+}
+
+fn append_text_line(path: &Path, line: &str) -> Result<(), String> {
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|err| format!("failed to open '{}': {err}", path.display()))?;
+    writeln!(file, "{line}")
+        .map_err(|err| format!("failed to append to '{}': {err}", path.display()))
+}
+
+fn compact_note(value: &str, limit: usize) -> String {
+    let trimmed = value.trim().replace('\n', " ");
+    let count = trimmed.chars().count();
+    if count <= limit {
+        trimmed
+    } else {
+        format!("{}...", trimmed.chars().take(limit).collect::<String>())
+    }
 }
 
 fn load_supervisor_state(path: &Path) -> Result<SupervisorStateWritable, String> {
@@ -1751,7 +1981,7 @@ fn run_tick(state_path: &Path, spawn: bool) -> Value {
         }
     };
     let launch_command = render_launch_command(&agent);
-    let (process_id, exit_code, session_status, stdout_log_path, stderr_log_path) = if spawn {
+    let (process_id, exit_code, session_status, stdout_log_path, stderr_log_path, prompt_log_path) = if spawn {
         match spawn_agent_process(state_path, session_id, &agent) {
             Ok(spawned) => (
                 Some(spawned.process_id),
@@ -1759,6 +1989,7 @@ fn run_tick(state_path: &Path, spawn: bool) -> Value {
                 "Running".to_string(),
                 Some(spawned.stdout_log_path),
                 Some(spawned.stderr_log_path),
+                Some(spawned.prompt_log_path),
             ),
             Err(err) => (
                 None,
@@ -1766,10 +1997,18 @@ fn run_tick(state_path: &Path, spawn: bool) -> Value {
                 "Failed".to_string(),
                 Some(format!("ERROR: {err}")),
                 None,
+                None,
             ),
         }
     } else {
-        (None, None, "Running".to_string(), None, None)
+        (
+            None,
+            None,
+            "Running".to_string(),
+            None,
+            None,
+            Some(session_prompt_path(state_path, session_id).display().to_string()),
+        )
     };
 
     state.sessions.push(SupervisorSessionWritable {
@@ -1786,6 +2025,7 @@ fn run_tick(state_path: &Path, spawn: bool) -> Value {
         exit_code,
         stdout_log_path,
         stderr_log_path,
+        prompt_log_path,
     });
     if session_status == "Failed" {
         state.tasks[task_index].status = "Failed".into();
@@ -1827,6 +2067,7 @@ struct SpawnedProcess {
     process_id: u32,
     stdout_log_path: String,
     stderr_log_path: String,
+    prompt_log_path: String,
 }
 
 fn spawn_agent_process(state_path: &Path, session_id: u64, agent: &SupervisorAgent) -> Result<SpawnedProcess, String> {
@@ -1835,6 +2076,7 @@ fn spawn_agent_process(state_path: &Path, session_id: u64, agent: &SupervisorAge
 
     let (program, args) = resolve_launch(agent)?;
     let (stdout_log_path, stderr_log_path) = session_log_paths(state_path, session_id);
+    let prompt_log_path = session_prompt_path(state_path, session_id);
     if let Some(parent) = stdout_log_path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("failed to create session log directory '{}': {e}", parent.display()))?;
@@ -1843,6 +2085,8 @@ fn spawn_agent_process(state_path: &Path, session_id: u64, agent: &SupervisorAge
         .map_err(|e| format!("failed to create stdout log '{}': {e}", stdout_log_path.display()))?;
     let stderr_file = File::create(&stderr_log_path)
         .map_err(|e| format!("failed to create stderr log '{}': {e}", stderr_log_path.display()))?;
+    File::create(&prompt_log_path)
+        .map_err(|e| format!("failed to create prompt log '{}': {e}", prompt_log_path.display()))?;
     let mut command = Command::new(program);
     command.args(args);
     if let Some(cwd) = &agent.working_dir {
@@ -1858,6 +2102,7 @@ fn spawn_agent_process(state_path: &Path, session_id: u64, agent: &SupervisorAge
         process_id: child.id(),
         stdout_log_path: stdout_log_path.display().to_string(),
         stderr_log_path: stderr_log_path.display().to_string(),
+        prompt_log_path: prompt_log_path.display().to_string(),
     })
 }
 
@@ -2204,6 +2449,20 @@ const SUPERVISOR_HTML: &str = r#"<!doctype html>
           </div>
         </div>
       </section>
+      <section class="panel">
+        <h2>Selected Session Console</h2>
+        <div class="small muted" id="consoleMeta">No session selected.</div>
+        <div class="small muted" style="margin-top:6px;">Prompts are queued into the session prompt log. This is the first GUI console path; direct stdin bridging for external CLIs is the next adapter step.</div>
+        <textarea id="sessionPromptInput" placeholder="Type the next instruction for the selected session..." style="margin-top:12px; min-height:110px; width:100%; background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:12px; padding:12px; font:inherit;"></textarea>
+        <div style="display:flex; gap:8px; margin-top:10px;">
+          <button type="button" onclick="sendSessionPrompt()">Send Prompt</button>
+          <button type="button" onclick="clearSessionPrompt()" style="background:linear-gradient(180deg,#444f66,#303a4d); border-color:#293244;">Clear</button>
+        </div>
+        <div style="margin-top: 12px;">
+          <div class="small muted" style="margin-bottom:6px;">prompt log</div>
+          <pre id="promptLog"></pre>
+        </div>
+      </section>
     </div>
   </div>
   <script>
@@ -2238,6 +2497,7 @@ const SUPERVISOR_HTML: &str = r#"<!doctype html>
           selectedSessionId = data.sessions[data.sessions.length - 1].id;
         }
         await loadLogs(selectedSessionId);
+        await loadConsole(selectedSessionId);
       }
     }
 
@@ -2303,6 +2563,7 @@ const SUPERVISOR_HTML: &str = r#"<!doctype html>
         node.addEventListener("click", async () => {
           selectedSessionId = Number(node.getAttribute("data-session-id"));
           await loadLogs(selectedSessionId);
+          await loadConsole(selectedSessionId);
           startStream();
         });
       });
@@ -2329,6 +2590,43 @@ const SUPERVISOR_HTML: &str = r#"<!doctype html>
       document.getElementById("stderrLog").textContent = (data.stderr_tail || []).join("\n");
     }
 
+    async function loadConsole(sessionId) {
+      const state = encodeURIComponent(stateInput.value.trim() || ".qlang/supervisor.json");
+      const tail = encodeURIComponent(tailInput.value);
+      const response = await fetch(`/api/supervisor/console?state=${state}&session=${sessionId}&tail=${tail}`);
+      const data = await response.json();
+      document.getElementById("consoleMeta").textContent =
+        `session=${data.session_id ?? "-"} agent=${data.agent ?? "-"} task=${data.task_id ?? "-"} mode=${data.mode ?? "-"}`;
+      document.getElementById("promptLog").textContent = (data.prompt_tail || []).join("\n");
+    }
+
+    async function sendSessionPrompt() {
+      if (!selectedSessionId) {
+        actionResult.textContent = "select a session first";
+        return;
+      }
+      const prompt = document.getElementById("sessionPromptInput").value.trim();
+      if (!prompt) {
+        actionResult.textContent = "prompt is empty";
+        return;
+      }
+      const result = await postJson("/api/supervisor/session-prompt", {
+        state: stateInput.value.trim() || ".qlang/supervisor.json",
+        session_id: selectedSessionId,
+        prompt
+      });
+      actionResult.textContent = result.error || `queued prompt for session ${result.session_id}`;
+      if (!result.error) {
+        document.getElementById("sessionPromptInput").value = "";
+        await loadConsole(selectedSessionId);
+        await loadState();
+      }
+    }
+
+    function clearSessionPrompt() {
+      document.getElementById("sessionPromptInput").value = "";
+    }
+
     function startStream() {
       if (eventSource) {
         eventSource.close();
@@ -2348,6 +2646,11 @@ const SUPERVISOR_HTML: &str = r#"<!doctype html>
               `session=${payload.logs.session_id ?? "-"} agent=${payload.logs.agent ?? "-"} task=${payload.logs.task_id ?? "-"}`;
             document.getElementById("stdoutLog").textContent = (payload.logs.stdout_tail || []).join("\n");
             document.getElementById("stderrLog").textContent = (payload.logs.stderr_tail || []).join("\n");
+          }
+          if (payload.console && !payload.console.error) {
+            document.getElementById("consoleMeta").textContent =
+              `session=${payload.console.session_id ?? "-"} agent=${payload.console.agent ?? "-"} task=${payload.console.task_id ?? "-"} mode=${payload.console.mode ?? "-"}`;
+            document.getElementById("promptLog").textContent = (payload.console.prompt_tail || []).join("\n");
           }
         } catch (error) {
           actionResult.textContent = `stream parse error: ${error}`;

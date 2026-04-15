@@ -83,6 +83,7 @@ pub struct AgentSession {
     pub exit_code: Option<i32>,
     pub stdout_log_path: Option<String>,
     pub stderr_log_path: Option<String>,
+    pub prompt_log_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -152,7 +153,7 @@ pub fn handle_run_agent(args: &[String]) {
     state.next_session_id += 1;
     let now = now_string();
     let launch_command = render_launch_command(&agent);
-    let (process_id, exit_code, session_status, stdout_log_path, stderr_log_path) = if spawn {
+    let (process_id, exit_code, session_status, stdout_log_path, stderr_log_path, prompt_log_path) = if spawn {
         match spawn_agent_process(&state_path, session_id, &agent) {
             Ok(spawned) => (
                 Some(spawned.process_id),
@@ -160,14 +161,25 @@ pub fn handle_run_agent(args: &[String]) {
                 SessionStatus::Running,
                 Some(spawned.stdout_log_path),
                 Some(spawned.stderr_log_path),
+                Some(spawned.prompt_log_path),
             ),
             Err(err) => {
                 eprintln!("[run-agent] spawn failed: {err}");
-                (None, Some(-1), SessionStatus::Failed, None, None)
+                (None, Some(-1), SessionStatus::Failed, None, None, None)
             }
         }
     } else {
-        (None, None, SessionStatus::Running, None, None)
+        let (_, _, prompt_log_path) = session_io_paths(&state_path, session_id);
+        let _ = ensure_parent_dir(&prompt_log_path);
+        let _ = File::create(&prompt_log_path);
+        (
+            None,
+            None,
+            SessionStatus::Running,
+            None,
+            None,
+            Some(prompt_log_path.display().to_string()),
+        )
     };
     state.sessions.push(AgentSession {
         id: session_id,
@@ -183,6 +195,7 @@ pub fn handle_run_agent(args: &[String]) {
         exit_code,
         stdout_log_path,
         stderr_log_path,
+        prompt_log_path,
     });
 
     if let Some(task_id) = task_id {
@@ -404,7 +417,7 @@ fn cmd_tick(args: &[String]) {
         .cloned()
         .unwrap_or_else(|| fail(2, &format!("assigned agent '{}' is missing", assigned_agent)));
     let launch_command = render_launch_command(&agent);
-    let (process_id, exit_code, session_status, stdout_log_path, stderr_log_path) = if spawn {
+    let (process_id, exit_code, session_status, stdout_log_path, stderr_log_path, prompt_log_path) = if spawn {
         match spawn_agent_process(&state_path, session_id, &agent) {
             Ok(spawned) => (
                 Some(spawned.process_id),
@@ -412,14 +425,25 @@ fn cmd_tick(args: &[String]) {
                 SessionStatus::Running,
                 Some(spawned.stdout_log_path),
                 Some(spawned.stderr_log_path),
+                Some(spawned.prompt_log_path),
             ),
             Err(err) => {
                 eprintln!("[supervisor tick] spawn failed: {err}");
-                (None, Some(-1), SessionStatus::Failed, None, None)
+                (None, Some(-1), SessionStatus::Failed, None, None, None)
             }
         }
     } else {
-        (None, None, SessionStatus::Running, None, None)
+        let (_, _, prompt_log_path) = session_io_paths(&state_path, session_id);
+        let _ = ensure_parent_dir(&prompt_log_path);
+        let _ = File::create(&prompt_log_path);
+        (
+            None,
+            None,
+            SessionStatus::Running,
+            None,
+            None,
+            Some(prompt_log_path.display().to_string()),
+        )
     };
     state.sessions.push(AgentSession {
         id: session_id,
@@ -435,6 +459,7 @@ fn cmd_tick(args: &[String]) {
         exit_code,
         stdout_log_path,
         stderr_log_path,
+        prompt_log_path,
     });
     if session_status == SessionStatus::Failed {
         state.tasks[task_index].status = TaskStatus::Failed;
@@ -777,19 +802,19 @@ struct SpawnedProcess {
     process_id: u32,
     stdout_log_path: String,
     stderr_log_path: String,
+    prompt_log_path: String,
 }
 
 fn spawn_agent_process(state_path: &Path, session_id: u64, agent: &AgentSpec) -> Result<SpawnedProcess, String> {
     let (program, args) = resolve_launch(agent)?;
-    let (stdout_log_path, stderr_log_path) = session_log_paths(state_path, session_id);
-    if let Some(parent) = stdout_log_path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("failed to create session log directory '{}': {e}", parent.display()))?;
-    }
+    let (stdout_log_path, stderr_log_path, prompt_log_path) = session_io_paths(state_path, session_id);
+    ensure_parent_dir(&stdout_log_path)?;
     let stdout_file = File::create(&stdout_log_path)
         .map_err(|e| format!("failed to create stdout log '{}': {e}", stdout_log_path.display()))?;
     let stderr_file = File::create(&stderr_log_path)
         .map_err(|e| format!("failed to create stderr log '{}': {e}", stderr_log_path.display()))?;
+    File::create(&prompt_log_path)
+        .map_err(|e| format!("failed to create prompt log '{}': {e}", prompt_log_path.display()))?;
     let mut command = Command::new(program);
     command.args(args);
     if let Some(cwd) = &agent.working_dir {
@@ -805,6 +830,7 @@ fn spawn_agent_process(state_path: &Path, session_id: u64, agent: &AgentSpec) ->
         process_id: child.id(),
         stdout_log_path: stdout_log_path.display().to_string(),
         stderr_log_path: stderr_log_path.display().to_string(),
+        prompt_log_path: prompt_log_path.display().to_string(),
     })
 }
 
@@ -959,13 +985,25 @@ fn render_launch_command(agent: &AgentSpec) -> String {
     parts.join(" ")
 }
 
-fn session_log_paths(state_path: &Path, session_id: u64) -> (PathBuf, PathBuf) {
+fn session_io_paths(state_path: &Path, session_id: u64) -> (PathBuf, PathBuf, PathBuf) {
     let base_dir = state_path
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new(".qlang"));
     let session_dir = base_dir.join("logs").join(format!("session-{session_id}"));
-    (session_dir.join("stdout.log"), session_dir.join("stderr.log"))
+    (
+        session_dir.join("stdout.log"),
+        session_dir.join("stderr.log"),
+        session_dir.join("prompt.log"),
+    )
+}
+
+fn ensure_parent_dir(path: &Path) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create directory '{}': {e}", parent.display()))?;
+    }
+    Ok(())
 }
 
 fn tail_text_file(path: &Path, tail: usize) -> Result<Vec<String>, String> {
