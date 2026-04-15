@@ -125,6 +125,8 @@ pub struct RouteSpecialistMetrics {
     pub epochs: usize,
     pub final_loss: f32,
     pub final_accuracy: f32,
+    #[serde(default)]
+    pub test_accuracy: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -321,6 +323,7 @@ impl RouteSpecialistModel {
                 epochs,
                 final_loss: 0.0,
                 final_accuracy: 0.0,
+                test_accuracy: 0.0,
             },
         };
         let final_accuracy = model.evaluate_accuracy(examples);
@@ -335,6 +338,7 @@ impl RouteSpecialistModel {
                 epochs,
                 final_loss,
                 final_accuracy,
+                test_accuracy: final_accuracy,
             },
         })
     }
@@ -451,6 +455,7 @@ impl RiskSpecialistModel {
                 epochs,
                 final_loss: 0.0,
                 final_accuracy: 0.0,
+                test_accuracy: 0.0,
             },
         };
         let final_accuracy = model.evaluate_accuracy(examples);
@@ -465,6 +470,7 @@ impl RiskSpecialistModel {
                 epochs,
                 final_loss,
                 final_accuracy,
+                test_accuracy: final_accuracy,
             },
         })
     }
@@ -594,14 +600,14 @@ pub fn heuristic_planner_state(request: &str) -> PlannerState {
     let lower = request.to_ascii_lowercase();
 
     let mut route_scores = vec![0.10, 0.10, 0.10, 0.10, 0.05];
-    if lower.contains("rust") || lower.contains("panic") || lower.contains("patch") || lower.contains("file") {
-        route_scores = vec![0.05, 0.82, 0.04, 0.04, 0.05];
-    } else if lower.contains("search") || lower.contains("find") {
-        route_scores = vec![0.05, 0.08, 0.78, 0.04, 0.05];
-    } else if lower.contains("summary") || lower.contains("summarize") {
-        route_scores = vec![0.06, 0.06, 0.05, 0.78, 0.05];
-    } else if lower.contains("medical") || lower.contains("legal") || lower.contains("financial") {
+    if lower.contains("medical") || lower.contains("legal") || lower.contains("financial") {
         route_scores = vec![0.04, 0.04, 0.05, 0.02, 0.85];
+    } else if lower.contains("summary") || lower.contains("summarize") || lower.contains("recap") {
+        route_scores = vec![0.06, 0.10, 0.05, 0.74, 0.05];
+    } else if lower.contains("search") || lower.contains("find") || lower.contains("lookup") || lower.contains("locate") {
+        route_scores = vec![0.05, 0.08, 0.78, 0.04, 0.05];
+    } else if lower.contains("rust") || lower.contains("panic") || lower.contains("patch") || lower.contains("file") {
+        route_scores = vec![0.05, 0.82, 0.04, 0.04, 0.05];
     }
 
     let mut risk_scores = vec![0.75, 0.20, 0.05];
@@ -740,8 +746,8 @@ fn route_features_from_parts(raw_text: &str, route_scores: &[f32], risk_scores: 
 
 fn risk_features_from_parts(raw_text: &str, route_scores: &[f32], risk_scores: &[f32], confidence: f32) -> Vec<f32> {
     let mut features = Vec::with_capacity(risk_feature_dim());
-    features.extend_from_slice(risk_scores);
     features.extend_from_slice(route_scores);
+    features.extend_from_slice(risk_scores);
     features.push(confidence);
     features.extend(text_features(raw_text));
     features
@@ -754,11 +760,17 @@ fn text_feature_dim() -> usize {
 fn text_features(raw_text: &str) -> Vec<f32> {
     let lower = raw_text.to_ascii_lowercase();
     vec![
-        contains_any(&lower, &["panic", "crash", "stacktrace"]) as u8 as f32,
-        contains_any(&lower, &["rust", "compile", "module", "file", "patch"]) as u8 as f32,
-        contains_any(&lower, &["search", "find", "lookup", "retrieve"]) as u8 as f32,
-        contains_any(&lower, &["summary", "summarize", "recap"]) as u8 as f32,
-        contains_any(&lower, &["medical", "legal", "financial", "unsafe", "delete", "production"]) as u8 as f32,
+        contains_any(&lower, &["panic", "crash", "stacktrace", "failure", "error", "bug"]) as u8 as f32,
+        contains_any(&lower, &["rust", "compile", "module", "file", "patch", "review", "fix"]) as u8 as f32,
+        contains_any(
+            &lower,
+            &["search", "find", "lookup", "retrieve", "locate", "where", "endpoint", "docs", "repository"],
+        ) as u8 as f32,
+        contains_any(&lower, &["summary", "summarize", "recap", "short summary", "bullet points"]) as u8 as f32,
+        contains_any(
+            &lower,
+            &["medical", "legal", "financial", "unsafe", "delete", "production", "admin access", "wipe"],
+        ) as u8 as f32,
     ]
 }
 

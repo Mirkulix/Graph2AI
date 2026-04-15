@@ -24,6 +24,8 @@ package-lock.json
 graphify-out/
 test-results/
 .claude-flow/
+.qlang/
+.maestro/
 **/*.log
 *.env
 .env

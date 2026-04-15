@@ -45,6 +45,7 @@ pub struct AppState {
     pub real_evolution_daemon: Arc<
         Mutex<Option<Arc<qlang_runtime::evolution::real_daemon::RealEvolutionDaemon>>>,
     >,
+    pub supervisor_daemon: Mutex<routes::supervisor::SupervisorDaemonState>,
 }
 
 pub struct QoConfig {
@@ -212,6 +213,7 @@ pub async fn build_app(
         gpu_training: Arc::new(routes::gpu_training::GpuTrainingState::default()),
         evolution_daemon: Arc::new(Mutex::new(None)),
         real_evolution_daemon: Arc::new(Mutex::new(None)),
+        supervisor_daemon: Mutex::new(routes::supervisor::SupervisorDaemonState::default()),
     });
 
     // Register all QO agents on the message bus.
@@ -289,6 +291,23 @@ pub async fn build_app(
         .route("/api/messages/agents", get(routes::messages::bus_agents))
         .route("/api/messages/conversations", get(routes::messages::bus_conversations))
         .route("/api/messages/stream", get(routes::messages::bus_stream))
+        .route("/api/supervisor/state", get(routes::supervisor::state))
+        .route("/api/supervisor/logs", get(routes::supervisor::logs))
+        .route("/api/supervisor/agent", post(routes::supervisor::add_agent))
+        .route("/api/supervisor/presets", get(routes::supervisor::presets))
+        .route("/api/supervisor/install-preset", post(routes::supervisor::install_preset))
+        .route("/api/supervisor/suggest-agent", post(routes::supervisor::suggest_agent))
+        .route("/api/supervisor/dispatch", post(routes::supervisor::dispatch_preset))
+        .route("/api/supervisor/task", post(routes::supervisor::add_task))
+        .route("/api/supervisor/action", post(routes::supervisor::action))
+        .route("/api/supervisor/task-action", post(routes::supervisor::task_action))
+        .route("/api/supervisor/handover/create", post(routes::supervisor::create_handover))
+        .route("/api/supervisor/handover/reply", post(routes::supervisor::reply_handover))
+        .route("/api/supervisor/handover/show", get(routes::supervisor::show_handover))
+        .route("/api/supervisor/stream", get(routes::supervisor::stream))
+        .route("/api/supervisor/daemon/status", get(routes::supervisor::daemon_status))
+        .route("/api/supervisor/daemon/start", post(routes::supervisor::daemon_start))
+        .route("/api/supervisor/daemon/stop", post(routes::supervisor::daemon_stop))
         .route("/api/proof/tensor-exchange", post(routes::proof::tensor_exchange))
         .route("/api/organism/chat", post(routes::organism::chat))
         .route("/api/organism/evolve", post(routes::organism::evolve))
@@ -322,6 +341,7 @@ pub async fn build_app(
         .route("/api/neo/status", get(routes::neo::status))
         .route("/api/neo/agents", get(routes::neo::list_agents))
         .route("/api/neo/agents/{id}", get(routes::neo::get_agent))
+        .route("/supervisor", get(routes::supervisor::cockpit))
         .layer(middleware::from_fn(auth::auth_middleware))
         .with_state(state.clone());
 

@@ -9,6 +9,7 @@
 pub use qlang_core as core;
 pub use qlang_runtime as runtime;
 pub use qlang_agent as agent;
+pub mod hybrid_router_cli;
 
 /// C FFI — execute a QLANG graph via the runtime.
 ///

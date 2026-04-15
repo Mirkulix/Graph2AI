@@ -85,6 +85,18 @@ path = "src/gpu_train_bin.rs"
 name = "classify-request"
 path = "src/classify_request.rs"
 
+[[bin]]
+name = "train-hybrid-router"
+path = "src/train_hybrid_router.rs"
+
+[[bin]]
+name = "eval-hybrid-router"
+path = "src/eval_hybrid_router.rs"
+
+[[bin]]
+name = "coding-handover"
+path = "src/coding_handover.rs"
+
 [features]
 default = ["llvm"]
 llvm = ["inkwell", "qlang-compile/llvm"]

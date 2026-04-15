@@ -114,13 +114,34 @@ cargo run --release --example transformer        # Transformer encoder
 cargo run --release --example jit_compile        # LLVM JIT demo
 cargo run --release --example benchmark          # Performance test
 cargo run --release --example full_pipeline      # Everything
+cargo run --bin train-hybrid-router --no-default-features --offline
+cargo run --bin eval-hybrid-router --no-default-features --offline
 cargo run --bin classify-request --no-default-features --offline -- "Please inspect this Rust panic"
+cargo run --bin coding-handover --no-default-features --offline -- show --help
+cargo run --bin qlang --no-default-features -- supervisor init --state .qlang/supervisor.json
+cargo run --bin qlang --no-default-features -- supervisor logs --state .qlang/supervisor.json --session 1 --tail 50
+cargo run --bin qlang --no-default-features -- supervisor daemon --state .qlang/supervisor.json --spawn --interval-ms 2000
+cargo run --bin qo --offline
 ```
+
+Then open `http://127.0.0.1:4646/supervisor`.
+
+From there you can register agents, enqueue tasks, inspect sessions and logs, and trigger supervisor actions without leaving the browser.
+You can also complete/fail tasks there and attach a QLMS handover path.
+The cockpit now also creates, replies to, and inspects QLMS coding handovers directly.
+Supervisor state and selected session logs now refresh live via SSE in the cockpit.
+The cockpit can also start and stop the background supervisor daemon.
+It also offers one-click agent presets for a built-in QLANG demo agent plus Claude Code, Codex, Gemini, and Kimi.
+Unavailable tools are shown as missing instead of being installed blindly.
+Preset roles and capabilities can now prefill the task form for faster routing.
+Quick route buttons now prefill common flows such as Analyze with Claude and Patch with Codex.
+For a safe browser-only smoke test, click `Run GUI Smoke Test` in the cockpit. That launches the built-in demo agent, writes session logs, and lets you verify tasks, sessions, logs, and daemon processing end to end.
 
 ## Next Steps
 
 - Read the [Language Specification](../spec/QLANG_SPEC.md)
 - See the [Pitch Deck](PITCH.md) for business context
 - Read [BUILD.md](BUILD.md) for the verified Windows/MSYS2/LLVM-18 setup
+- Read [SUPERVISOR.md](SUPERVISOR.md) for the task-queue/session MVP
 - Browse the [Examples](../examples/)
 - Join the discussion on GitHub Issues

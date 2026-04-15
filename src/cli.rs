@@ -8,6 +8,8 @@
 //!   qlang info   model.qlbg
 //!   qlang bench  model.qlbg
 
+mod supervisor;
+
 use std::time::Instant;
 
 use qlang_core::binary;
@@ -778,6 +780,8 @@ fn main() {
             let output = arg_value(&args, "--output").unwrap_or_else(|| "tci_evolve_state.qltc".into());
             cmd_tci_evolve(rounds, evo_rounds, &output);
         }
+        "supervisor" => supervisor::handle_supervisor(&args[2..]),
+        "run-agent" => supervisor::handle_run_agent(&args[2..]),
         "help" | "--help" | "-h" => print_usage(),
         other => {
             eprintln!("Unknown command: {}", other);
@@ -800,6 +804,8 @@ fn print_usage() {
     println!("  qlang tci    --rounds <n>");
     println!("  qlang tci-verify --rounds <n> --output <state.qltc>");
     println!("  qlang tci-evolve --rounds <n> --evo-rounds <e> --output <state.qltc>");
+    println!("  qlang supervisor <subcommand> ...");
+    println!("  qlang run-agent --state <supervisor.json> --agent <name> [--task <id>]");
     println!();
     println!("EXAMPLES:");
     println!("  qlang train --data data/mnist --epochs 15 --output digit.qlbg");
@@ -809,6 +815,10 @@ fn print_usage() {
     println!("  qlang tci --rounds 5");
     println!("  qlang tci-verify --rounds 5 --output tci_state.qltc");
     println!("  qlang tci-evolve --rounds 5 --evo-rounds 3 --output tci_evolve.qltc");
+    println!("  qlang supervisor init --state .qlang/supervisor.json");
+    println!("  qlang supervisor add-agent --state .qlang/supervisor.json --name claude --kind claude-code --command claude --arg code");
+    println!("  qlang supervisor enqueue --state .qlang/supervisor.json --title \"Investigate parser panic\" --goal \"Find the root cause\" --agent claude");
+    println!("  qlang supervisor tick --state .qlang/supervisor.json");
 }
 
 fn arg_value(args: &[String], flag: &str) -> Option<String> {

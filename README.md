@@ -1,5 +1,107 @@
 # QLANG
 
+## Repo Description
+
+QLANG is evolving into an **AI-to-AI and Agent-to-Agent control plane** for coding systems.
+The repo combines:
+
+- a graph-native runtime and binary message format
+- a Rust supervisor CLI for orchestrating external coding tools
+- a browser cockpit for observing tasks, sessions, logs, handovers, and daemon state
+- structured QLMS handovers so Claude Code, Codex, Gemini, Kimi, and QLANG-native flows can coordinate through one layer
+
+The current direction is not "another chat wrapper".
+It is a **central console and GUI for multi-agent coding workflows**, with QLANG as the shared coordination layer.
+
+## Current State
+
+Today the repository already contains these working building blocks:
+
+- `qlang supervisor`: persistent task queue, agent registry, session tracking, log capture, handover tracking, daemon mode
+- `qo` supervisor cockpit: browser UI at `/supervisor` with live SSE updates, daemon start/stop, task actions, log view, handover creation/reply/show
+- agent presets for `Claude Code`, `Codex`, `Gemini`, `Kimi`, plus a built-in `QLANG Demo Agent` for safe GUI smoke tests
+- `coding-handover`: a CLI for structured QLMS handovers between coding agents
+- `classify-request`, `train-hybrid-router`, and `eval-hybrid-router`: the first hybrid LLM + small-model routing path for request classification and risk gating
+
+What this means in practice:
+
+- you can manage coding tasks from one GUI
+- you can dispatch work to different agent CLIs
+- you can observe sessions and logs centrally
+- you can keep AI-to-AI handovers as structured artifacts instead of loose chat history
+- you can run the supervisor continuously through a daemon
+
+## System Sketch
+
+```mermaid
+flowchart TD
+    U["User"] --> GUI["QO Supervisor Cockpit"]
+    U --> CLI["QLANG CLI"]
+
+    GUI --> API["qo-server / supervisor API"]
+    CLI --> SUP["QLANG Supervisor"]
+    API --> SUP
+
+    SUP --> Q["Task Queue"]
+    SUP --> S["Sessions"]
+    SUP --> L["Logs"]
+    SUP --> H["QLMS Handovers"]
+    SUP --> D["Daemon Loop"]
+
+    SUP --> A1["Claude Code"]
+    SUP --> A2["Codex"]
+    SUP --> A3["Gemini"]
+    SUP --> A4["Kimi"]
+    SUP --> A5["QLANG Demo Agent"]
+
+    A1 --> H
+    A2 --> H
+    A3 --> H
+    A4 --> H
+    A5 --> L
+
+    H --> GUI
+    L --> GUI
+    Q --> GUI
+    S --> GUI
+    D --> GUI
+```
+
+## Recommended First Test
+
+Start the server:
+
+```bash
+cargo run --bin qo --offline
+```
+
+Then open:
+
+`http://127.0.0.1:4646/supervisor`
+
+In the cockpit, click:
+
+`Run GUI Smoke Test`
+
+That path uses the built-in demo agent and verifies:
+
+- task creation
+- session spawning
+- live updates
+- session log capture
+- automatic completion
+
+## Key Files For This Direction
+
+- `src/supervisor.rs` - supervisor CLI, queue, daemon, sessions, logs
+- `src/coding_handover.rs` - structured QLMS handover CLI
+- `qo/qo-server/src/routes/supervisor.rs` - browser cockpit and supervisor API
+- `docs/SUPERVISOR.md` - supervisor behavior and GUI flow
+- `docs/CODING_HANDOVER.md` - handover format and CLI usage
+- `docs/QUICKSTART.md` - current entry points
+
+---
+
 A graph-based programming language and runtime for AI systems, written in Rust.
 Programs are directed acyclic graphs (DAGs) of tensor operations that can be
 interpreted, JIT-compiled via LLVM, or exchanged as signed binary messages

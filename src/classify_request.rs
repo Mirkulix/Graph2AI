@@ -1,12 +1,14 @@
 use std::fs;
 use std::io::{self, BufRead};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
+use qlang::hybrid_router_cli::{
+    hybrid_router_dataset_path, hybrid_router_model_path, load_dataset_with_fallback, load_specialists,
+};
 use qlang_runtime::hybrid_router::{
-    blend_scores, default_hybrid_router_dataset, execute_risk_graph, execute_route_graph,
-    planner_state_with_fallback, train_specialists_from_dataset, HybridRouterDataset,
+    blend_scores, execute_risk_graph, execute_route_graph, heuristic_planner_state, planner_state_with_fallback,
     HybridRouterSpecialists, PlannerSource, resolve_decision,
 };
 use qlang_runtime::providers::ProviderRegistry;
@@ -18,8 +20,10 @@ struct CliOptions {
     model_path: PathBuf,
     pretty: bool,
     planner_model: Option<String>,
+    planner_timeout_ms: Option<u64>,
     batch: bool,
     text_file: Option<PathBuf>,
+    no_llm: bool,
 }
 
 #[derive(Serialize)]
@@ -48,58 +52,50 @@ fn main() {
             print_usage();
             return;
         }
-        Err(ParseOutcome::Message(message)) => {
-            eprintln!("{message}");
-            eprintln!();
-            print_usage();
-            std::process::exit(2);
-        }
+        Err(ParseOutcome::Message(message)) => fail(2, &message),
     };
 
-    let previous_planner_model = options
-        .planner_model
-        .as_ref()
-        .and_then(|value| std::env::var("QLANG_PLANNER_MODEL").ok().map(|current| (value.clone(), current)));
-    if let Some(model) = &options.planner_model {
-        unsafe {
-            std::env::set_var("QLANG_PLANNER_MODEL", model);
-        }
-    }
+    let planner_model = options.planner_model.clone();
+    let planner_timeout_ms = options.planner_timeout_ms;
+    with_planner_env(planner_model.as_deref(), planner_timeout_ms, || run(options));
+}
 
+fn run(options: CliOptions) {
     let dataset = load_dataset_with_fallback(&options.dataset_path);
-    let specialists = load_or_train_specialists(&options.model_path, &dataset);
+    let specialists = load_specialists(&options.model_path).unwrap_or_else(|err| {
+        fail(
+            3,
+            &format!(
+                "failed to load specialists from '{}': {err}\nRun `cargo run --bin train-hybrid-router --no-default-features --offline` first.",
+                options.model_path.display()
+            ),
+        )
+    });
+
     let mut providers = ProviderRegistry::new(1.0);
-    providers.discover_all();
+    if !options.no_llm {
+        providers.discover_all();
+    }
 
     if options.batch {
         run_batch(&options, &specialists, &mut providers);
-    } else {
-        let request = options.request.clone().expect("request required in single mode");
+        return;
+    }
+
+    let request = options
+        .request
+        .clone()
+        .unwrap_or_else(|| fail(2, "missing request text"));
         let output = classify_one(
             &request,
             &options.dataset_path,
             &options.model_path,
             &specialists,
             &mut providers,
+            options.no_llm,
         );
-        let rendered = if options.pretty {
-            serde_json::to_string_pretty(&output)
-        } else {
-            serde_json::to_string(&output)
-        }
-        .expect("serialize classification output");
-        println!("{rendered}");
-    }
-
-    if let Some((_, previous)) = previous_planner_model {
-        unsafe {
-            std::env::set_var("QLANG_PLANNER_MODEL", previous);
-        }
-    } else if options.planner_model.is_some() {
-        unsafe {
-            std::env::remove_var("QLANG_PLANNER_MODEL");
-        }
-    }
+    print_output(&output, options.pretty);
+    drop(dataset);
 }
 
 enum ParseOutcome {
@@ -112,9 +108,11 @@ fn parse_args(args: Vec<String>) -> Result<CliOptions, ParseOutcome> {
     let mut model_path = hybrid_router_model_path();
     let mut pretty = true;
     let mut planner_model = None;
+    let mut planner_timeout_ms = None;
     let mut request_parts = Vec::new();
     let mut text_file: Option<PathBuf> = None;
     let mut batch = false;
+    let mut no_llm = false;
 
     let mut idx = 0usize;
     while idx < args.len() {
@@ -123,6 +121,7 @@ fn parse_args(args: Vec<String>) -> Result<CliOptions, ParseOutcome> {
             "--batch" | "-b" => batch = true,
             "--json" => pretty = false,
             "--pretty" => pretty = true,
+            "--no-llm" => no_llm = true,
             "--dataset-path" => {
                 idx += 1;
                 let Some(value) = args.get(idx) else {
@@ -151,6 +150,17 @@ fn parse_args(args: Vec<String>) -> Result<CliOptions, ParseOutcome> {
                 };
                 planner_model = Some(value.clone());
             }
+            "--planner-timeout" => {
+                idx += 1;
+                let Some(value) = args.get(idx) else {
+                    return Err(ParseOutcome::Message("missing value for --planner-timeout".into()));
+                };
+                planner_timeout_ms = Some(
+                    value
+                        .parse::<u64>()
+                        .map_err(|_| ParseOutcome::Message("invalid value for --planner-timeout".into()))?,
+                );
+            }
             value if value.starts_with("--") => {
                 return Err(ParseOutcome::Message(format!("unknown option: {value}")));
             }
@@ -159,16 +169,17 @@ fn parse_args(args: Vec<String>) -> Result<CliOptions, ParseOutcome> {
         idx += 1;
     }
 
+    if no_llm && planner_model.is_some() {
+        return Err(ParseOutcome::Message(
+            "--no-llm cannot be combined with --planner-model".into(),
+        ));
+    }
+
     let request = if batch {
         let joined = request_parts.join(" ").trim().to_string();
         if joined.is_empty() { None } else { Some(joined) }
     } else if let Some(path) = &text_file {
-        Some(
-            fs::read_to_string(path)
-                .map_err(|e| ParseOutcome::Message(format!("failed to read text file '{}': {e}", path.display())))?
-                .trim()
-                .to_string(),
-        )
+        Some(read_text_file(path, "request text file")?)
     } else {
         let joined = request_parts.join(" ").trim().to_string();
         if joined.is_empty() { None } else { Some(joined) }
@@ -184,9 +195,17 @@ fn parse_args(args: Vec<String>) -> Result<CliOptions, ParseOutcome> {
         model_path,
         pretty,
         planner_model,
+        planner_timeout_ms,
         batch,
         text_file,
+        no_llm,
     })
+}
+
+fn read_text_file(path: &Path, label: &str) -> Result<String, ParseOutcome> {
+    fs::read_to_string(path)
+        .map(|text| text.trim().to_string())
+        .map_err(|e| ParseOutcome::Message(format!("failed to read {label} '{}': {e}", path.display())))
 }
 
 fn print_usage() {
@@ -197,11 +216,13 @@ fn print_usage() {
     eprintln!("  cargo run --bin classify-request --no-default-features --offline -- [options] \"request text\"");
     eprintln!();
     eprintln!("Options:");
-    eprintln!("  --batch, -b             Read one request per line and emit JSON Lines");
+    eprintln!("  --batch, -b              Read one request per line and emit JSON Lines");
     eprintln!("  --text-file <path>       Read request text from a file");
-    eprintln!("  --dataset-path <path>    Override the training dataset path");
+    eprintln!("  --dataset-path <path>    Override the dataset path");
     eprintln!("  --model-path <path>      Override the saved specialist model path");
     eprintln!("  --planner-model <name>   Force a specific local planner model, e.g. qwen3:8b");
+    eprintln!("  --planner-timeout <ms>   Set QLANG_PLANNER_TIMEOUT_MS for this run");
+    eprintln!("  --no-llm                 Skip provider discovery and use heuristic planner only");
     eprintln!("  --json                   Emit compact JSON");
     eprintln!("  --pretty                 Emit pretty JSON (default)");
     eprintln!("  -h, --help               Show this help");
@@ -215,46 +236,69 @@ fn run_batch(
     let mut had_input = false;
     if let Some(path) = &options.text_file {
         let file = fs::File::open(path)
-            .unwrap_or_else(|e| panic!("failed to open batch text file '{}': {e}", path.display()));
+            .unwrap_or_else(|e| fail(2, &format!("failed to open batch text file '{}': {e}", path.display())));
         let reader = io::BufReader::new(file);
         for line in reader.lines() {
-            let line = line.expect("failed to read batch line");
+            let line = line.unwrap_or_else(|e| fail(2, &format!("failed to read batch line: {e}")));
             let request = line.trim();
             if request.is_empty() {
                 continue;
             }
             had_input = true;
-            let output = classify_one(request, &options.dataset_path, &options.model_path, specialists, providers);
+            let output = classify_one(
+                request,
+                &options.dataset_path,
+                &options.model_path,
+                specialists,
+                providers,
+                options.no_llm,
+            );
             println!("{}", serde_json::to_string(&output).expect("serialize batch output"));
         }
     } else {
         let stdin = io::stdin();
         let reader = io::BufReader::new(stdin.lock());
         for line in reader.lines() {
-            let line = line.expect("failed to read stdin line");
+            let line = line.unwrap_or_else(|e| fail(2, &format!("failed to read stdin line: {e}")));
             let request = line.trim();
             if request.is_empty() {
                 continue;
             }
             had_input = true;
-            let output = classify_one(request, &options.dataset_path, &options.model_path, specialists, providers);
+            let output = classify_one(
+                request,
+                &options.dataset_path,
+                &options.model_path,
+                specialists,
+                providers,
+                options.no_llm,
+            );
             println!("{}", serde_json::to_string(&output).expect("serialize batch output"));
         }
     }
 
     if !had_input {
         eprintln!("[classify-request] batch mode: no input received");
+        std::process::exit(4);
     }
 }
 
 fn classify_one(
     request: &str,
-    dataset_path: &PathBuf,
-    model_path: &PathBuf,
+    dataset_path: &Path,
+    model_path: &Path,
     specialists: &HybridRouterSpecialists,
     providers: &mut ProviderRegistry,
+    no_llm: bool,
 ) -> ClassificationOutput {
-    let planner_run = planner_state_with_fallback(providers, request);
+    let planner_run = if no_llm {
+        qlang_runtime::hybrid_router::PlannerRun {
+            state: heuristic_planner_state(request),
+            source: PlannerSource::Heuristic,
+        }
+    } else {
+        planner_state_with_fallback(providers, request)
+    };
     let planner_state = planner_run.state;
 
     let specialist_route_scores = specialists.route.predict_scores(&planner_state);
@@ -294,38 +338,49 @@ fn classify_one(
     }
 }
 
-fn hybrid_router_dataset_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("datasets")
-        .join("hybrid_router_training.json")
+fn print_output(output: &ClassificationOutput, pretty: bool) {
+    let rendered = if pretty {
+        serde_json::to_string_pretty(output)
+    } else {
+        serde_json::to_string(output)
+    }
+    .expect("serialize classification output");
+    println!("{rendered}");
 }
 
-fn hybrid_router_model_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("artifacts")
-        .join("hybrid_router_specialists.json")
+fn with_planner_env<F>(planner_model: Option<&str>, planner_timeout_ms: Option<u64>, action: F)
+where
+    F: FnOnce(),
+{
+    let previous_model = std::env::var("QLANG_PLANNER_MODEL").ok();
+    let previous_timeout = std::env::var("QLANG_PLANNER_TIMEOUT_MS").ok();
+
+    if let Some(model) = planner_model {
+        std::env::set_var("QLANG_PLANNER_MODEL", model);
+    }
+    if let Some(timeout_ms) = planner_timeout_ms {
+        std::env::set_var("QLANG_PLANNER_TIMEOUT_MS", timeout_ms.to_string());
+    }
+
+    action();
+
+    restore_env_var("QLANG_PLANNER_MODEL", previous_model.as_deref(), planner_model.is_some());
+    restore_env_var(
+        "QLANG_PLANNER_TIMEOUT_MS",
+        previous_timeout.as_deref(),
+        planner_timeout_ms.is_some(),
+    );
 }
 
-fn load_dataset_with_fallback(path: &PathBuf) -> HybridRouterDataset {
-    match HybridRouterDataset::load_from_path(path) {
-        Ok(dataset) => dataset,
-        Err(err) => {
-            eprintln!("[classify-request] dataset fallback: {err}");
-            default_hybrid_router_dataset()
-        }
+fn restore_env_var(key: &str, previous: Option<&str>, touched: bool) {
+    match previous {
+        Some(value) => std::env::set_var(key, value),
+        None if touched => std::env::remove_var(key),
+        None => {}
     }
 }
 
-fn load_or_train_specialists(path: &PathBuf, dataset: &HybridRouterDataset) -> HybridRouterSpecialists {
-    match HybridRouterSpecialists::load_from_path(path) {
-        Ok(models) => models,
-        Err(err) => {
-            eprintln!("[classify-request] model fallback: {err}");
-            let models = train_specialists_from_dataset(dataset).expect("train hybrid router specialists");
-            models
-                .save_to_path(path)
-                .expect("persist hybrid router specialists");
-            models
-        }
-    }
+fn fail(code: i32, message: &str) -> ! {
+    eprintln!("{message}");
+    std::process::exit(code);
 }
