@@ -14,13 +14,30 @@ use qlang_core::graph::Graph;
 use qlang_core::tensor::TensorData;
 use std::collections::HashMap;
 
+// ---------------------------------------------------------------------------
+// QLMS envelope flag bits (spec §3.1 flags field)
+// ---------------------------------------------------------------------------
+
+/// Envelope carries a 128-byte auth block (signature + pubkey + payload hash).
+pub const FLAG_SIGNED: u16 = 0x0001;
+
+/// Payload is bincode-encoded `Vec<GraphMessage>` (native binary) rather
+/// than JSON. Enables the 2× serialize / 2.3× size wins from spec §13 /
+/// PRD NF1/NF2 by dropping field-name overhead and UTF-8 escaping.
+pub const FLAG_NATIVE_BINARY: u16 = 0x0002;
+
 /// Serde helper for `Option<[u8; 32]>`: serialize as byte array, skip if None.
+///
+/// `serialize_some` / `serialize_none` ensure the Option discriminant is
+/// written on the wire — necessary for positional formats like bincode
+/// that do not understand `skip_serializing_if`. JSON remains unaffected
+/// because its Option representation was already correct.
 mod opt_bytes_32 {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde::{Deserialize, Deserializer, Serializer};
 
     pub fn serialize<S: Serializer>(val: &Option<[u8; 32]>, ser: S) -> Result<S::Ok, S::Error> {
         match val {
-            Some(arr) => arr.as_slice().serialize(ser),
+            Some(arr) => ser.serialize_some(&arr.as_slice()),
             None => ser.serialize_none(),
         }
     }
@@ -41,11 +58,11 @@ mod opt_bytes_32 {
 
 /// Serde helper for `Option<[u8; 64]>`: serialize as byte array, skip if None.
 mod opt_bytes_64 {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde::{Deserialize, Deserializer, Serializer};
 
     pub fn serialize<S: Serializer>(val: &Option<[u8; 64]>, ser: S) -> Result<S::Ok, S::Error> {
         match val {
-            Some(arr) => arr.as_slice().serialize(ser),
+            Some(arr) => ser.serialize_some(&arr.as_slice()),
             None => ser.serialize_none(),
         }
     }
@@ -83,14 +100,21 @@ pub struct GraphMessage {
     pub intent: MessageIntent,
     /// Response to a previous message (if applicable)
     pub in_reply_to: Option<u64>,
-    /// Optional cryptographic signature (64 bytes) over the graph hash
-    #[serde(default, skip_serializing_if = "Option::is_none", with = "opt_bytes_64")]
+    /// Optional cryptographic signature (64 bytes) over the graph hash.
+    ///
+    /// NOTE: `skip_serializing_if` is intentionally NOT used here. Omitting
+    /// the field on the wire works for JSON (which tolerates missing fields
+    /// via `#[serde(default)]`) but breaks positional formats like bincode
+    /// where every struct field must have a byte-stream slot. Keeping the
+    /// field always serialized costs ~20 extra bytes per unsigned JSON
+    /// message and makes native-binary encoding (PRD Task 3.1) work.
+    #[serde(default, with = "opt_bytes_64")]
     pub signature: Option<[u8; 64]>,
-    /// Optional signer public key (32 bytes)
-    #[serde(default, skip_serializing_if = "Option::is_none", with = "opt_bytes_32")]
+    /// Optional signer public key (32 bytes). See note on `signature`.
+    #[serde(default, with = "opt_bytes_32")]
     pub signer_pubkey: Option<[u8; 32]>,
-    /// Optional SHA-256 hash of the graph at signing time
-    #[serde(default, skip_serializing_if = "Option::is_none", with = "opt_bytes_32")]
+    /// Optional SHA-256 hash of the graph at signing time. See note on `signature`.
+    #[serde(default, with = "opt_bytes_32")]
     pub graph_hash: Option<[u8; 32]>,
 }
 
@@ -359,6 +383,193 @@ impl AgentConversation {
         buf.extend_from_slice(&json);
         Ok(buf)
     }
+
+    /// Serialize the conversation to a v2 envelope with a **native-binary
+    /// (bincode) payload** and no signature.
+    ///
+    /// Wire format v2 (unsigned, native):
+    ///   [QLMS magic (4)]
+    ///   [version: u16 LE = 2]
+    ///   [flags:   u16 LE = FLAG_NATIVE_BINARY]
+    ///   [msg_count: u32 LE]
+    ///   [payload: bincode(Vec<GraphMessage>)]
+    ///
+    /// Drops field-name + UTF-8 overhead from the JSON path, implementing
+    /// PRD Task 3.1 (NF1: ≥ 2× faster; NF2: ≥ 2.3× smaller).
+    pub fn to_binary_native(&self) -> Result<Vec<u8>, bincode::Error> {
+        let bin = bincode::serialize(&self.messages)?;
+        let mut buf = Vec::with_capacity(12 + bin.len());
+        buf.extend_from_slice(&[0x51, 0x4C, 0x4D, 0x53]);
+        buf.extend_from_slice(&2u16.to_le_bytes());
+        buf.extend_from_slice(&FLAG_NATIVE_BINARY.to_le_bytes());
+        buf.extend_from_slice(&(self.messages.len() as u32).to_le_bytes());
+        buf.extend_from_slice(&bin);
+        Ok(buf)
+    }
+
+    /// Serialize to a v2 envelope with both SIGNED and NATIVE_BINARY flags.
+    ///
+    /// Identical auth block layout to [`Self::to_signed_binary`]; the payload
+    /// is bincode-encoded rather than JSON. The HMAC is taken over the
+    /// bincode bytes, so tampering with the native payload fails verify the
+    /// same way as with JSON.
+    pub fn to_signed_binary_native(&self, keypair: &Keypair) -> Result<Vec<u8>, bincode::Error> {
+        let bin = bincode::serialize(&self.messages)?;
+        let payload_hash = crypto::sha256(&bin);
+        let signature = keypair.sign(&payload_hash);
+
+        let mut buf = Vec::with_capacity(8 + 64 + 32 + 32 + 4 + bin.len());
+        buf.extend_from_slice(&[0x51, 0x4C, 0x4D, 0x53]);
+        buf.extend_from_slice(&2u16.to_le_bytes());
+        buf.extend_from_slice(&(FLAG_SIGNED | FLAG_NATIVE_BINARY).to_le_bytes());
+        buf.extend_from_slice(&signature);
+        buf.extend_from_slice(keypair.public_key());
+        buf.extend_from_slice(&payload_hash);
+        buf.extend_from_slice(&(self.messages.len() as u32).to_le_bytes());
+        buf.extend_from_slice(&bin);
+        Ok(buf)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Unified decoder — handles all four combos (v1, v2 JSON signed,
+// v2 native signed, v2 native unsigned).
+// ---------------------------------------------------------------------------
+
+/// A fully parsed QLMS frame plus the decoded message list.
+#[derive(Debug)]
+pub struct DecodedFrame {
+    pub version: u16,
+    pub flags: u16,
+    pub signed: bool,
+    pub native: bool,
+    /// `true` only when `signed` AND the signature + payload hash verified.
+    pub signature_verified: bool,
+    pub msg_count: u32,
+    pub messages: Vec<GraphMessage>,
+}
+
+/// Errors produced by [`decode_qlms_frame`].
+#[derive(Debug, thiserror::Error)]
+pub enum DecodeError {
+    #[error("bad QLMS magic")]
+    BadMagic,
+    #[error("frame too short at offset {0}")]
+    TooShort(usize),
+    #[error("unsupported wire version {0}")]
+    UnsupportedVersion(u16),
+    #[error("signature verification failed")]
+    SignatureInvalid,
+    #[error("JSON payload decode failed: {0}")]
+    JsonDecode(String),
+    #[error("bincode payload decode failed: {0}")]
+    BincodeDecode(String),
+}
+
+/// Parse a QLMS envelope (any supported format) and return the verified
+/// decoded messages.
+///
+/// This is the symmetric counterpart to
+/// [`AgentConversation::to_binary`], [`to_signed_binary`],
+/// [`to_binary_native`] and [`to_signed_binary_native`].
+///
+/// Dispatch rules:
+///
+/// * Bytes 4-5 == 2 (LE) **and** bytes 6-7 have either `FLAG_SIGNED` or
+///   `FLAG_NATIVE_BINARY` set → parse as v2.
+/// * Otherwise treat as v1 unsigned JSON-in-envelope.
+pub fn decode_qlms_frame(buf: &[u8]) -> Result<DecodedFrame, DecodeError> {
+    if buf.len() < 4 || buf[..4] != [0x51, 0x4C, 0x4D, 0x53] {
+        return Err(DecodeError::BadMagic);
+    }
+
+    // v2 disambiguation
+    let (is_v2, flags) = if buf.len() >= 8 {
+        let ver = u16::from_le_bytes([buf[4], buf[5]]);
+        let fl = u16::from_le_bytes([buf[6], buf[7]]);
+        let v2 = ver == 2 && (fl & (FLAG_SIGNED | FLAG_NATIVE_BINARY)) != 0;
+        (v2, fl)
+    } else {
+        (false, 0)
+    };
+
+    if !is_v2 {
+        // v1 unsigned: magic + u32 count + JSON payload
+        if buf.len() < 8 {
+            return Err(DecodeError::TooShort(8));
+        }
+        let count = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
+        let payload = &buf[8..];
+        let messages: Vec<GraphMessage> = serde_json::from_slice(payload)
+            .map_err(|e| DecodeError::JsonDecode(e.to_string()))?;
+        return Ok(DecodedFrame {
+            version: 1,
+            flags: 0,
+            signed: false,
+            native: false,
+            signature_verified: false,
+            msg_count: count,
+            messages,
+        });
+    }
+
+    let signed = (flags & FLAG_SIGNED) != 0;
+    let native = (flags & FLAG_NATIVE_BINARY) != 0;
+
+    let mut off = 8usize;
+    let (sig, pk, hash) = if signed {
+        let need = off + 64 + 32 + 32;
+        if buf.len() < need {
+            return Err(DecodeError::TooShort(need));
+        }
+        let mut s = [0u8; 64];
+        s.copy_from_slice(&buf[off..off + 64]);
+        off += 64;
+        let mut p = [0u8; 32];
+        p.copy_from_slice(&buf[off..off + 32]);
+        off += 32;
+        let mut h = [0u8; 32];
+        h.copy_from_slice(&buf[off..off + 32]);
+        off += 32;
+        (Some(s), Some(p), Some(h))
+    } else {
+        (None, None, None)
+    };
+
+    if buf.len() < off + 4 {
+        return Err(DecodeError::TooShort(off + 4));
+    }
+    let count = u32::from_le_bytes([buf[off], buf[off + 1], buf[off + 2], buf[off + 3]]);
+    off += 4;
+    let payload = &buf[off..];
+
+    let sig_ok = if let (Some(sig), Some(pk), Some(hash)) = (sig, pk, hash) {
+        if crypto::sha256(payload) != hash {
+            return Err(DecodeError::SignatureInvalid);
+        }
+        if !Keypair::verify(&pk, &hash, &sig) {
+            return Err(DecodeError::SignatureInvalid);
+        }
+        true
+    } else {
+        false
+    };
+
+    let messages: Vec<GraphMessage> = if native {
+        bincode::deserialize(payload).map_err(|e| DecodeError::BincodeDecode(e.to_string()))?
+    } else {
+        serde_json::from_slice(payload).map_err(|e| DecodeError::JsonDecode(e.to_string()))?
+    };
+
+    Ok(DecodedFrame {
+        version: 2,
+        flags,
+        signed,
+        native,
+        signature_verified: sig_ok,
+        msg_count: count,
+        messages,
+    })
 }
 
 impl Default for AgentConversation {
@@ -454,6 +665,100 @@ mod tests {
         assert_eq!(&binary[0..4], &[0x51, 0x4C, 0x4D, 0x53]); // "QLMS"
     }
 
+    fn sample_conv() -> AgentConversation {
+        let mut conv = AgentConversation::new();
+        conv.send(
+            trainer_agent(),
+            compressor_agent(),
+            Graph::new("native-test"),
+            HashMap::new(),
+            MessageIntent::Execute,
+            None,
+        );
+        conv
+    }
+
+    #[test]
+    fn to_binary_native_carries_native_flag() {
+        let conv = sample_conv();
+        let bin = conv.to_binary_native().unwrap();
+        assert_eq!(&bin[0..4], &[0x51, 0x4C, 0x4D, 0x53]);
+        assert_eq!(u16::from_le_bytes([bin[4], bin[5]]), 2);
+        let flags = u16::from_le_bytes([bin[6], bin[7]]);
+        assert!(flags & FLAG_NATIVE_BINARY != 0);
+        assert!(flags & FLAG_SIGNED == 0);
+    }
+
+    #[test]
+    fn to_signed_binary_native_carries_both_flags() {
+        let kp = qlang_core::crypto::Keypair::from_seed(&[42u8; 32]);
+        let conv = sample_conv();
+        let bin = conv.to_signed_binary_native(&kp).unwrap();
+        let flags = u16::from_le_bytes([bin[6], bin[7]]);
+        assert!(flags & FLAG_NATIVE_BINARY != 0);
+        assert!(flags & FLAG_SIGNED != 0);
+    }
+
+    #[test]
+    fn native_unsigned_roundtrip() {
+        let conv = sample_conv();
+        let bin = conv.to_binary_native().unwrap();
+        let decoded = decode_qlms_frame(&bin).expect("native unsigned must decode");
+        assert_eq!(decoded.version, 2);
+        assert!(!decoded.signed);
+        assert!(decoded.native);
+        assert_eq!(decoded.msg_count, 1);
+        assert_eq!(decoded.messages.len(), 1);
+        assert_eq!(decoded.messages[0].id, conv.messages()[0].id);
+    }
+
+    #[test]
+    fn native_signed_roundtrip() {
+        let kp = qlang_core::crypto::Keypair::from_seed(&[7u8; 32]);
+        let conv = sample_conv();
+        let bin = conv.to_signed_binary_native(&kp).unwrap();
+        let decoded = decode_qlms_frame(&bin).expect("native signed must decode");
+        assert!(decoded.signed);
+        assert!(decoded.native);
+        assert!(decoded.signature_verified);
+    }
+
+    #[test]
+    fn native_signed_tamper_fails() {
+        let kp = qlang_core::crypto::Keypair::from_seed(&[9u8; 32]);
+        let conv = sample_conv();
+        let mut bin = conv.to_signed_binary_native(&kp).unwrap();
+        let last = bin.len() - 1;
+        bin[last] ^= 0x01;
+        match decode_qlms_frame(&bin) {
+            Err(DecodeError::SignatureInvalid) => {}
+            other => panic!("expected SignatureInvalid, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn legacy_json_signed_still_decodes() {
+        // Ensures the new decoder is backwards compatible with JSON v2 frames.
+        let kp = qlang_core::crypto::Keypair::from_seed(&[1u8; 32]);
+        let conv = sample_conv();
+        let bin = conv.to_signed_binary(&kp).unwrap();
+        let decoded = decode_qlms_frame(&bin).expect("legacy JSON must still decode");
+        assert!(decoded.signed);
+        assert!(!decoded.native);
+        assert!(decoded.signature_verified);
+        assert_eq!(decoded.messages.len(), conv.messages().len());
+    }
+
+    #[test]
+    fn legacy_v1_unsigned_still_decodes() {
+        let conv = sample_conv();
+        let bin = conv.to_binary().unwrap();
+        let decoded = decode_qlms_frame(&bin).expect("v1 must still decode");
+        assert_eq!(decoded.version, 1);
+        assert!(!decoded.signed);
+        assert!(!decoded.native);
+    }
+
     #[test]
     fn graph_message_with_signature() {
         let kp = qlang_core::crypto::Keypair::from_seed(&[10u8; 32]);
@@ -546,7 +851,10 @@ mod tests {
     }
 
     #[test]
-    fn unsigned_message_omits_signature_in_json() {
+    fn unsigned_message_serializes_signature_as_null_in_json() {
+        // As of PRD Task 3.1, signature-related fields are always present
+        // on the wire (as `null` when unsigned). This is required for
+        // bincode compatibility — see the note on `GraphMessage::signature`.
         let graph = Graph::new("omit_test");
         let mut conv = AgentConversation::new();
         conv.send(
@@ -559,10 +867,10 @@ mod tests {
         );
         let msg = conv.get_message(0).unwrap();
         let json = serde_json::to_string(msg).unwrap();
-        // skip_serializing_if = "Option::is_none" should omit these fields
-        assert!(!json.contains("signature"));
-        assert!(!json.contains("signer_pubkey"));
-        assert!(!json.contains("graph_hash"));
+        // Fields are present, set to null.
+        assert!(json.contains("\"signature\":null"));
+        assert!(json.contains("\"signer_pubkey\":null"));
+        assert!(json.contains("\"graph_hash\":null"));
     }
 
     // ================================================================
