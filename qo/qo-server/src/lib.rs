@@ -391,8 +391,9 @@ pub async fn build_app(
             "/api/federation/stats",
             get(routes::dashboard::get_federation_stats),
         )
-        // Workspace — agent-writable sandbox + file browser
+        // Workspace — agent-writable sandbox + file browser + runner
         .route("/api/tools/write_file", post(routes::workspace::write_file))
+        .route("/api/tools/exec_file", post(routes::workspace::exec_file))
         .route("/api/workspace/tree", get(routes::workspace::tree))
         .route(
             "/api/workspace/file",

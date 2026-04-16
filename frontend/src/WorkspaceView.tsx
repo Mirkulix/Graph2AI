@@ -24,8 +24,10 @@ import {
   FolderIcon,
   FolderOpen,
   Image as ImageIcon,
+  Play,
   RefreshCw,
   Trash2,
+  X,
 } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
@@ -53,6 +55,18 @@ interface FileContentResponse {
   content: string
   bytes: number
 }
+
+interface ExecResponse {
+  path: string
+  runtime: string
+  exit_code: number
+  duration_ms: number
+  stdout: string
+  stderr: string
+  timed_out: boolean
+}
+
+const RUNNABLE_EXT = new Set(['py', 'js', 'mjs', 'cjs', 'sh', 'ts', 'tsx'])
 
 const POLL_MS = 4_000
 
@@ -142,6 +156,9 @@ export default function WorkspaceView() {
   const [error, setError] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [lastRefresh, setLastRefresh] = useState<number>(0)
+  const [execResult, setExecResult] = useState<ExecResponse | null>(null)
+  const [execBusy, setExecBusy] = useState(false)
+  const [execError, setExecError] = useState<string | null>(null)
 
   // ─── Tree poll ───────────────────────────────────────────────────────
   const pullTree = useCallback(async () => {
@@ -236,6 +253,41 @@ export default function WorkspaceView() {
     window.open(uri, '_blank')
   }, [selected, tree])
 
+  // Clear exec result when the user picks a different file.
+  useEffect(() => {
+    setExecResult(null)
+    setExecError(null)
+  }, [selected])
+
+  const runSelected = useCallback(async () => {
+    if (!selected || execBusy) return
+    setExecBusy(true)
+    setExecError(null)
+    try {
+      const r = await fetch('/api/tools/exec_file', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: selected, args: [], timeout_secs: 10 }),
+      })
+      if (!r.ok) {
+        const text = await r.text().catch(() => '')
+        throw new Error(`HTTP ${r.status}${text ? ': ' + text.slice(0, 160) : ''}`)
+      }
+      const body = (await r.json()) as ExecResponse
+      setExecResult(body)
+    } catch (e) {
+      setExecError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setExecBusy(false)
+    }
+  }, [selected, execBusy])
+
+  const selectedRunnable = useMemo(() => {
+    if (!selected) return false
+    const ext = selected.split('.').pop()?.toLowerCase() ?? ''
+    return RUNNABLE_EXT.has(ext)
+  }, [selected])
+
   const fileCount = useMemo(
     () => (tree ? countFiles(tree.entries) : 0),
     [tree],
@@ -309,6 +361,15 @@ export default function WorkspaceView() {
               path={content.path}
               content={content.content}
               bytes={content.bytes}
+              runnable={selectedRunnable}
+              execBusy={execBusy}
+              execResult={execResult}
+              execError={execError}
+              onRun={runSelected}
+              onClearOutput={() => {
+                setExecResult(null)
+                setExecError(null)
+              }}
               onOpenInVSCode={openInVSCode}
               onDelete={deleteSelected}
             />
@@ -456,12 +517,24 @@ function FileView({
   path,
   content,
   bytes,
+  runnable,
+  execBusy,
+  execResult,
+  execError,
+  onRun,
+  onClearOutput,
   onOpenInVSCode,
   onDelete,
 }: {
   path: string
   content: string
   bytes: number
+  runnable: boolean
+  execBusy: boolean
+  execResult: ExecResponse | null
+  execError: string | null
+  onRun: () => void
+  onClearOutput: () => void
   onOpenInVSCode: () => void
   onDelete: () => void
 }) {
@@ -476,6 +549,18 @@ function FileView({
           </div>
         </div>
         <div className="workspace__file-actions">
+          {runnable ? (
+            <button
+              type="button"
+              className="workspace__run-btn"
+              onClick={onRun}
+              disabled={execBusy}
+              title="Datei im Sandbox ausführen (max 10 s)"
+            >
+              <Play size={14} />
+              {execBusy ? 'Läuft …' : 'Ausführen'}
+            </button>
+          ) : null}
           <button
             type="button"
             className="workspace__vscode-btn"
@@ -496,6 +581,75 @@ function FileView({
           </button>
         </div>
       </div>
+
+      {execError ? (
+        <div className="workspace__exec workspace__exec--err">
+          <div className="workspace__exec-head">
+            <span className="workspace__exec-title">Ausführung fehlgeschlagen</span>
+            <button
+              type="button"
+              onClick={onClearOutput}
+              className="workspace__exec-close"
+              aria-label="Schließen"
+            >
+              <X size={12} />
+            </button>
+          </div>
+          <pre className="workspace__exec-body">{execError}</pre>
+        </div>
+      ) : null}
+
+      {execResult ? (
+        <div
+          className={
+            'workspace__exec' +
+            (execResult.exit_code === 0 && !execResult.timed_out
+              ? ''
+              : ' workspace__exec--err')
+          }
+        >
+          <div className="workspace__exec-head">
+            <span className="workspace__exec-title">
+              {execResult.exit_code === 0 && !execResult.timed_out
+                ? 'Ausgabe'
+                : execResult.timed_out
+                  ? 'Timeout'
+                  : `Exit ${execResult.exit_code}`}
+            </span>
+            <span className="workspace__exec-sub">
+              {execResult.runtime} · {execResult.duration_ms} ms
+            </span>
+            <button
+              type="button"
+              onClick={onClearOutput}
+              className="workspace__exec-close"
+              aria-label="Schließen"
+            >
+              <X size={12} />
+            </button>
+          </div>
+          {execResult.stdout ? (
+            <div className="workspace__exec-section">
+              <div className="workspace__exec-label">stdout</div>
+              <pre className="workspace__exec-body">{execResult.stdout}</pre>
+            </div>
+          ) : null}
+          {execResult.stderr ? (
+            <div className="workspace__exec-section">
+              <div className="workspace__exec-label workspace__exec-label--err">
+                stderr
+              </div>
+              <pre className="workspace__exec-body">{execResult.stderr}</pre>
+            </div>
+          ) : null}
+          {!execResult.stdout && !execResult.stderr ? (
+            <div className="workspace__exec-section workspace__exec-empty">
+              Keine Ausgabe.
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       {isMarkdown(path) ? (
         <div className="workspace__md">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>

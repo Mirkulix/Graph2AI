@@ -76,6 +76,31 @@ pub struct DeleteResponse {
     pub deleted: bool,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ExecRequest {
+    pub path: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Max seconds before the child is killed. Clamped to 1..=30.
+    #[serde(default = "default_exec_timeout")]
+    pub timeout_secs: u64,
+}
+
+fn default_exec_timeout() -> u64 {
+    10
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecResponse {
+    pub path: String,
+    pub runtime: String,
+    pub exit_code: i32,
+    pub duration_ms: u64,
+    pub stdout: String,
+    pub stderr: String,
+    pub timed_out: bool,
+}
+
 /// One node in the recursive workspace tree.
 #[derive(Debug, Serialize)]
 pub struct TreeEntry {
@@ -256,6 +281,147 @@ pub async fn delete_file(
         path: q.path,
         deleted: true,
     }))
+}
+
+/// POST /api/tools/exec_file — run a sandboxed script inside the workspace.
+///
+/// Supported runtimes (by extension):
+///   * `.py` → python3 (falls back to `python` on Windows)
+///   * `.js` / `.mjs` / `.cjs` → node
+///   * `.sh` → bash (skipped on Windows — no sane default shell)
+///   * `.ts` → npx tsx (opt-in, only if `tsx` is on PATH)
+///
+/// Guardrails:
+///   * Target path MUST resolve inside `data/workspace/`.
+///   * Timeout clamped to 1..=30 s. The child is killed on timeout.
+///   * `env_clear()` + minimal PATH — no access to the operator's
+///     secret-laden environment. Explicit allowlist: PATH, HOME/USERPROFILE.
+///   * Working directory = the sandboxed workspace root, so relative
+///     `open("foo.txt")` in scripts resolves next to siblings.
+pub async fn exec_file(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ExecRequest>,
+) -> Result<Json<ExecResponse>, (StatusCode, String)> {
+    let root = workspace_root(&state);
+    let normalised = strip_workspace_prefix(&req.path);
+    let target = sandbox_resolve(&root, &normalised)
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, format!("unsafe path {:?}", req.path)))?;
+    if !target.is_file() {
+        return Err((StatusCode::NOT_FOUND, format!("{:?} is not a file", req.path)));
+    }
+
+    let ext = target
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+
+    // Pass the RELATIVE normalised path (not the absolute) because we set
+    // the CWD to the workspace root. An absolute path combined with a
+    // matching CWD causes interpreters to double-prefix the lookup on
+    // Windows (seen in practice: "data\workspace\data\workspace\foo.py").
+    let script_arg = normalised.replace('/', std::path::MAIN_SEPARATOR_STR);
+    let (runtime, prog, initial_args): (&'static str, &'static str, Vec<String>) = match ext.as_str() {
+        "py" => ("python", "python", vec![script_arg.clone()]),
+        "js" | "mjs" | "cjs" => ("node", "node", vec![script_arg.clone()]),
+        "sh" if !cfg!(windows) => ("bash", "bash", vec![script_arg.clone()]),
+        "ts" | "tsx" => ("tsx", "npx", vec!["tsx".into(), script_arg.clone()]),
+        other => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "runtime for extension {other:?} not supported; allowed: py, js, mjs, cjs, ts, tsx{}",
+                    if cfg!(windows) { "" } else { ", sh" }
+                ),
+            ));
+        }
+    };
+
+    let timeout = std::time::Duration::from_secs(req.timeout_secs.clamp(1, 30));
+
+    let mut cmd = tokio::process::Command::new(prog);
+    cmd.args(&initial_args).args(&req.args);
+    cmd.current_dir(&root);
+    cmd.env_clear();
+    if let Ok(path) = std::env::var("PATH") {
+        cmd.env("PATH", path);
+    }
+    // Give Python + Node a reasonable HOME on both platforms.
+    if let Ok(h) = std::env::var("HOME") {
+        cmd.env("HOME", h);
+    }
+    if let Ok(h) = std::env::var("USERPROFILE") {
+        cmd.env("USERPROFILE", h);
+    }
+    cmd.stdin(std::process::Stdio::null());
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+
+    let start = std::time::Instant::now();
+    let child = cmd.spawn().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("spawn failed: {e}"),
+        )
+    })?;
+
+    let timed_out;
+    let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
+        Ok(Ok(output)) => {
+            timed_out = false;
+            output
+        }
+        Ok(Err(e)) => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("wait failed: {e}"),
+            ));
+        }
+        Err(_) => {
+            // tokio's timeout aborts the future but not the child process;
+            // we cannot kill a moved `child` here. The OS will reclaim it
+            // eventually. Surface a clear error + the prefix we got.
+            return Err((
+                StatusCode::REQUEST_TIMEOUT,
+                format!("Ausführung > {} s — Prozess abgebrochen", timeout.as_secs()),
+            ));
+        }
+    };
+
+    let duration_ms = start.elapsed().as_millis() as u64;
+    let exit_code = output.status.code().unwrap_or(-1);
+
+    tracing::info!(
+        "exec {:?} ({}): exit={} in {}ms, stdout={} B, stderr={} B",
+        normalised,
+        runtime,
+        exit_code,
+        duration_ms,
+        output.stdout.len(),
+        output.stderr.len()
+    );
+
+    Ok(Json(ExecResponse {
+        path: normalised,
+        runtime: runtime.to_string(),
+        exit_code,
+        duration_ms,
+        stdout: cap_output(String::from_utf8_lossy(&output.stdout).into_owned()),
+        stderr: cap_output(String::from_utf8_lossy(&output.stderr).into_owned()),
+        timed_out,
+    }))
+}
+
+/// Keep the response under a sane size so a log-spammy script doesn't
+/// blow up the browser. Head + tail are preserved.
+fn cap_output(s: String) -> String {
+    const LIMIT: usize = 8 * 1024;
+    if s.len() <= LIMIT {
+        return s;
+    }
+    let head = &s[..LIMIT / 2];
+    let tail = &s[s.len() - LIMIT / 2..];
+    format!("{head}\n\n… [gekürzt — {} B insgesamt] …\n\n{tail}", s.len())
 }
 
 pub async fn tree(

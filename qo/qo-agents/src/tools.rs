@@ -108,8 +108,83 @@ pub fn tool_shell(cmd: &str) -> ToolResult {
     }
 }
 
-/// Search the web via DuckDuckGo Instant Answer API (no API key needed, JSON response)
+/// Search the web.
+///
+/// Uses the Tavily API when `TAVILY_API_KEY` is set (much better
+/// results — indexed web content with snippets). Falls back to
+/// DuckDuckGo's Instant Answer API when no key is available. Both
+/// paths return the same `ToolResult` shape so the caller never has
+/// to branch on provider.
 pub async fn tool_web_search(query: &str) -> ToolResult {
+    if let Ok(key) = std::env::var("TAVILY_API_KEY") {
+        if !key.trim().is_empty() {
+            match tavily_search(&key, query).await {
+                Ok(result) => return result,
+                Err(e) => {
+                    tracing::warn!("Tavily failed: {e} — falling back to DuckDuckGo");
+                }
+            }
+        }
+    }
+    duckduckgo_search(query).await
+}
+
+async fn tavily_search(
+    api_key: &str,
+    query: &str,
+) -> Result<ToolResult, Box<dyn std::error::Error + Send + Sync>> {
+    let body = serde_json::json!({
+        "api_key": api_key,
+        "query": query,
+        "search_depth": "basic",
+        "max_results": 5,
+        "include_answer": true,
+    });
+    let client = reqwest::Client::new();
+    let resp = client
+        .post("https://api.tavily.com/search")
+        .json(&body)
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("Tavily HTTP {status}: {text}").into());
+    }
+    let json: serde_json::Value = resp.json().await?;
+
+    let mut parts = Vec::new();
+    if let Some(answer) = json.get("answer").and_then(|v| v.as_str()) {
+        if !answer.is_empty() {
+            parts.push(format!("Zusammenfassung: {answer}"));
+        }
+    }
+    if let Some(results) = json.get("results").and_then(|v| v.as_array()) {
+        for r in results.iter().take(5) {
+            let title = r.get("title").and_then(|v| v.as_str()).unwrap_or("");
+            let content = r.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            let url = r.get("url").and_then(|v| v.as_str()).unwrap_or("");
+            parts.push(format!(
+                "- {}\n  {}\n  ({})",
+                title,
+                &content[..content.len().min(200)],
+                url
+            ));
+        }
+    }
+    Ok(ToolResult {
+        tool: "web_search[tavily]".into(),
+        success: !parts.is_empty(),
+        output: if parts.is_empty() {
+            format!("Tavily lieferte keine Treffer für '{query}'.")
+        } else {
+            parts.join("\n\n")
+        },
+    })
+}
+
+async fn duckduckgo_search(query: &str) -> ToolResult {
     let client = reqwest::Client::new();
     let url = format!(
         "https://api.duckduckgo.com/?q={}&format=json&no_html=1&skip_disambig=1",

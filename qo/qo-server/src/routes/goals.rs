@@ -166,6 +166,67 @@ pub async fn execute_goal_background(
         registry.execute_goal_subtasks_parallel(goal_id, state.llm.clone()).await
     };
 
+    // Multi-round retry — failed subtasks get up to MAX_RETRIES more
+    // chances. Each retry runs the same subtask via the LLM (which may
+    // pick a different response) but does not re-decompose the goal.
+    // Surfaced live via the activity stream so the Mission Control
+    // timeline shows "CEO startet Runde 2 — Researcher retry".
+    const MAX_RETRIES: u32 = 2;
+    let mut latest_outcomes = parallel_outcomes;
+    let mut round: u32 = 1;
+    while round <= MAX_RETRIES {
+        let failed_indices: Vec<usize> = latest_outcomes
+            .iter()
+            .filter_map(|(idx, _agent, _desc, ok, _dur)| if !*ok { Some(*idx) } else { None })
+            .collect();
+        if failed_indices.is_empty() {
+            break;
+        }
+        round += 1;
+        state.stream.publish_activity(
+            format!(
+                "CEO startet Runde {round} — {} Aufgabe(n) werden wiederholt",
+                failed_indices.len()
+            ),
+            Some("CEO".to_string()),
+            "progress",
+        );
+        for &idx in &failed_indices {
+            let retry_start = std::time::Instant::now();
+            let retry_result = {
+                let mut registry = state.agents.lock().await;
+                registry.execute_goal_subtask(goal_id, idx, &*state.llm).await
+            };
+            let duration_ms = retry_start.elapsed().as_millis() as u64;
+            let (agent_name, task_desc) = {
+                let registry = state.agents.lock().await;
+                match registry.get_goal(goal_id).and_then(|g| g.subtasks.get(idx)) {
+                    Some(st) => (
+                        st.assigned_to.name().to_string(),
+                        st.description.clone(),
+                    ),
+                    None => continue,
+                }
+            };
+            let ok = retry_result.is_ok();
+            if let Some(entry) = latest_outcomes.iter_mut().find(|(i, _, _, _, _)| *i == idx) {
+                entry.3 = ok;
+                entry.4 = duration_ms;
+            }
+            state.stream.publish_activity(
+                if ok {
+                    format!("{} \u{2713} Runde {round} erfolgreich", agent_name)
+                } else {
+                    format!("{} \u{2717} Runde {round} fehlgeschlagen", agent_name)
+                },
+                Some(agent_name),
+                if ok { "success" } else { "warning" },
+            );
+            let _ = task_desc;
+        }
+    }
+    let parallel_outcomes = latest_outcomes;
+
     // Scan each subtask's result text for <qo:file> artefact blocks and
     // drop them on disk under data/workspace/. This is how agents go
     // from "describing code" to actually producing files a human (or
