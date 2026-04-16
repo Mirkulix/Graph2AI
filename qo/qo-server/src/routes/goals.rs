@@ -518,6 +518,60 @@ pub async fn get_goal(
     Ok(Json(goal.clone()))
 }
 
+#[derive(Deserialize)]
+pub struct ContinueGoalRequest {
+    pub follow_up: String,
+}
+
+/// POST /api/goals/{id}/continue — append a follow-up instruction to an
+/// existing goal and re-engage the CEO/team. Returns immediately; the
+/// actual work runs in a background task and surfaces progress via the
+/// activity stream.
+pub async fn continue_goal(
+    State(state): State<Arc<AppState>>,
+    Path(goal_id): Path<u64>,
+    Json(req): Json<ContinueGoalRequest>,
+) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
+    // Pre-check: the goal must exist before we spawn anything.
+    {
+        let registry = state.agents.lock().await;
+        if registry.get_goal(goal_id).is_none() {
+            return Err((
+                axum::http::StatusCode::NOT_FOUND,
+                format!("Goal {} not found", goal_id),
+            ));
+        }
+    }
+
+    // Short snippet for the activity stream so the timeline stays readable.
+    let snippet = if req.follow_up.len() > 80 {
+        format!("{}...", &req.follow_up[..80])
+    } else {
+        req.follow_up.clone()
+    };
+    state.stream.publish_activity(
+        format!("Ziel #{} wird fortgesetzt — neue Anweisung: {}", goal_id, snippet),
+        Some("CEO".to_string()),
+        "progress",
+    );
+
+    // Spawn the continuation so the HTTP response doesn't block on the LLM.
+    let state_clone = state.clone();
+    let follow = req.follow_up.clone();
+    tokio::spawn(async move {
+        let mut reg = state_clone.agents.lock().await;
+        let _ = reg
+            .continue_goal(goal_id, follow, state_clone.llm.clone())
+            .await;
+    });
+
+    Ok(Json(serde_json::json!({
+        "goal_id": goal_id,
+        "status": "continuation_started",
+        "message": "CEO reagiert auf Nachbestellung — Activity-Stream beobachten"
+    })))
+}
+
 pub async fn get_goal_graph(
     State(state): State<Arc<AppState>>,
     Path(id): Path<u64>,

@@ -296,6 +296,63 @@ impl AgentRegistry {
         outcomes
     }
 
+    /// Continue a previously completed (or failed) goal with a new follow-up
+    /// instruction from the user. Marks the goal `InProgress`, appends a new
+    /// sub-task that blends the original goal context with the follow-up, runs
+    /// it via the existing single-subtask executor, and then flips the goal
+    /// back to `Completed` (regardless of the subtask's individual outcome —
+    /// we track that on the subtask itself).
+    pub async fn continue_goal(
+        &mut self,
+        goal_id: u64,
+        follow_up: String,
+        llm: std::sync::Arc<qo_llm::LlmRouter>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // Find the existing goal. Capture its description for the reminder
+        // text and bump status to InProgress so dashboards reflect activity.
+        let (original_desc, new_idx) = {
+            let goal = self
+                .goals
+                .iter_mut()
+                .find(|g| g.id == goal_id)
+                .ok_or("Goal not found")?;
+            goal.status = GoalStatus::InProgress;
+            let description = format!(
+                "Fortsetzung des Ziels #{}: {}\nNeue Anweisung vom Nutzer: {}",
+                goal.id, goal.description, follow_up
+            );
+            let original_desc = goal.description.clone();
+            goal.subtasks.push(crate::goal::SubTask {
+                description,
+                assigned_to: AgentRole::Researcher,
+                status: GoalStatus::Pending,
+                result: None,
+            });
+            let new_idx = goal.subtasks.len() - 1;
+            (original_desc, new_idx)
+        };
+        let _ = original_desc;
+        // Run the subtask through the existing executor path. Errors here
+        // are captured on the subtask — we still flip the goal back to
+        // Completed so the UI doesn't get stuck on InProgress.
+        if let Err(e) = self
+            .execute_goal_subtask(goal_id, new_idx, &*llm)
+            .await
+        {
+            if let Some(goal) = self.goals.iter_mut().find(|g| g.id == goal_id) {
+                if let Some(st) = goal.subtasks.get_mut(new_idx) {
+                    st.status = GoalStatus::Failed;
+                    st.result = Some(format!("Fehler bei Fortsetzung: {e}"));
+                }
+            }
+        }
+
+        if let Some(goal) = self.goals.iter_mut().find(|g| g.id == goal_id) {
+            goal.status = GoalStatus::Completed;
+        }
+        Ok(())
+    }
+
     /// Load a previously persisted goal back into the registry.
     pub fn restore_goal(&mut self, goal: Goal) {
         // Keep next_goal_id ahead of any restored id

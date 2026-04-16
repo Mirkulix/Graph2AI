@@ -308,6 +308,7 @@ pub async fn build_app(
         .route("/api/goals", get(routes::goals::list_goals))
         .route("/api/goals", post(routes::goals::create_goal))
         .route("/api/goals/{id}", get(routes::goals::get_goal))
+        .route("/api/goals/{id}/continue", post(routes::goals::continue_goal))
         .route("/api/evolution/state", get(routes::evolution::quantum_state))
         .route("/api/evolution/patterns", get(routes::evolution::list_patterns))
         .route("/api/evolution/proposals", get(routes::evolution::list_proposals))
@@ -396,6 +397,8 @@ pub async fn build_app(
         .route("/api/tools/exec_file", post(routes::workspace::exec_file))
         .route("/api/tools/web_search", get(routes::workspace::web_search))
         .route("/api/tools/fetch_url", get(routes::workspace::fetch_url))
+        // Inbound MCP server — external clients can call QLANG as a tool
+        .route("/mcp/v1", post(routes::mcp_server::handle_rpc))
         .route("/api/workspace/tree", get(routes::workspace::tree))
         .route(
             "/api/workspace/file",

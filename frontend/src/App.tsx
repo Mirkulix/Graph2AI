@@ -6,6 +6,7 @@ import {
   Globe,
   History as HistoryIcon,
   Home as HomeIcon,
+  ListTodo,
   MessageCircle,
   Moon,
   Shield,
@@ -22,6 +23,9 @@ import SwarmMap from './SwarmMap'
 import ValuesRadar from './ValuesRadar'
 import ChatView from './ChatView'
 import WorkspaceView from './WorkspaceView'
+import GoalsBrowserView from './GoalsBrowserView'
+import CostBadge from './CostBadge'
+import AuthTokenPanel from './AuthTokenPanel'
 import NeoShell from './neo/NeoShell'
 import GoalsView from './GoalsView'
 import AgentsView from './AgentsView'
@@ -43,6 +47,7 @@ type Tab =
   | 'mission'
   | 'inspector'
   | 'workspace'
+  | 'goals-browser'
   | 'swarm'
   | 'werte'
   | 'neo'
@@ -75,6 +80,7 @@ const NAV: NavItem[] = [
   { id: 'chat', label: 'Chat', icon: MessageCircle, kind: 'primary' },
   { id: 'mission', label: 'Live', icon: Activity, kind: 'primary' },
   { id: 'workspace', label: 'Workspace', icon: FolderOpen, kind: 'primary' },
+  { id: 'goals-browser', label: 'Ziele', icon: ListTodo, kind: 'primary' },
   { id: 'inspector', label: 'Verlauf', icon: HistoryIcon, kind: 'primary' },
   { id: 'swarm', label: 'Netzwerk', icon: Globe, kind: 'primary' },
   { id: 'werte', label: 'Werte-Radar', icon: Shield, kind: 'primary' },
@@ -134,6 +140,26 @@ export default function App() {
     localStorage.setItem(ADVANCED_OPEN_KEY, advancedOpen ? '1' : '0')
   }, [advancedOpen])
 
+  // Listen for qo:navigate CustomEvents dispatched by children (e.g. the
+  // Chat decision-trace "Ziel #N ansehen" button). Payload:
+  //   { tab: Tab, goalId?: number }  — tab is required.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as
+        | { tab?: string; goalId?: number }
+        | undefined
+      // ChatView emits tab: "goals" for the trace-link; normalise to our
+      // actual tab id "goals-browser".
+      if (detail?.tab === 'goals' || typeof detail?.goalId === 'number') {
+        setActiveTab('goals-browser')
+        return
+      }
+      if (detail?.tab) setActiveTab(detail.tab as Tab)
+    }
+    window.addEventListener('qo:navigate', handler as EventListener)
+    return () => window.removeEventListener('qo:navigate', handler as EventListener)
+  }, [])
+
   // QLMS round-trip probe for the header badge
   useEffect(() => {
     let cancelled = false
@@ -192,6 +218,8 @@ export default function App() {
       <header className="app__header">
         <WerteStatus onOpen={() => setActiveTab('werte')} />
         <QlmsBadge status={qlmsStatus} />
+        <CostBadge />
+        <AuthTokenPanel />
         <button
           type="button"
           className="header__icon-btn"
@@ -362,6 +390,12 @@ function View({
       return (
         <div className="view view--flush">
           <WorkspaceView />
+        </div>
+      )
+    case 'goals-browser':
+      return (
+        <div className="view view--flush">
+          <GoalsBrowserView />
         </div>
       )
     case 'swarm':
