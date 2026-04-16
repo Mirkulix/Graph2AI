@@ -1,0 +1,97 @@
+# Three-node QO swarm for PRD Task 4.2 — ternary federation demo.
+#
+# Usage:
+#   docker compose -f docker-compose.swarm.yml up --build
+#   docker compose -f docker-compose.swarm.yml logs -f qo-a
+#
+# Each instance:
+#   * listens on a distinct host port (4646 / 4747 / 4848)
+#   * has its own `QO_NODE_ID` so the federation endpoints train on a
+#     disjoint MNIST partition
+#   * advertises `QO_NODE_ADDR` so peer discovery filters it out of its
+#     own seed list
+#   * receives the full peer list via `PEER_DISCOVERY_SEEDS`; a
+#     background tokio task fires `POST /api/qlms/federation/gossip`
+#     every 10 seconds against that list.
+#
+# A shared volume per node keeps AgentDB + model files across restarts.
+
+version: "3.8"
+
+services:
+  qo-a:
+    build:
+      context: .
+      dockerfile: Dockerfile.qo
+    container_name: qo-a
+    command: ["web"]
+    ports:
+      - "4646:4646"
+    environment:
+      QO_PORT: "4646"
+      QO_NODE_ID: "node-a"
+      QO_NODE_ADDR: "qo-a:4646"
+      PEER_DISCOVERY_SEEDS: "qo-a:4646,qo-b:4646,qo-c:4646"
+      PEER_DISCOVERY_INTERVAL_SECS: "10"
+      RUST_LOG: "info,qo_server::peer_discovery=info"
+    volumes:
+      - qo-a-data:/data
+    networks:
+      - swarm-net
+    restart: unless-stopped
+
+  qo-b:
+    build:
+      context: .
+      dockerfile: Dockerfile.qo
+    container_name: qo-b
+    command: ["web"]
+    ports:
+      - "4747:4646"
+    environment:
+      QO_PORT: "4646"
+      QO_NODE_ID: "node-b"
+      QO_NODE_ADDR: "qo-b:4646"
+      PEER_DISCOVERY_SEEDS: "qo-a:4646,qo-b:4646,qo-c:4646"
+      PEER_DISCOVERY_INTERVAL_SECS: "10"
+      RUST_LOG: "info,qo_server::peer_discovery=info"
+    volumes:
+      - qo-b-data:/data
+    networks:
+      - swarm-net
+    depends_on:
+      - qo-a
+    restart: unless-stopped
+
+  qo-c:
+    build:
+      context: .
+      dockerfile: Dockerfile.qo
+    container_name: qo-c
+    command: ["web"]
+    ports:
+      - "4848:4646"
+    environment:
+      QO_PORT: "4646"
+      QO_NODE_ID: "node-c"
+      QO_NODE_ADDR: "qo-c:4646"
+      PEER_DISCOVERY_SEEDS: "qo-a:4646,qo-b:4646,qo-c:4646"
+      PEER_DISCOVERY_INTERVAL_SECS: "10"
+      RUST_LOG: "info,qo_server::peer_discovery=info"
+    volumes:
+      - qo-c-data:/data
+    networks:
+      - swarm-net
+    depends_on:
+      - qo-a
+      - qo-b
+    restart: unless-stopped
+
+volumes:
+  qo-a-data:
+  qo-b-data:
+  qo-c-data:
+
+networks:
+  swarm-net:
+    driver: bridge

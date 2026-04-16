@@ -1,0 +1,56 @@
+# QO Server container — used by docker-compose.swarm.yml (PRD Task 4.2).
+#
+# Unlike the top-level Dockerfile (which ships the `qlang-cli` binary),
+# this image bundles the `qo` server binary plus the pre-built React
+# frontend. Two build stages keep the runtime image lean.
+
+# ---------- Stage 1: Build backend -------------------------------------------
+FROM rust:1.83-bookworm AS backend-builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    llvm-18-dev \
+    libpolly-18-dev \
+    libzstd-dev \
+    cmake \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /usr/src/qlang
+COPY . .
+
+RUN cargo build --release --bin qo
+
+# ---------- Stage 2: Build frontend -----------------------------------------
+FROM node:20-bookworm-slim AS frontend-builder
+
+WORKDIR /src/frontend
+COPY frontend/package.json frontend/package-lock.json* frontend/ ./
+# package-lock.json is gitignored; tolerate its absence.
+RUN npm install --no-audit --no-fund \
+    && npm run build
+
+# ---------- Stage 3: Runtime -------------------------------------------------
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libllvm18 \
+    libzstd1 \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=backend-builder /usr/src/qlang/target/release/qo /usr/local/bin/qo
+COPY --from=frontend-builder /src/frontend/dist /app/frontend/dist
+
+# The qo binary resolves the static dir relative to its own location or to
+# CWD; mount CWD at /app so the fallback picks up `frontend/dist`.
+ENV QO_DATA_DIR=/data
+VOLUME ["/data"]
+
+EXPOSE 4646
+
+HEALTHCHECK --interval=20s --timeout=5s --start-period=15s --retries=5 \
+    CMD curl -fsS http://localhost:${QO_PORT:-4646}/api/health || exit 1
+
+ENTRYPOINT ["qo"]

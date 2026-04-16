@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod peer_discovery;
 pub mod routes;
 
 use axum::{
