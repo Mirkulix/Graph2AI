@@ -63,6 +63,14 @@ interface ChatViewProps {
   onPendingConsumed?: () => void
 }
 
+interface LiveEvent {
+  id: string
+  message: string
+  agent?: string
+  level: string
+  timestamp: number
+}
+
 // Limits kept conservative so dropping a 20 MB photo does not freeze
 // the tab. Bigger inputs should go through /api/graphs or the QLMS path.
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024
@@ -135,6 +143,7 @@ export default function ChatView(props: ChatViewProps = {}) {
   const [loading, setLoading] = useState(false)
   const [healthError, setHealthError] = useState(false)
   const [visionWarning, setVisionWarning] = useState<string | null>(null)
+  const [liveEvents, setLiveEvents] = useState<LiveEvent[]>([])
 
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -187,7 +196,42 @@ export default function ChatView(props: ChatViewProps = {}) {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, loading])
+  }, [messages, loading, liveEvents])
+
+  // While a request is in flight, tail /api/consciousness/stream for
+  // activity events ("CEO dekomponiert …", "Researcher fertig", …) and
+  // render them below the loading dots. This makes single-shot chat
+  // and multi-agent goal flows visibly "live" without needing real
+  // token streaming yet.
+  useEffect(() => {
+    if (!loading) {
+      setLiveEvents([])
+      return
+    }
+    const src = new EventSource('/api/consciousness/stream')
+    src.onmessage = (ev) => {
+      try {
+        const data = JSON.parse(ev.data)
+        if (data?.type !== 'activity') return
+        setLiveEvents((prev) => {
+          const entry: LiveEvent = {
+            id: `${data.timestamp}-${prev.length}`,
+            message: data.message ?? '',
+            agent: data.agent ?? undefined,
+            level: data.level ?? 'info',
+            timestamp: data.timestamp ?? Math.floor(Date.now() / 1000),
+          }
+          return [...prev, entry].slice(-12)
+        })
+      } catch {
+        /* ignore malformed events */
+      }
+    }
+    src.onerror = () => {
+      // stream closes / errors are benign — we reopen next time
+    }
+    return () => src.close()
+  }, [loading])
 
   // ─── Send ──────────────────────────────────────────────────────────
 
@@ -428,10 +472,32 @@ export default function ChatView(props: ChatViewProps = {}) {
 
         {loading ? (
           <div className="chat__row chat__row--assistant">
-            <div className="chat__bubble chat__bubble--assistant chat__bubble--loading">
-              <span className="chat__dot" style={{ animationDelay: '0ms' }} />
-              <span className="chat__dot" style={{ animationDelay: '200ms' }} />
-              <span className="chat__dot" style={{ animationDelay: '400ms' }} />
+            <div className="chat__bubble chat__bubble--assistant chat__bubble--live">
+              <div className="chat__live-dots">
+                <span className="chat__dot" style={{ animationDelay: '0ms' }} />
+                <span className="chat__dot" style={{ animationDelay: '200ms' }} />
+                <span className="chat__dot" style={{ animationDelay: '400ms' }} />
+                <span className="chat__live-label">
+                  {liveEvents.length === 0
+                    ? 'Denke nach …'
+                    : `${liveEvents.length} Event(s) vom Schwarm`}
+                </span>
+              </div>
+              {liveEvents.length > 0 ? (
+                <ul className="chat__live-list">
+                  {liveEvents.map((e) => (
+                    <li
+                      key={e.id}
+                      className={`chat__live-item chat__live-item--${e.level}`}
+                    >
+                      {e.agent ? (
+                        <span className="chat__live-agent">{e.agent}</span>
+                      ) : null}
+                      <span className="chat__live-msg">{e.message}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
             </div>
           </div>
         ) : null}
