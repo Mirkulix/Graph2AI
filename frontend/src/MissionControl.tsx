@@ -78,11 +78,11 @@ function edgeWidthFromBytes(bytes: number): number {
 function cssColour(status: NodeStatus): string {
   switch (status) {
     case 'active':
-      return 'var(--accent-sinn, #3b7de8)'
+      return 'var(--accent)'
     case 'error':
-      return 'var(--accent-error, #e8545d)'
+      return 'var(--err)'
     default:
-      return 'rgba(255, 255, 255, 0.24)'
+      return 'var(--border-strong)'
   }
 }
 
@@ -165,11 +165,11 @@ function MissionControlInner() {
           label: `${intent} · ${formatBytes(size_bytes)}`,
           animated: !failed,
           style: {
-            stroke: failed ? 'var(--accent-error, #e8545d)' : 'var(--accent-sinn, #3b7de8)',
+            stroke: failed ? 'var(--err)' : 'var(--accent)',
             strokeWidth: edgeWidthFromBytes(size_bytes),
             opacity: 0.9,
           },
-          labelStyle: { fill: 'var(--text-secondary, #a5a9b3)', fontSize: 10 },
+          labelStyle: { fill: 'var(--text-muted)', fontSize: 10 },
         }
         const combined = [...prev, next]
         if (combined.length > MAX_EDGES) {
@@ -247,17 +247,17 @@ function MissionControlInner() {
   }, [connState, eventCount, lastError])
 
   return (
-    <div className="mission-control">
-      <div className="mission-control__graph">
-        <div className="mission-control__header">
-          <span className={`mission-control__status-dot mission-control__status-dot--${status.cls}`} />
+    <div className="mission">
+      <div className="mission__graph">
+        <div className="mission__header">
+          <span className={`mission__status-dot mission__status-dot--${status.cls}`} />
           <Activity size={14} />
           <h2>Mission Control</h2>
           <span>{status.label}</span>
         </div>
 
         {nodes.length === 0 ? (
-          <div className="mission-control__empty">
+          <div className="mission__empty">
             Noch keine Agenten-Kommunikation.
             <br />
             Sobald Events über <code>/ws/graph-stream</code> fliessen, erscheinen sie hier.
@@ -281,7 +281,7 @@ function MissionControlInner() {
         </ReactFlow>
       </div>
 
-      <aside className="mission-control__side">
+      <aside className="mission__side">
         <ValuesRadar />
       </aside>
     </div>
@@ -303,21 +303,22 @@ export default function MissionControl() {
 function idleNodeStyle(): React.CSSProperties {
   return {
     border: `1.4px solid ${cssColour('idle')}`,
-    background: 'rgba(20, 24, 32, 0.88)',
-    color: 'var(--text-primary, #e6e8ec)',
+    background: 'var(--surface)',
+    color: 'var(--text)',
     borderRadius: 10,
     padding: '6px 12px',
     fontSize: 12,
     fontWeight: 500,
+    boxShadow: 'var(--shadow-card)',
   }
 }
 
 function activeNodeStyle(status: NodeStatus): React.CSSProperties {
-  const colour = cssColour(status)
+  const soft = status === 'error' ? 'var(--err-soft)' : 'var(--accent-soft)'
   return {
     ...idleNodeStyle(),
-    border: `1.4px solid ${colour}`,
-    boxShadow: `0 0 0 3px ${colour.replace('var(', 'rgba(').replace(')', ', 0.22)')}`,
+    border: `1.4px solid ${cssColour(status)}`,
+    boxShadow: `0 0 0 3px ${soft}`,
   }
 }
 

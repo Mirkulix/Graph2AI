@@ -136,22 +136,22 @@ export default function GraphInspectorView() {
   )
 
   return (
-    <div className="graph-inspector">
-      <aside className="graph-inspector__list">
-        <div className="graph-inspector__list-header">
+    <div className="inspector">
+      <aside className="inspector__list">
+        <div className="inspector__list-header">
           <Archive size={14} />
           <span>Graphs ({graphs.length})</span>
           <button type="button" onClick={() => void loadList()}>Neu laden</button>
         </div>
 
         {loading ? (
-          <div className="graph-inspector__empty">Lade …</div>
+          <div className="inspector__empty">Lade …</div>
         ) : error ? (
-          <div className="graph-inspector__empty graph-inspector__empty--error">
+          <div className="inspector__empty inspector__empty--error">
             {error}
           </div>
         ) : graphs.length === 0 ? (
-          <div className="graph-inspector__empty">
+          <div className="inspector__empty">
             Noch keine gespeicherten Graphs. Sobald Agenten Graphs ausführen,
             erscheinen sie hier.
           </div>
@@ -163,8 +163,8 @@ export default function GraphInspectorView() {
                 className={selectedId === g.id ? 'is-selected' : undefined}
               >
                 <button type="button" onClick={() => setSelectedId(g.id)}>
-                  <span className="graph-inspector__list-title">{g.title || `Graph #${g.id}`}</span>
-                  <span className="graph-inspector__list-meta">
+                  <span className="inspector__list-title">{g.title || `Graph #${g.id}`}</span>
+                  <span className="inspector__list-meta">
                     <code>{g.graph_type}</code>
                     <span>·</span>
                     <span>{g.nodes.length}n / {g.edges.length}e</span>
@@ -178,15 +178,15 @@ export default function GraphInspectorView() {
         )}
       </aside>
 
-      <section className="graph-inspector__detail">
+      <section className="inspector__detail">
         {selectedId === null ? (
           <EmptyDetail />
         ) : detailLoading ? (
-          <div className="graph-inspector__empty">Lade Details …</div>
+          <div className="inspector__empty">Lade Details …</div>
         ) : detail ? (
           <GraphDetailPane graph={detail} />
         ) : (
-          <div className="graph-inspector__empty">Keine Details verfügbar.</div>
+          <div className="inspector__empty">Keine Details verfügbar.</div>
         )}
       </section>
     </div>
@@ -195,7 +195,7 @@ export default function GraphInspectorView() {
 
 function EmptyDetail() {
   return (
-    <div className="graph-inspector__empty">
+    <div className="inspector__empty">
       Wähle links einen Graph, um Header, Security, Knoten und Kanten zu inspizieren.
     </div>
   )
@@ -210,22 +210,22 @@ function GraphDetailPane({ graph }: { graph: StoredGraph }) {
 
   return (
     <>
-      <header className="graph-inspector__detail-header">
+      <header className="inspector__detail-header">
         <div>
           <h2>{graph.title || `Graph #${graph.id}`}</h2>
-          <div className="graph-inspector__detail-sub">
+          <div className="inspector__detail-sub">
             <span><Hash size={12} /> {graph.id}</span>
             <span><Clock size={12} /> {formatTimestamp(graph.timestamp)}</span>
             <code>{graph.graph_type}</code>
           </div>
         </div>
-        <button type="button" className="graph-inspector__replay" disabled title="Replay via /qlms/v1.1/deliver kommt in einem folgenden PR">
+        <button type="button" className="inspector__replay" disabled title="Replay via /qlms/v1.1/deliver kommt in einem folgenden PR">
           <Play size={12} />
           Replay
         </button>
       </header>
 
-      <section className="graph-inspector__panel">
+      <section className="inspector__panel">
         <h3>Header</h3>
         <dl>
           <dt>Nodes</dt>
@@ -240,7 +240,7 @@ function GraphDetailPane({ graph }: { graph: StoredGraph }) {
       </section>
 
       {hasMetadata ? (
-        <section className="graph-inspector__panel">
+        <section className="inspector__panel">
           <h3>
             <Shield size={12} /> Ausführungs-Metadaten
           </h3>
@@ -273,20 +273,20 @@ function GraphDetailPane({ graph }: { graph: StoredGraph }) {
         </section>
       ) : null}
 
-      <section className="graph-inspector__panel">
+      <section className="inspector__panel">
         <h3>
           <Box size={12} /> Knoten
         </h3>
-        <ul className="graph-inspector__nodes">
+        <ul className="inspector__nodes">
           {graph.nodes.map((n) => (
-            <li key={n.id} className={`graph-inspector__node graph-inspector__node--${statusClass(n.status)}`}>
-              <div className="graph-inspector__node-head">
+            <li key={n.id} className={`inspector__node inspector__node--${statusClass(n.status)}`}>
+              <div className="inspector__node-head">
                 <StatusBadge status={n.status} />
                 <code>{n.id}</code>
                 <strong>{n.op}</strong>
-                <span className="graph-inspector__node-label">{n.label}</span>
+                <span className="inspector__node-label">{n.label}</span>
               </div>
-              <div className="graph-inspector__node-meta">
+              <div className="inspector__node-meta">
                 <span><code>{n.node_type}</code></span>
                 {n.agent ? <span>Agent: <code>{n.agent}</code></span> : null}
                 {n.duration_ms !== null ? <span>{n.duration_ms} ms</span> : null}
@@ -298,18 +298,18 @@ function GraphDetailPane({ graph }: { graph: StoredGraph }) {
         </ul>
       </section>
 
-      <section className="graph-inspector__panel">
+      <section className="inspector__panel">
         <h3>Kanten</h3>
         {graph.edges.length === 0 ? (
-          <p className="graph-inspector__muted">Keine Kanten.</p>
+          <p className="inspector__muted">Keine Kanten.</p>
         ) : (
-          <ul className="graph-inspector__edges">
+          <ul className="inspector__edges">
             {graph.edges.map((e, i) => (
               <li key={`${e.from}->${e.to}-${i}`}>
                 <code>{e.from}</code>
                 <span> → </span>
                 <code>{e.to}</code>
-                <span className="graph-inspector__muted"> : {e.data_type}</span>
+                <span className="inspector__muted"> : {e.data_type}</span>
               </li>
             ))}
           </ul>
@@ -323,25 +323,25 @@ function StatusBadge({ status }: { status: NodeStatus }) {
   switch (status) {
     case 'Completed':
       return (
-        <span className="graph-inspector__status graph-inspector__status--ok" title="Abgeschlossen">
+        <span className="inspector__status inspector__status--ok" title="Abgeschlossen">
           <Check size={12} />
         </span>
       )
     case 'Failed':
       return (
-        <span className="graph-inspector__status graph-inspector__status--err" title="Fehlgeschlagen">
+        <span className="inspector__status inspector__status--err" title="Fehlgeschlagen">
           <X size={12} />
         </span>
       )
     case 'Running':
       return (
-        <span className="graph-inspector__status graph-inspector__status--run" title="Läuft">
+        <span className="inspector__status inspector__status--run" title="Läuft">
           <CircleDashed size={12} />
         </span>
       )
     default:
       return (
-        <span className="graph-inspector__status graph-inspector__status--pending" title="Ausstehend">
+        <span className="inspector__status inspector__status--pending" title="Ausstehend">
           <CircleDashed size={12} />
         </span>
       )

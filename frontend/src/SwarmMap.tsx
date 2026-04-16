@@ -137,23 +137,23 @@ export default function SwarmMap() {
   }, [graphData])
 
   const connectedBadge = stats?.peer_discovery_enabled ? (
-    <span className="swarm-map__badge swarm-map__badge--on">
+    <span className="swarm__badge swarm__badge--on">
       <Wifi size={12} /> Peer Discovery aktiv
     </span>
   ) : (
-    <span className="swarm-map__badge swarm-map__badge--off">
+    <span className="swarm__badge swarm__badge--off">
       <WifiOff size={12} /> PEER_DISCOVERY_SEEDS unset
     </span>
   )
 
   return (
-    <div className="swarm-map">
-      <header className="swarm-map__header">
-        <div className="swarm-map__title">
+    <div className="swarm">
+      <header className="swarm__header">
+        <div className="swarm__title">
           <Globe size={16} />
           <h2>Swarm &amp; Federation</h2>
         </div>
-        <div className="swarm-map__metrics">
+        <div className="swarm__metrics">
           <Metric label="Total Nodes" value={peers.length} />
           <Metric
             label="Local"
@@ -176,12 +176,12 @@ export default function SwarmMap() {
       </header>
 
       {error ? (
-        <div className="swarm-map__error">Fehler: {error}</div>
+        <div className="swarm__error">Fehler: {error}</div>
       ) : null}
 
-      <div className="swarm-map__canvas">
+      <div className="swarm__canvas">
         {peers.length === 0 ? (
-          <div className="swarm-map__empty">
+          <div className="swarm__empty">
             Noch keine Peers bekannt. Setze <code>QO_NODE_ADDR</code> und <code>PEER_DISCOVERY_SEEDS</code> oder starte die Swarm-Compose:
             <br />
             <code>docker compose -f docker-compose.swarm.yml up</code>
@@ -211,9 +211,9 @@ export default function SwarmMap() {
 
 function Metric({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="swarm-map__metric">
-      <span className="swarm-map__metric-label">{label}</span>
-      <span className="swarm-map__metric-value">{value}</span>
+    <div className="swarm__metric">
+      <span className="swarm__metric-label">{label}</span>
+      <span className="swarm__metric-value">{value}</span>
     </div>
   )
 }

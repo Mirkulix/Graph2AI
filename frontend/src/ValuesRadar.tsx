@@ -53,11 +53,11 @@ const VALUE_LABELS: Record<ValueKey, string> = {
 }
 
 const VALUE_COLORS: Record<ValueKey, string> = {
-  achtsamkeit: 'var(--accent-achtsamkeit)',
-  anerkennung: 'var(--accent-anerkennung)',
-  aufmerksamkeit: 'var(--accent-aufmerksamkeit)',
-  entwicklung: 'var(--accent-entwicklung)',
-  sinn: 'var(--accent-sinn)',
+  achtsamkeit: 'var(--werte-achtsamkeit)',
+  anerkennung: 'var(--werte-anerkennung)',
+  aufmerksamkeit: 'var(--werte-aufmerksamkeit)',
+  entwicklung: 'var(--werte-entwicklung)',
+  sinn: 'var(--werte-sinn)',
 }
 
 const POLL_MS = 5_000
@@ -152,7 +152,7 @@ export default function ValuesRadar() {
               key={`ring-${r}`}
               points={polygonPoints([ratio, ratio, ratio, ratio, ratio], CHART_RADIUS)}
               fill="none"
-              stroke="var(--border-soft, #2a2f3a)"
+              stroke="var(--border)"
               strokeWidth={ratio === 1 ? 1.4 : 0.6}
               strokeDasharray={ratio === 1 ? undefined : '2 3'}
             />
@@ -169,7 +169,7 @@ export default function ValuesRadar() {
               y1={CENTER}
               x2={x}
               y2={y}
-              stroke="var(--border-soft, #2a2f3a)"
+              stroke="var(--border)"
               strokeWidth={0.6}
             />
           )
@@ -178,9 +178,9 @@ export default function ValuesRadar() {
         {/* data polygon */}
         <polygon
           points={polygonPoints(ratios, CHART_RADIUS)}
-          fill="var(--accent-sinn, #3b7de8)"
-          fillOpacity={0.16}
-          stroke="var(--accent-sinn, #3b7de8)"
+          fill="var(--accent)"
+          fillOpacity={0.14}
+          stroke="var(--accent)"
           strokeWidth={1.6}
         />
 
@@ -194,7 +194,7 @@ export default function ValuesRadar() {
               cy={y}
               r={4}
               fill={VALUE_COLORS[key]}
-              stroke="var(--card-bg, #111)"
+              stroke="var(--surface)"
               strokeWidth={1.4}
             >
               <title>
@@ -212,7 +212,7 @@ export default function ValuesRadar() {
               key={`label-${key}`}
               x={x}
               y={y}
-              fill="var(--text-secondary, #a5a9b3)"
+              fill="var(--text-muted)"
               fontSize={11}
               textAnchor="middle"
               dominantBaseline="middle"

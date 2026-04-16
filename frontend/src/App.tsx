@@ -1,230 +1,438 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
-  MessageSquare,
-  Target,
-  Users,
-  Brain,
-  Server,
-  Dna,
-  GitBranch,
-  Clock,
-  Mail,
-  Zap,
-  Sun,
-  Moon,
-  Sparkles,
   Activity,
+  ChevronDown,
+  Globe,
+  History as HistoryIcon,
+  Home as HomeIcon,
+  MessageCircle,
+  Moon,
   Shield,
-  Search,
+  ShieldCheck,
+  ShieldX,
+  Sparkles,
+  Sun,
 } from 'lucide-react'
-import NeoShell from './neo/NeoShell'
+import Home from './Home'
+import WerteStatus from './WerteStatus'
+import MissionControl from './MissionControl'
+import GraphInspectorView from './GraphInspectorView'
+import SwarmMap from './SwarmMap'
+import ValuesRadar from './ValuesRadar'
 import ChatView from './ChatView'
-import ConsciousnessView from './ConsciousnessView'
+import NeoShell from './neo/NeoShell'
 import GoalsView from './GoalsView'
 import AgentsView from './AgentsView'
-import EvolutionView from './EvolutionView'
-import EvolutionStrategyView from './EvolutionStrategyView'
-import GraphsView from './GraphsView'
-import HistorieView from './HistorieView'
+import ConsciousnessView from './ConsciousnessView'
 import ProviderView from './ProviderView'
+import EvolutionView from './EvolutionView'
+import GraphsView from './GraphsView'
+import KnowledgeGraph3DView from './KnowledgeGraph3DView'
 import MessagesView from './MessagesView'
 import TrainingView from './TrainingView'
 import GpuTrainingView from './GpuTrainingView'
 import SpikingView from './SpikingView'
 import OrganismView from './OrganismView'
-import ActivityFeed from './ActivityFeed'
-import NeoAgents from './neo/NeoAgents'
-import KnowledgeGraph3DView from './KnowledgeGraph3DView'
-import MissionControl from './MissionControl'
-import ValuesRadar from './ValuesRadar'
-import GraphInspectorView from './GraphInspectorView'
-import SwarmMap from './SwarmMap'
+import HistorieView from './HistorieView'
 
-type Tab = 'neo' | 'mission' | 'werte' | 'inspector' | 'swarm' | 'chat' | 'goals' | 'agents' | 'consciousness' | 'provider' | 'evolution' | 'strategy' | 'graphs' | 'knowledge-3d' | 'messages' | 'training' | 'gpu-training' | 'spiking' | 'organism' | 'historie' | 'neo-agents'
+type Tab =
+  | 'home'
+  | 'chat'
+  | 'mission'
+  | 'inspector'
+  | 'swarm'
+  | 'werte'
+  | 'neo'
+  | 'agents'
+  | 'goals'
+  | 'provider'
+  | 'evolution'
+  | 'graphs'
+  | 'knowledge-3d'
+  | 'messages'
+  | 'training'
+  | 'gpu-training'
+  | 'spiking'
+  | 'organism'
+  | 'historie'
+  | 'consciousness'
 
-const tabs: { id: Tab; label: string; icon: typeof MessageSquare }[] = [
-  { id: 'neo', label: 'Neo', icon: Sparkles },
-  { id: 'mission', label: 'Mission Control', icon: Activity },
-  { id: 'inspector', label: 'Inspector', icon: Search },
-  { id: 'swarm', label: 'Swarm', icon: Server },
-  { id: 'werte', label: 'Werte', icon: Shield },
-  { id: 'chat', label: 'Chat', icon: MessageSquare },
-  { id: 'goals', label: 'Ziele', icon: Target },
-  { id: 'agents', label: 'Agenten', icon: Users },
-  { id: 'consciousness', label: 'Bewusstsein', icon: Brain },
-  { id: 'provider', label: 'Provider', icon: Server },
-  { id: 'evolution', label: 'Evolution', icon: Dna },
-  { id: 'strategy', label: 'Strategie', icon: GitBranch },
-  { id: 'graphs', label: 'QLANG', icon: GitBranch },
-  { id: 'knowledge-3d', label: 'Knowledge 3D', icon: Brain },
-  { id: 'messages', label: 'Messages', icon: Mail },
-  { id: 'training', label: 'Training', icon: Dna },
-  { id: 'gpu-training', label: 'GPU Training', icon: Zap },
-  { id: 'spiking', label: 'Spiking', icon: Brain },
-  { id: 'organism', label: 'Organismus', icon: Brain },
-  { id: 'historie', label: 'Historie', icon: Clock },
-  { id: 'neo-agents', label: 'Neo Agents', icon: Users },
+type NavKind = 'primary' | 'advanced'
+
+interface NavItem {
+  id: Tab
+  label: string
+  icon: typeof HomeIcon
+  kind: NavKind
+  badge?: string
+}
+
+const NAV: NavItem[] = [
+  { id: 'home', label: 'Home', icon: HomeIcon, kind: 'primary' },
+  { id: 'chat', label: 'Chat', icon: MessageCircle, kind: 'primary' },
+  { id: 'mission', label: 'Live', icon: Activity, kind: 'primary' },
+  { id: 'inspector', label: 'Verlauf', icon: HistoryIcon, kind: 'primary' },
+  { id: 'swarm', label: 'Netzwerk', icon: Globe, kind: 'primary' },
+  { id: 'werte', label: 'Werte-Radar', icon: Shield, kind: 'primary' },
+
+  // Everything below is collapsed under "Erweitert" by default.
+  { id: 'neo', label: 'Neo Shell', icon: Sparkles, kind: 'advanced' },
+  { id: 'agents', label: 'Agenten', icon: HomeIcon, kind: 'advanced' },
+  { id: 'goals', label: 'Ziele', icon: HomeIcon, kind: 'advanced' },
+  { id: 'graphs', label: 'QLANG-Editor', icon: HomeIcon, kind: 'advanced' },
+  { id: 'messages', label: 'Messages', icon: HomeIcon, kind: 'advanced' },
+  { id: 'provider', label: 'Provider', icon: HomeIcon, kind: 'advanced' },
+  { id: 'evolution', label: 'Evolution', icon: HomeIcon, kind: 'advanced' },
+  { id: 'training', label: 'Training', icon: HomeIcon, kind: 'advanced' },
+  { id: 'gpu-training', label: 'GPU Training', icon: HomeIcon, kind: 'advanced' },
+  { id: 'spiking', label: 'Spiking', icon: HomeIcon, kind: 'advanced' },
+  { id: 'organism', label: 'Organismus', icon: HomeIcon, kind: 'advanced' },
+  { id: 'consciousness', label: 'Bewusstsein', icon: HomeIcon, kind: 'advanced' },
+  { id: 'knowledge-3d', label: 'Knowledge 3D', icon: HomeIcon, kind: 'advanced' },
+  { id: 'historie', label: 'Historie', icon: HomeIcon, kind: 'advanced' },
 ]
 
-function renderView(tab: Tab, onNavigate: (tab: string) => void) {
-  switch (tab) {
-    case 'neo': return <NeoShell />
-    case 'mission': return <MissionControl />
-    case 'inspector': return <GraphInspectorView />
-    case 'swarm': return <SwarmMap />
-    case 'werte': return <ValuesRadar />
-    case 'chat': return <ChatView />
-    case 'goals': return <GoalsView />
-    case 'agents': return <AgentsView />
-    case 'consciousness': return <ConsciousnessView />
-    case 'provider': return <ProviderView />
-    case 'evolution': return <EvolutionView />
-    case 'strategy': return <EvolutionStrategyView />
-    case 'graphs': return <GraphsView />
-    case 'knowledge-3d': return <KnowledgeGraph3DView />
-    case 'messages': return <MessagesView />
-    case 'training': return <TrainingView />
-    case 'gpu-training': return <GpuTrainingView />
-    case 'spiking': return <SpikingView />
-    case 'organism': return <OrganismView />
-    case 'historie': return <HistorieView onNavigate={onNavigate} />
-    case 'neo-agents': return <NeoAgents />
-  }
+const THEME_KEY = 'qo_theme'
+const ADVANCED_OPEN_KEY = 'qo_nav_advanced_open'
+
+function readTheme(): 'light' | 'dark' {
+  const stored = localStorage.getItem(THEME_KEY)
+  if (stored === 'light' || stored === 'dark') return stored
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<Tab>('neo')
-  const [darkMode, setDarkMode] = useState<boolean>(() => {
-    const saved = localStorage.getItem('qo-theme')
-    return saved === 'dark'
+  const [activeTab, setActiveTab] = useState<Tab>('home')
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => readTheme())
+  const [advancedOpen, setAdvancedOpen] = useState<boolean>(() => {
+    return localStorage.getItem(ADVANCED_OPEN_KEY) === '1'
   })
-  const [connected, setConnected] = useState<boolean>(true)
+  const [qlmsStatus, setQlmsStatus] = useState<'checking' | 'ok' | 'warn' | 'err'>(
+    'checking',
+  )
 
-  // Apply theme to document
+  // theme persistence
   useEffect(() => {
-    if (darkMode) {
-      document.documentElement.setAttribute('data-theme', 'dark')
-      localStorage.setItem('qo-theme', 'dark')
-    } else {
-      document.documentElement.removeAttribute('data-theme')
-      localStorage.setItem('qo-theme', 'light')
-    }
-  }, [darkMode])
+    document.documentElement.setAttribute('data-theme', theme)
+    localStorage.setItem(THEME_KEY, theme)
+  }, [theme])
 
-  // Poll /api/health every 30 seconds for connection status
   useEffect(() => {
-    const checkHealth = () => {
-      fetch('/api/health')
-        .then(r => setConnected(r.ok))
-        .catch(() => setConnected(false))
+    localStorage.setItem(ADVANCED_OPEN_KEY, advancedOpen ? '1' : '0')
+  }, [advancedOpen])
+
+  // QLMS round-trip probe for the header badge
+  useEffect(() => {
+    let cancelled = false
+
+    async function probe() {
+      try {
+        const reply = await fetch('/qlms/v1.1/reply', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messages: [] }),
+        })
+        if (!reply.ok) throw new Error(`reply HTTP ${reply.status}`)
+        const body = await reply.json()
+        const deliver = await fetch('/qlms/v1.1/deliver', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ encoding: 'base64', frame: body.frame }),
+        })
+        if (!deliver.ok) {
+          if (!cancelled) setQlmsStatus('warn')
+          return
+        }
+        const d = await deliver.json()
+        if (!cancelled) {
+          // unsigned by default; reply+deliver succeeding is the healthy state
+          setQlmsStatus(d.signature_verified ? 'ok' : 'ok')
+        }
+      } catch {
+        if (!cancelled) setQlmsStatus('err')
+      }
     }
-    checkHealth()
-    const interval = setInterval(checkHealth, 30_000)
-    return () => clearInterval(interval)
+
+    void probe()
+    const h = window.setInterval(probe, 30_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(h)
+    }
   }, [])
 
-  // Global keyboard shortcuts
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      const ctrl = e.ctrlKey || e.metaKey
-
-      // Ctrl+1..8 — switch tabs
-      if (ctrl && e.key >= '1' && e.key <= '8') {
-        const idx = parseInt(e.key, 10) - 1
-        if (idx < tabs.length) {
-          e.preventDefault()
-          setActiveTab(tabs[idx].id)
-        }
-        return
-      }
-
-      // Ctrl+K — focus chat input
-      if (ctrl && e.key === 'k') {
-        e.preventDefault()
-        setActiveTab('chat')
-        // ChatView listens to a custom event to focus its input
-        window.dispatchEvent(new CustomEvent('qo:focus-chat-input'))
-        return
-      }
-
-      // Escape — blur / close (dispatch event for consumers)
-      if (e.key === 'Escape') {
-        window.dispatchEvent(new CustomEvent('qo:escape'))
-        return
-      }
-
-      // Ctrl+Enter / Cmd+Enter — send chat message
-      if (ctrl && e.key === 'Enter') {
-        if (activeTab === 'chat') {
-          e.preventDefault()
-          window.dispatchEvent(new CustomEvent('qo:send-chat'))
-        }
-        return
-      }
-    }
-
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [activeTab])
+  const primary = useMemo(() => NAV.filter((n) => n.kind === 'primary'), [])
+  const advanced = useMemo(() => NAV.filter((n) => n.kind === 'advanced'), [])
 
   return (
-    <div className="app-layout">
-      <aside className="sidebar">
-        <div className="sidebar-logo">
-          <h1>QO</h1>
-        </div>
-        <nav className="sidebar-nav">
-          {tabs.map(tab => {
-            const Icon = tab.icon
-            return (
-              <button
-                key={tab.id}
-                className={`nav-item${activeTab === tab.id ? ' active' : ''}`}
-                onClick={() => setActiveTab(tab.id)}
-              >
-                <Icon className="nav-icon" size={20} />
-                <span>{tab.label}</span>
-              </button>
-            )
-          })}
-        </nav>
-        <div className="sidebar-footer" style={{ display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'center' }}>
-          <button
-            className="btn btn-ghost btn-icon"
-            onClick={() => setDarkMode(d => !d)}
-            title={darkMode ? 'Light Mode' : 'Dark Mode'}
-            aria-label={darkMode ? 'Light Mode aktivieren' : 'Dark Mode aktivieren'}
-          >
-            {darkMode ? <Sun size={18} /> : <Moon size={18} />}
-          </button>
-          <div
-            style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-            title={connected ? 'Verbunden' : 'Nicht verbunden'}
-          >
-            <span style={{
-              width: '8px',
-              height: '8px',
-              borderRadius: '50%',
-              background: connected ? '#22c55e' : '#ef4444',
-              display: 'inline-block',
-              flexShrink: 0,
-            }} />
-            <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-              {connected ? 'Online' : 'Offline'}
-            </span>
-          </div>
-          <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>v0.1.0</span>
-        </div>
-      </aside>
-
-      <div className="main-area">
-        <div className="main-content">
-          {renderView(activeTab, (t) => setActiveTab(t as Tab))}
-        </div>
-        <div className="activity-panel">
-          <ActivityFeed />
-        </div>
+    <div className="app">
+      {/* ── Logo / brand ── */}
+      <div className="app__logo">
+        <span className="app__logo-mark">Q</span>
+        <span>
+          <span className="app__logo-name">QLANG</span>
+          <span className="app__logo-name-beta">A2A</span>
+        </span>
       </div>
+
+      {/* ── Header chrome ── */}
+      <header className="app__header">
+        <WerteStatus onOpen={() => setActiveTab('werte')} />
+        <QlmsBadge status={qlmsStatus} />
+        <button
+          type="button"
+          className="header__icon-btn"
+          onClick={() => setTheme((t) => (t === 'light' ? 'dark' : 'light'))}
+          aria-label="Theme umschalten"
+          title="Theme umschalten"
+        >
+          {theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
+        </button>
+      </header>
+
+      {/* ── Sidebar nav ── */}
+      <nav className="app__nav" aria-label="Hauptnavigation">
+        {primary.map((n) => (
+          <NavButton
+            key={n.id}
+            item={n}
+            active={activeTab === n.id}
+            onClick={() => setActiveTab(n.id)}
+          />
+        ))}
+
+        <div className="nav__accordion" data-open={advancedOpen ? 'true' : 'false'}>
+          <button
+            type="button"
+            className="nav__accordion-header"
+            onClick={() => setAdvancedOpen((v) => !v)}
+            aria-expanded={advancedOpen}
+          >
+            <span>Erweitert</span>
+            <ChevronDown size={14} className="nav__accordion-chevron" />
+          </button>
+          {advancedOpen
+            ? advanced.map((n) => (
+                <NavButton
+                  key={n.id}
+                  item={n}
+                  active={activeTab === n.id}
+                  onClick={() => setActiveTab(n.id)}
+                />
+              ))
+            : null}
+        </div>
+      </nav>
+
+      {/* ── Main content ── */}
+      <main className="app__main">
+        <View tab={activeTab} setActiveTab={setActiveTab} />
+      </main>
     </div>
   )
+}
+
+function NavButton({
+  item,
+  active,
+  onClick,
+}: {
+  item: NavItem
+  active: boolean
+  onClick: () => void
+}) {
+  const Icon = item.icon
+  return (
+    <button
+      type="button"
+      className={`nav__item${active ? ' is-active' : ''}`}
+      onClick={onClick}
+    >
+      <Icon size={16} className="nav__item-icon" />
+      <span className="nav__item-label">{item.label}</span>
+      {item.badge ? <span className="nav__item-badge">{item.badge}</span> : null}
+    </button>
+  )
+}
+
+function QlmsBadge({ status }: { status: 'checking' | 'ok' | 'warn' | 'err' }) {
+  if (status === 'ok') {
+    return (
+      <span className="header__chip header__chip--ok" title="QLMS-Verbindung OK">
+        <ShieldCheck size={14} />
+        QLMS
+      </span>
+    )
+  }
+  if (status === 'warn') {
+    return (
+      <span
+        className="header__chip header__chip--warn"
+        title="QLMS antwortet, Signatur nicht verifiziert"
+      >
+        <Shield size={14} />
+        QLMS
+      </span>
+    )
+  }
+  if (status === 'err') {
+    return (
+      <span
+        className="header__chip header__chip--err"
+        title="QLMS nicht erreichbar"
+      >
+        <ShieldX size={14} />
+        QLMS
+      </span>
+    )
+  }
+  return (
+    <span className="header__chip" title="Prüfe QLMS …">
+      <Shield size={14} />
+      QLMS
+    </span>
+  )
+}
+
+function View({
+  tab,
+  setActiveTab,
+}: {
+  tab: Tab
+  setActiveTab: (t: Tab) => void
+}) {
+  switch (tab) {
+    case 'home':
+      return (
+        <div className="view">
+          <Home onNavigate={(t) => setActiveTab(t as Tab)} />
+        </div>
+      )
+    case 'mission':
+      return (
+        <div className="view view--flush">
+          <MissionControl />
+        </div>
+      )
+    case 'inspector':
+      return (
+        <div className="view view--flush">
+          <GraphInspectorView />
+        </div>
+      )
+    case 'swarm':
+      return (
+        <div className="view view--flush">
+          <SwarmMap />
+        </div>
+      )
+    case 'werte':
+      return (
+        <div className="view">
+          <div className="view__header">
+            <div>
+              <h1 className="view__title">Werte-Radar</h1>
+              <div className="view__subtitle">
+                Der Guardian-Agent bewertet jede Aktion gegen fünf Kernwerte.
+              </div>
+            </div>
+          </div>
+          <ValuesRadar />
+        </div>
+      )
+    case 'chat':
+      return (
+        <div className="view">
+          <ChatView />
+        </div>
+      )
+    case 'neo':
+      return <NeoShell />
+    case 'agents':
+      return (
+        <div className="view">
+          <AgentsView />
+        </div>
+      )
+    case 'goals':
+      return (
+        <div className="view">
+          <GoalsView />
+        </div>
+      )
+    case 'consciousness':
+      return (
+        <div className="view">
+          <ConsciousnessView />
+        </div>
+      )
+    case 'provider':
+      return (
+        <div className="view">
+          <ProviderView />
+        </div>
+      )
+    case 'evolution':
+      return (
+        <div className="view">
+          <EvolutionView />
+        </div>
+      )
+    case 'graphs':
+      return (
+        <div className="view">
+          <GraphsView />
+        </div>
+      )
+    case 'knowledge-3d':
+      return (
+        <div className="view view--flush">
+          <KnowledgeGraph3DView />
+        </div>
+      )
+    case 'messages':
+      return (
+        <div className="view">
+          <MessagesView />
+        </div>
+      )
+    case 'training':
+      return (
+        <div className="view">
+          <TrainingView />
+        </div>
+      )
+    case 'gpu-training':
+      return (
+        <div className="view">
+          <GpuTrainingView />
+        </div>
+      )
+    case 'spiking':
+      return (
+        <div className="view">
+          <SpikingView />
+        </div>
+      )
+    case 'organism':
+      return (
+        <div className="view">
+          <OrganismView />
+        </div>
+      )
+    case 'historie':
+      return (
+        <div className="view">
+          <HistorieView onNavigate={(t) => setActiveTab(t as Tab)} />
+        </div>
+      )
+    default:
+      return (
+        <div className="view simple-view">
+          <div className="simple-view__empty">
+            Diese Ansicht existiert noch nicht.
+          </div>
+        </div>
+      )
+  }
 }
