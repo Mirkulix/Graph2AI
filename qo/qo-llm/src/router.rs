@@ -224,13 +224,26 @@ impl LlmRouter {
         if let Some(tier) = preferred {
             if self.tier_available(tier) {
                 tracing::debug!(?tier, "agent requested preferred tier");
-                let body = self.chat_on_tier(tier, messages).await?;
-                return Ok((body, tier));
+                match self.chat_on_tier(tier, messages.clone()).await {
+                    Ok(body) => return Ok((body, tier)),
+                    Err(e) => {
+                        // Transient provider failure — don't kill the goal
+                        // outright. Log it loud and fall through to the
+                        // complexity-based auto router, which may pick a
+                        // healthier tier.
+                        tracing::warn!(
+                            ?tier,
+                            error = %e,
+                            "preferred tier failed — falling back to auto routing"
+                        );
+                    }
+                }
+            } else {
+                tracing::warn!(
+                    ?tier,
+                    "preferred tier not configured — falling back to auto routing"
+                );
             }
-            tracing::warn!(
-                ?tier,
-                "preferred tier not configured — falling back to auto routing"
-            );
         }
         let prompt = {
             // Compute before moving `messages` into `chat`.
