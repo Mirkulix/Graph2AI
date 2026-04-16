@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   Activity,
   ChevronDown,
+  FolderOpen,
   Globe,
   History as HistoryIcon,
   Home as HomeIcon,
@@ -20,6 +21,7 @@ import GraphInspectorView from './GraphInspectorView'
 import SwarmMap from './SwarmMap'
 import ValuesRadar from './ValuesRadar'
 import ChatView from './ChatView'
+import WorkspaceView from './WorkspaceView'
 import NeoShell from './neo/NeoShell'
 import GoalsView from './GoalsView'
 import AgentsView from './AgentsView'
@@ -40,6 +42,7 @@ type Tab =
   | 'chat'
   | 'mission'
   | 'inspector'
+  | 'workspace'
   | 'swarm'
   | 'werte'
   | 'neo'
@@ -71,6 +74,7 @@ const NAV: NavItem[] = [
   { id: 'home', label: 'Home', icon: HomeIcon, kind: 'primary' },
   { id: 'chat', label: 'Chat', icon: MessageCircle, kind: 'primary' },
   { id: 'mission', label: 'Live', icon: Activity, kind: 'primary' },
+  { id: 'workspace', label: 'Workspace', icon: FolderOpen, kind: 'primary' },
   { id: 'inspector', label: 'Verlauf', icon: HistoryIcon, kind: 'primary' },
   { id: 'swarm', label: 'Netzwerk', icon: Globe, kind: 'primary' },
   { id: 'werte', label: 'Werte-Radar', icon: Shield, kind: 'primary' },
@@ -340,6 +344,12 @@ function View({
       return (
         <div className="view view--flush">
           <GraphInspectorView />
+        </div>
+      )
+    case 'workspace':
+      return (
+        <div className="view view--flush">
+          <WorkspaceView />
         </div>
       )
     case 'swarm':

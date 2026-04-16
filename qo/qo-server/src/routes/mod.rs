@@ -24,3 +24,4 @@ pub mod qlms_demo;
 pub mod qlms_federation;
 pub mod mcp_qlms;
 pub mod dashboard;
+pub mod workspace;

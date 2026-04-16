@@ -122,7 +122,18 @@ pub struct ChatResponse {
 }
 
 const SYSTEM_PROMPT: &str =
-    "Du bist QO, ein persönlicher KI-Companion. Antworte auf Deutsch.";
+    "Du bist QO, ein persönlicher KI-Companion. Antworte auf Deutsch.\n\n\
+     Wenn du Code, Konfiguration oder Dokumente ausliefern sollst, \
+     packe sie IMMER in dieses Datei-Format, damit sie direkt in VSCode \
+     geöffnet werden können:\n\n\
+     <qo:file path=\"workspace/PFAD/DATEI.ext\">\n\
+     INHALT HIER\n\
+     </qo:file>\n\n\
+     Mehrere Dateien = mehrere <qo:file>-Blöcke. Relative Pfade unter \
+     `workspace/` verwenden. Die Datei landet automatisch auf der Platte \
+     des Nutzers — er sieht sie im Workspace-Tab und kann sie mit einem \
+     Klick in VSCode öffnen. Dies ersetzt das alte Abliefern in \
+     Markdown-Code-Blöcken.";
 
 pub async fn chat(
     State(state): State<Arc<AppState>>,
@@ -268,6 +279,33 @@ pub async fn chat(
         mem.remember(mem_key.clone(), &memory_text, &state.store);
         // Also store the full text in KV for retrieval
         let _ = state.store.set(&mem_key, &memory_text);
+    }
+
+    // Scan the response for <qo:file> artefact blocks and auto-write
+    // them under data/workspace/. Mirrors the hook on the goal-execution
+    // path, so single-shot chat replies that ship code also land on
+    // disk without the user having to paste anything manually.
+    {
+        let artefacts = qo_agents::extract_artifacts::extract_artifacts(&response);
+        for a in artefacts {
+            match crate::routes::workspace::write_artifact_to_disk(&a.path, &a.content) {
+                Ok(_) => {
+                    tracing::info!(
+                        "chat: wrote workspace artefact {:?} ({} B)",
+                        a.path,
+                        a.content.len()
+                    );
+                    state.stream.publish_activity(
+                        format!("Datei geschrieben: {}", a.path),
+                        Some("QO".to_string()),
+                        "success",
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!("chat: artefact {:?} rejected: {e}", a.path);
+                }
+            }
+        }
     }
 
     // Store QLANG graph — use the REAL executed graph if available, otherwise build metadata graph

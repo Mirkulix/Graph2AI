@@ -166,6 +166,53 @@ pub async fn execute_goal_background(
         registry.execute_goal_subtasks_parallel(goal_id, state.llm.clone()).await
     };
 
+    // Scan each subtask's result text for <qo:file> artefact blocks and
+    // drop them on disk under data/workspace/. This is how agents go
+    // from "describing code" to actually producing files a human (or
+    // VSCode) can open.
+    {
+        let registry = state.agents.lock().await;
+        if let Some(goal) = registry.get_goal(goal_id) {
+            for subtask in &goal.subtasks {
+                let Some(result_text) = &subtask.result else {
+                    continue;
+                };
+                let artefacts = qo_agents::extract_artifacts::extract_artifacts(result_text);
+                if artefacts.is_empty() {
+                    continue;
+                }
+                for a in artefacts {
+                    match crate::routes::workspace::write_artifact_to_disk(
+                        &a.path,
+                        &a.content,
+                    ) {
+                        Ok(abs) => {
+                            let agent_name = subtask.assigned_to.name().to_string();
+                            tracing::info!(
+                                "workspace: wrote {:?} ({} B) from subtask of {}",
+                                a.path,
+                                a.content.len(),
+                                agent_name
+                            );
+                            state.stream.publish_activity(
+                                format!("{} schreibt Datei: {}", agent_name, a.path),
+                                Some(agent_name),
+                                "success",
+                            );
+                            let _ = abs;
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "workspace: write {:?} rejected: {e}",
+                                a.path
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Publish per-subtask activity events, send QLMS result messages, and build results for graph
     let mut subtask_results: Vec<(String, String, bool, u64)> = Vec::new();
     for (_, agent_name, task_desc, succeeded, duration_ms) in &parallel_outcomes {
