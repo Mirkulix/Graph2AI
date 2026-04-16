@@ -53,13 +53,24 @@ function formatRelativeTime(ts: number): string {
   return `vor ${Math.floor(diff / 86400)} Tagen`
 }
 
-export default function ChatView() {
+interface ChatViewProps {
+  /** If set, ChatView auto-sends this prompt on mount (once). Used by the
+   *  Home hero prompt so the user's text is not lost on tab switch. */
+  pendingPrompt?: string | null
+  /** Called after the pending prompt has been consumed so the parent
+   *  can clear its state and not re-fire on next mount. */
+  onPendingConsumed?: () => void
+}
+
+export default function ChatView(props: ChatViewProps = {}) {
+  const { pendingPrompt, onPendingConsumed } = props
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [healthError, setHealthError] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const pendingFiredRef = useRef<boolean>(false)
 
   useEffect(() => {
     fetch('/api/chat/history')
@@ -151,6 +162,18 @@ export default function ChatView() {
     setMessages(prev => prev.filter(m => m.id !== errorMsgId))
     sendMessage(originalText)
   }
+
+  // Auto-fire a prompt that was handed over from the Home hero input.
+  // Uses a ref guard so StrictMode double-mounts (dev) do not submit twice.
+  useEffect(() => {
+    if (!pendingPrompt || pendingFiredRef.current) return
+    const text = pendingPrompt.trim()
+    if (!text) return
+    pendingFiredRef.current = true
+    void sendMessage(text)
+    onPendingConsumed?.()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingPrompt])
 
   // Listen to global keyboard events dispatched by App
   useEffect(() => {

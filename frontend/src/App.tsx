@@ -110,6 +110,10 @@ export default function App() {
   const [qlmsStatus, setQlmsStatus] = useState<'checking' | 'ok' | 'warn' | 'err'>(
     'checking',
   )
+  // Prompt the user typed on the Home hero — handed to ChatView on the
+  // next navigation. ChatView clears it via onPendingConsumed so it
+  // does not re-fire if the user flips back to chat later.
+  const [pendingPrompt, setPendingPrompt] = useState<string | null>(null)
 
   // theme persistence
   useEffect(() => {
@@ -226,7 +230,16 @@ export default function App() {
 
       {/* ── Main content ── */}
       <main className="app__main">
-        <View tab={activeTab} setActiveTab={setActiveTab} />
+        <View
+          tab={activeTab}
+          setActiveTab={setActiveTab}
+          pendingPrompt={pendingPrompt}
+          onAsk={(text) => {
+            setPendingPrompt(text)
+            setActiveTab('chat')
+          }}
+          onPendingConsumed={() => setPendingPrompt(null)}
+        />
       </main>
     </div>
   )
@@ -297,15 +310,24 @@ function QlmsBadge({ status }: { status: 'checking' | 'ok' | 'warn' | 'err' }) {
 function View({
   tab,
   setActiveTab,
+  pendingPrompt,
+  onAsk,
+  onPendingConsumed,
 }: {
   tab: Tab
   setActiveTab: (t: Tab) => void
+  pendingPrompt: string | null
+  onAsk: (text: string) => void
+  onPendingConsumed: () => void
 }) {
   switch (tab) {
     case 'home':
       return (
         <div className="view">
-          <Home onNavigate={(t) => setActiveTab(t as Tab)} />
+          <Home
+            onNavigate={(t) => setActiveTab(t as Tab)}
+            onAsk={onAsk}
+          />
         </div>
       )
     case 'mission':
@@ -343,7 +365,10 @@ function View({
     case 'chat':
       return (
         <div className="view">
-          <ChatView />
+          <ChatView
+            pendingPrompt={pendingPrompt}
+            onPendingConsumed={onPendingConsumed}
+          />
         </div>
       )
     case 'neo':
