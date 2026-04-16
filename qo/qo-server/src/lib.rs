@@ -16,6 +16,7 @@ use qo_memory::{GraphStore, MemoryContext, ObsidianBridge, Store};
 use qo_values::ValueScores;
 use tokio::sync::broadcast;
 
+use crate::peer_discovery::FederationStatsHandle;
 use crate::routes::dashboard::GraphEvent;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -60,6 +61,9 @@ pub struct AppState {
     /// Broadcast channel that fans out `GraphEvent`s to every
     /// `/ws/graph-stream` WebSocket subscriber (Task 6.1 Mission Control).
     pub graph_events_tx: broadcast::Sender<GraphEvent>,
+    /// Peer-discovery gossip statistics. Populated by the background
+    /// task (Task 4.2), read by `/api/federation/stats` (Task 6.4).
+    pub gossip_stats: FederationStatsHandle,
 }
 
 pub struct QoConfig {
@@ -234,6 +238,7 @@ pub async fn build_app(
         // demo; subscribers that lag beyond this get a `Lagged` notice
         // so they can show a "catching up" indicator.
         graph_events_tx: broadcast::channel::<GraphEvent>(256).0,
+        gossip_stats: peer_discovery::new_stats_handle(std::time::Duration::from_secs(10)),
     });
 
     // Register all QO agents on the message bus.
@@ -360,6 +365,12 @@ pub async fn build_app(
             get(routes::dashboard::get_values).post(routes::dashboard::update_values),
         )
         .route("/ws/graph-stream", get(routes::dashboard::graph_stream))
+        // Swarm Map data (Task 6.4)
+        .route("/api/federation/peers", get(routes::dashboard::get_peers))
+        .route(
+            "/api/federation/stats",
+            get(routes::dashboard::get_federation_stats),
+        )
         .route("/api/evolution/start", post(routes::evolution_daemon::start))
         .route("/api/evolution/stop", post(routes::evolution_daemon::stop))
         .route("/api/evolution/status", get(routes::evolution_daemon::status))

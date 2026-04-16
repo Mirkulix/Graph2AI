@@ -19,10 +19,58 @@
 //! * Errors are logged, never panicked. A restart-loop-proof agent.
 
 use std::env;
-use std::time::Duration;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tracing::{info, warn};
+
+// ---------------------------------------------------------------------------
+// Gossip statistics (feeds /api/federation/stats — Task 6.4)
+// ---------------------------------------------------------------------------
+
+/// Rolling statistics over the in-process gossip loop.
+///
+/// Populated by [`spawn_if_enabled`] after every successful round and
+/// read by the Swarm Map endpoint. Kept simple on purpose: single
+/// mutex, no per-peer histograms — the dashboard just needs "is
+/// something happening, and at what rate".
+#[derive(Debug, Default)]
+pub struct FederationStats {
+    /// Total successful gossip rounds since process start.
+    pub rounds_completed: u64,
+    /// Monotonic instant of the last successful round (None before the
+    /// first one).
+    pub last_round_at: Option<Instant>,
+    /// Count of failed rounds (HTTP error, network, …).
+    pub rounds_failed: u64,
+    /// Approximate running mean of the gossip round interval, in
+    /// milliseconds. Starts as the configured interval so the first
+    /// poll does not report a bogus rate.
+    pub mean_interval_ms: f64,
+}
+
+impl FederationStats {
+    /// Seconds-per-round, derived from the running mean interval.
+    pub fn rate_per_sec(&self) -> f64 {
+        if self.mean_interval_ms <= 0.0 {
+            return 0.0;
+        }
+        1000.0 / self.mean_interval_ms
+    }
+}
+
+/// Shared, thread-safe handle to [`FederationStats`].
+pub type FederationStatsHandle = Arc<Mutex<FederationStats>>;
+
+/// Build a fresh stats handle. Placed in AppState so routes can read it.
+pub fn new_stats_handle(interval: Duration) -> FederationStatsHandle {
+    Arc::new(Mutex::new(FederationStats {
+        mean_interval_ms: interval.as_millis() as f64,
+        ..Default::default()
+    }))
+}
 
 /// Env var holding a comma-separated peer list, e.g.:
 /// `PEER_DISCOVERY_SEEDS=qo-a:4646,qo-b:4747,qo-c:4848`.
@@ -98,7 +146,13 @@ struct GossipRequest<'a> {
 ///   will POST against `http://127.0.0.1:<port>/api/qlms/federation/gossip`.
 /// * `auth_token`: optional; sent as `Authorization: Bearer …` so the
 ///   request passes the same auth middleware as any external client.
-pub fn spawn_if_enabled(bind_port: u16, auth_token: Option<String>) -> bool {
+/// * `stats`: shared handle the task updates on every round — reads go
+///   out through `/api/federation/stats`.
+pub fn spawn_if_enabled(
+    bind_port: u16,
+    auth_token: Option<String>,
+    stats: FederationStatsHandle,
+) -> bool {
     let Some(peers) = parse_seeds_from_env() else {
         info!(
             "peer discovery disabled (set {ENV_SEEDS}=host1:4646,host2:4747,... to enable)"
@@ -136,7 +190,29 @@ pub fn spawn_if_enabled(bind_port: u16, auth_token: Option<String>) -> bool {
             if let Some(token) = auth_token.as_deref() {
                 request = request.bearer_auth(token);
             }
-            match request.send().await {
+            let result = request.send().await;
+            let now = Instant::now();
+            if let Ok(mut s) = stats.lock() {
+                // Update running-mean interval only when we already have a
+                // baseline — otherwise keep the env-configured value so
+                // rate_per_sec stays sane before the first round lands.
+                if let Some(prev) = s.last_round_at {
+                    let observed = now.duration_since(prev).as_millis() as f64;
+                    // EMA with α=0.3: smooth but still responsive.
+                    s.mean_interval_ms = 0.7 * s.mean_interval_ms + 0.3 * observed;
+                }
+                s.last_round_at = Some(now);
+                match &result {
+                    Ok(resp) if resp.status().is_success() => {
+                        s.rounds_completed += 1;
+                    }
+                    _ => {
+                        s.rounds_failed += 1;
+                    }
+                }
+            }
+
+            match result {
                 Ok(resp) if resp.status().is_success() => {
                     info!("gossip round OK against {} peer(s)", peers.len());
                 }

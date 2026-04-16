@@ -157,7 +157,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // PRD Task 4.2: opt-in multi-node gossip loop. No-op unless
     // `PEER_DISCOVERY_SEEDS` is set, so single-node dev usage is unaffected.
-    qo_server::peer_discovery::spawn_if_enabled(port, auth_token_for_discovery);
+    qo_server::peer_discovery::spawn_if_enabled(
+        port,
+        auth_token_for_discovery,
+        state.gossip_stats.clone(),
+    );
 
     // Import Orbit data if available
     let import_dir = std::path::PathBuf::from("data/orbit-import");
