@@ -63,21 +63,54 @@ fn execute_via_qlang(
     Ok((response, g, duration))
 }
 
-/// Fallback: Direct LLM call routed through the agent's **preferred
-/// provider**. The router honours the hint when the tier is configured,
-/// otherwise falls back to complexity-based auto routing so a missing
-/// API key never breaks the orchestrator.
+/// Direct LLM call routed through the agent's **preferred provider**
+/// plus role-specific tool augmentation.
+///
+/// Calls web_search for the Researcher role BEFORE the LLM sees the
+/// prompt. The fetched snippets are spliced into the context so the
+/// model has real facts to work with instead of stale pre-training
+/// memory. This path is hit from every orchestration route (parallel
+/// subtasks, retries, chat fallbacks) — so the web-search fix lands in
+/// one place and benefits all flows.
+///
+/// The router honours the preferred-tier hint when the tier is
+/// configured, otherwise falls back to complexity-based auto routing.
 pub async fn llm_reason(
     llm: &LlmRouter,
     role: AgentRole,
     context: &str,
     task: &str,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    // Role-specific tool augmentation.
+    let augmented_context = match role {
+        AgentRole::Researcher => {
+            let search = tools::tool_web_search(task).await;
+            if search.success {
+                tracing::info!(
+                    "researcher: {} provided {} B of context",
+                    search.tool,
+                    search.output.len()
+                );
+                format!(
+                    "{context}\n\n## Aktuelle Websuche-Ergebnisse ({})\n\n{}",
+                    search.tool, search.output
+                )
+            } else {
+                tracing::warn!(
+                    "researcher: web search failed or empty — context unchanged ({})",
+                    search.output.chars().take(80).collect::<String>()
+                );
+                context.to_string()
+            }
+        }
+        _ => context.to_string(),
+    };
+
     let messages = vec![
         ("system".to_string(), role.system_prompt().to_string()),
         (
             "user".to_string(),
-            format!("Kontext: {context}\n\nAufgabe: {task}"),
+            format!("Kontext: {augmented_context}\n\nAufgabe: {task}"),
         ),
     ];
     let preferred = qo_llm::LlmRouter::tier_from_hint(role.preferred_provider());

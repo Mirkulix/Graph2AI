@@ -424,6 +424,34 @@ fn cap_output(s: String) -> String {
     format!("{head}\n\n… [gekürzt — {} B insgesamt] …\n\n{tail}", s.len())
 }
 
+/// GET /api/tools/web_search?q=... — direct test endpoint for the
+/// Researcher's search path. Useful for sanity-checking whether Tavily
+/// is wired and fetching results before a full Goal flow is triggered.
+#[derive(Debug, Deserialize)]
+pub struct WebSearchQuery {
+    pub q: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WebSearchResponse {
+    pub query: String,
+    pub provider: String,
+    pub success: bool,
+    pub output: String,
+}
+
+pub async fn web_search(
+    Query(q): Query<WebSearchQuery>,
+) -> Json<WebSearchResponse> {
+    let result = qo_agents::tools::tool_web_search(&q.q).await;
+    Json(WebSearchResponse {
+        query: q.q,
+        provider: result.tool,
+        success: result.success,
+        output: result.output,
+    })
+}
+
 pub async fn tree(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<TreeResponse>, (StatusCode, String)> {
