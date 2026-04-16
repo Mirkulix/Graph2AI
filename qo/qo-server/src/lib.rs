@@ -303,6 +303,7 @@ pub async fn build_app(
             get(routes::consciousness::current_state),
         )
         .route("/api/agents", get(routes::agents::list_agents))
+        .route("/api/agents/models", get(routes::agents::list_agent_models))
         .route("/api/agents/{role}", get(routes::agents::get_agent))
         .route("/api/goals", get(routes::goals::list_goals))
         .route("/api/goals", post(routes::goals::create_goal))

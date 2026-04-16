@@ -1084,6 +1084,50 @@ a:hover {
     font-variant-numeric: tabular-nums;
 }
 
+.mission__roster-model {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-top: 4px;
+    padding: 2px 7px;
+    border-radius: 999px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 500;
+    background: var(--surface-sunken);
+    color: var(--text-muted);
+    width: fit-content;
+    max-width: 100%;
+}
+
+.mission__roster-model--active {
+    background: var(--ok-soft);
+    color: var(--ok);
+}
+
+.mission__roster-model--fallback {
+    background: var(--warn-soft);
+    color: var(--warn);
+}
+
+.mission__roster-model--auto {
+    background: var(--surface-sunken);
+    color: var(--text-dim);
+}
+
+.mission__roster-model-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+.mission__roster-model-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .mission__roster-ok {
     color: var(--ok);
     font-weight: 600;

@@ -47,6 +47,36 @@ impl AgentRole {
             AgentRole::Artisan => "Artisan",
         }
     }
+
+    /// Preferred LLM provider hint for this role.
+    ///
+    /// The router understands the strings `"ollama"`, `"groq"`, `"cloud"`,
+    /// plus the brand aliases `"anthropic"/"claude"/"openai"/"deepseek"/
+    /// "gemini"` (all → Cloud tier). When the preferred tier is not
+    /// configured at runtime, the router transparently falls back to
+    /// complexity-based auto-routing, so a missing API key never breaks
+    /// the orchestrator — it just uses whatever is available.
+    ///
+    /// The default bindings below reflect a cost/quality/latency balance
+    /// across the providers we ship:
+    ///   * CEO / Developer / Strategist / Artisan — hard reasoning or
+    ///     nuanced output → Cloud tier (DeepSeek V3 today; Claude Sonnet
+    ///     4.6 if configured via Anthropic key).
+    ///   * Researcher — Cloud for breadth (web-search tools land here
+    ///     later).
+    ///   * Guardian — pure value-check, kept on Groq (llama-3.3-70b) for
+    ///     sub-second latency and zero cost. Can be forced to Ollama for
+    ///     full-local deployments.
+    pub fn preferred_provider(&self) -> &'static str {
+        match self {
+            AgentRole::Ceo => "cloud",
+            AgentRole::Researcher => "cloud",
+            AgentRole::Developer => "cloud",
+            AgentRole::Guardian => "groq",
+            AgentRole::Strategist => "cloud",
+            AgentRole::Artisan => "cloud",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

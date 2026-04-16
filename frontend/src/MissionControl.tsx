@@ -56,6 +56,13 @@ interface AgentRow {
   tasks_failed: number
 }
 
+interface AgentModel {
+  role: string
+  preferred_tier: string
+  effective: string
+  model: string
+}
+
 type NodeStatus = 'idle' | 'active' | 'error'
 
 interface NodeData extends Record<string, unknown> {
@@ -170,22 +177,37 @@ function MissionControlInner() {
   const [eventCount, setEventCount] = useState(0)
   const [lastError, setLastError] = useState<string | null>(null)
   const [agents, setAgents] = useState<AgentRow[]>([])
+  const [agentModels, setAgentModels] = useState<Record<string, AgentModel>>({})
   const [demoBusy, setDemoBusy] = useState(false)
   const [demoToast, setDemoToast] = useState<string | null>(null)
 
   const pulseTimers = useRef<Map<string, number>>(new Map())
   const eventsInLastMin = useRef<number[]>([])
 
-  // ─── Agent roster poll ──────────────────────────────────────────────
+  // ─── Agent roster + model bindings poll ────────────────────────────
   useEffect(() => {
     let cancelled = false
     async function pull() {
       try {
-        const r = await fetch('/api/agents')
-        if (!r.ok) return
-        const body = await r.json()
-        if (!cancelled && Array.isArray(body.agents)) {
-          setAgents(body.agents as AgentRow[])
+        const [r1, r2] = await Promise.all([
+          fetch('/api/agents'),
+          fetch('/api/agents/models'),
+        ])
+        if (r1.ok) {
+          const body = await r1.json()
+          if (!cancelled && Array.isArray(body.agents)) {
+            setAgents(body.agents as AgentRow[])
+          }
+        }
+        if (r2.ok) {
+          const body = await r2.json()
+          if (!cancelled && Array.isArray(body.bindings)) {
+            const map: Record<string, AgentModel> = {}
+            for (const b of body.bindings as AgentModel[]) {
+              map[b.role.toLowerCase()] = b
+            }
+            setAgentModels(map)
+          }
         }
       } catch {
         /* ignore — roster is best-effort */
@@ -511,23 +533,46 @@ function MissionControlInner() {
                   AGENT_ORDER.indexOf(a.role.toLowerCase()) -
                   AGENT_ORDER.indexOf(b.role.toLowerCase()),
               )
-              .map((a) => (
-                <li key={a.role} className="mission__roster-item">
-                  <AgentStatusIcon status={a.status} />
-                  <div className="mission__roster-text">
-                    <div className="mission__roster-name">{a.role}</div>
-                    <div className="mission__roster-blurb">
-                      {AGENT_BLURB[a.role.toLowerCase()] ?? '—'}
+              .map((a) => {
+                const binding = agentModels[a.role.toLowerCase()]
+                return (
+                  <li key={a.role} className="mission__roster-item">
+                    <AgentStatusIcon status={a.status} />
+                    <div className="mission__roster-text">
+                      <div className="mission__roster-name">{a.role}</div>
+                      <div className="mission__roster-blurb">
+                        {AGENT_BLURB[a.role.toLowerCase()] ?? '—'}
+                      </div>
+                      {binding ? (
+                        <div
+                          className={
+                            'mission__roster-model mission__roster-model--' +
+                            binding.effective
+                          }
+                          title={`Tier: ${binding.preferred_tier} · ${
+                            binding.effective === 'active'
+                              ? 'konfiguriert'
+                              : binding.effective === 'fallback'
+                                ? 'fällt auf verfügbaren Provider zurück'
+                                : 'Auto-Routing'
+                          }`}
+                        >
+                          <span className="mission__roster-model-dot" />
+                          <span className="mission__roster-model-name">
+                            {binding.model}
+                          </span>
+                        </div>
+                      ) : null}
                     </div>
-                  </div>
-                  <div className="mission__roster-counts" title="fertig / fehlgeschlagen">
-                    <span className="mission__roster-ok">{a.tasks_completed}</span>
-                    {a.tasks_failed > 0 ? (
-                      <span className="mission__roster-fail"> / {a.tasks_failed}</span>
-                    ) : null}
-                  </div>
-                </li>
-              ))}
+                    <div className="mission__roster-counts" title="fertig / fehlgeschlagen">
+                      <span className="mission__roster-ok">{a.tasks_completed}</span>
+                      {a.tasks_failed > 0 ? (
+                        <span className="mission__roster-fail"> / {a.tasks_failed}</span>
+                      ) : null}
+                    </div>
+                  </li>
+                )
+              })}
           </ul>
         </div>
 

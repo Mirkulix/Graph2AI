@@ -63,7 +63,10 @@ fn execute_via_qlang(
     Ok((response, g, duration))
 }
 
-/// Fallback: Direct LLM call without QLANG executor
+/// Fallback: Direct LLM call routed through the agent's **preferred
+/// provider**. The router honours the hint when the tier is configured,
+/// otherwise falls back to complexity-based auto routing so a missing
+/// API key never breaks the orchestrator.
 pub async fn llm_reason(
     llm: &LlmRouter,
     role: AgentRole,
@@ -72,9 +75,20 @@ pub async fn llm_reason(
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let messages = vec![
         ("system".to_string(), role.system_prompt().to_string()),
-        ("user".to_string(), format!("Kontext: {context}\n\nAufgabe: {task}")),
+        (
+            "user".to_string(),
+            format!("Kontext: {context}\n\nAufgabe: {task}"),
+        ),
     ];
-    llm.chat(messages).await
+    let preferred = qo_llm::LlmRouter::tier_from_hint(role.preferred_provider());
+    let (body, tier) = llm.chat_preferring(preferred, messages).await?;
+    tracing::info!(
+        "agent {}: response from {:?} (preferred: {})",
+        role.name(),
+        tier,
+        role.preferred_provider()
+    );
+    Ok(body)
 }
 
 /// Execute agent task WITH tools — uses QLANG executor for LLM calls

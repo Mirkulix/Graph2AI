@@ -187,6 +187,105 @@ impl LlmRouter {
         }
     }
 
+    /// Return true if the requested tier is actually usable (has a
+    /// configured client). Used by per-agent model-binding so a
+    /// preferred-tier that is offline falls back to auto routing
+    /// instead of erroring.
+    pub fn tier_available(&self, tier: Tier) -> bool {
+        match tier {
+            Tier::Local => self.ollama.is_some(),
+            Tier::Groq => self.groq.is_some(),
+            Tier::Cloud => self.cloud.is_some(),
+        }
+    }
+
+    /// Translate a free-form provider hint (from `AgentRole::preferred_provider`)
+    /// into a [`Tier`]. Unknown or empty hints map to `None`.
+    pub fn tier_from_hint(hint: &str) -> Option<Tier> {
+        match hint.trim().to_lowercase().as_str() {
+            "ollama" | "local" => Some(Tier::Local),
+            "groq" => Some(Tier::Groq),
+            "cloud" | "deepseek" | "anthropic" | "claude" | "openai" | "gemini" => {
+                Some(Tier::Cloud)
+            }
+            _ => None,
+        }
+    }
+
+    /// Route the message through the preferred tier when possible, else
+    /// fall back to the complexity-based auto router. Returns the
+    /// response together with the tier that actually served it, so the
+    /// caller can expose it in the dashboard.
+    pub async fn chat_preferring(
+        &self,
+        preferred: Option<Tier>,
+        messages: Vec<(String, String)>,
+    ) -> Result<(String, Tier), Box<dyn Error + Send + Sync>> {
+        if let Some(tier) = preferred {
+            if self.tier_available(tier) {
+                tracing::debug!(?tier, "agent requested preferred tier");
+                let body = self.chat_on_tier(tier, messages).await?;
+                return Ok((body, tier));
+            }
+            tracing::warn!(
+                ?tier,
+                "preferred tier not configured — falling back to auto routing"
+            );
+        }
+        let prompt = {
+            // Compute before moving `messages` into `chat`.
+            let s = messages
+                .last()
+                .map(|(_, c)| c.as_str())
+                .unwrap_or_default();
+            self.select_tier(self.score_complexity(s))
+        };
+        let body = self.chat(messages).await?;
+        Ok((body, prompt))
+    }
+
+    /// Force a specific tier. Does NOT fall back — caller is expected
+    /// to check `tier_available` first (via [`chat_preferring`] which
+    /// does fall back).
+    async fn chat_on_tier(
+        &self,
+        tier: Tier,
+        messages: Vec<(String, String)>,
+    ) -> Result<String, Box<dyn Error + Send + Sync>> {
+        match tier {
+            Tier::Cloud => {
+                let cloud = self
+                    .cloud
+                    .as_ref()
+                    .ok_or("Cloud provider not configured")?;
+                let msgs: Vec<CloudMessage> = messages
+                    .into_iter()
+                    .map(|(role, content)| CloudMessage { role, content })
+                    .collect();
+                let start = Instant::now();
+                let result = cloud.chat(msgs).await?;
+                let elapsed = start.elapsed().as_millis() as u64;
+                let tokens = (result.len() / 4) as u64;
+                self.cost_tracker.cloud_requests.fetch_add(1, Ordering::Relaxed);
+                self.cost_tracker.cloud_tokens.fetch_add(tokens, Ordering::Relaxed);
+                self.cost_tracker
+                    .total_latency_cloud_ms
+                    .fetch_add(elapsed, Ordering::Relaxed);
+                Ok(result)
+            }
+            Tier::Groq => self.groq_chat(messages).await,
+            Tier::Local => {
+                let ollama = self
+                    .ollama
+                    .as_ref()
+                    .ok_or("Local (Ollama) provider not configured")?;
+                let response = ollama.chat(messages).await?;
+                self.cost_tracker.local_requests.fetch_add(1, Ordering::Relaxed);
+                Ok(response)
+            }
+        }
+    }
+
     /// Route the conversation to the appropriate tier.
     /// In Phase 1, Local falls back to Groq when no local model is available.
     pub async fn chat(
