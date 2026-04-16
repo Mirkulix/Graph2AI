@@ -15,6 +15,7 @@ import {
   Sparkles,
   Activity,
   Shield,
+  Search,
 } from 'lucide-react'
 import NeoShell from './neo/NeoShell'
 import ChatView from './ChatView'
@@ -36,12 +37,14 @@ import NeoAgents from './neo/NeoAgents'
 import KnowledgeGraph3DView from './KnowledgeGraph3DView'
 import MissionControl from './MissionControl'
 import ValuesRadar from './ValuesRadar'
+import GraphInspectorView from './GraphInspectorView'
 
-type Tab = 'neo' | 'mission' | 'werte' | 'chat' | 'goals' | 'agents' | 'consciousness' | 'provider' | 'evolution' | 'strategy' | 'graphs' | 'knowledge-3d' | 'messages' | 'training' | 'gpu-training' | 'spiking' | 'organism' | 'historie' | 'neo-agents'
+type Tab = 'neo' | 'mission' | 'werte' | 'inspector' | 'chat' | 'goals' | 'agents' | 'consciousness' | 'provider' | 'evolution' | 'strategy' | 'graphs' | 'knowledge-3d' | 'messages' | 'training' | 'gpu-training' | 'spiking' | 'organism' | 'historie' | 'neo-agents'
 
 const tabs: { id: Tab; label: string; icon: typeof MessageSquare }[] = [
   { id: 'neo', label: 'Neo', icon: Sparkles },
   { id: 'mission', label: 'Mission Control', icon: Activity },
+  { id: 'inspector', label: 'Inspector', icon: Search },
   { id: 'werte', label: 'Werte', icon: Shield },
   { id: 'chat', label: 'Chat', icon: MessageSquare },
   { id: 'goals', label: 'Ziele', icon: Target },
@@ -65,6 +68,7 @@ function renderView(tab: Tab, onNavigate: (tab: string) => void) {
   switch (tab) {
     case 'neo': return <NeoShell />
     case 'mission': return <MissionControl />
+    case 'inspector': return <GraphInspectorView />
     case 'werte': return <ValuesRadar />
     case 'chat': return <ChatView />
     case 'goals': return <GoalsView />
