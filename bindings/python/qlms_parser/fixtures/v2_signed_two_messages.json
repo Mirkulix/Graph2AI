@@ -1,0 +1,9 @@
+{
+  "expected_pubkey_hex": "ff6b2fe38d02fcea3989215fb469792fd22705a20330a7e4cb75b486b4acc46d",
+  "flags": 1,
+  "kind": "v2_signed",
+  "msg_count": 2,
+  "note": "v2 with two chained messages (Compress → Result)",
+  "seed_hex": "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f",
+  "version": 2
+}

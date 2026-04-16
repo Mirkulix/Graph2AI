@@ -1,0 +1,9 @@
+{
+  "expected_pubkey_hex": "e6c28ac77cc95fc77aa3db77be65b74addf8dc35b8ba44e5af32dc3636d21c0b",
+  "flags": 1,
+  "kind": "v2_signed",
+  "msg_count": 1,
+  "note": "v2 wire: [QLMS magic, u16 version, u16 flags, 64B sig, 32B pubkey, 32B payload_hash, u32 msg_count, JSON payload]",
+  "seed_hex": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a",
+  "version": 2
+}

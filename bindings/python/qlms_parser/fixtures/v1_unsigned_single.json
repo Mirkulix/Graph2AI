@@ -1,0 +1,5 @@
+{
+  "kind": "v1_unsigned",
+  "msg_count": 1,
+  "note": "v1 wire: [QLMS magic, u32 LE count, JSON payload]"
+}
