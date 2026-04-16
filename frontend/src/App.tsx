@@ -118,6 +118,11 @@ export default function App() {
   // next navigation. ChatView clears it via onPendingConsumed so it
   // does not re-fire if the user flips back to chat later.
   const [pendingPrompt, setPendingPrompt] = useState<string | null>(null)
+  // Whether the Home toggle "Als Ziel an den Schwarm senden" was on
+  // when the hero prompt was submitted. ChatView reads this once via
+  // pendingForceGoal and attaches force_intent: "goal" on the outgoing
+  // POST /api/chat body.
+  const [forceGoalPending, setForceGoalPending] = useState<boolean>(false)
 
   // theme persistence
   useEffect(() => {
@@ -238,11 +243,16 @@ export default function App() {
           tab={activeTab}
           setActiveTab={setActiveTab}
           pendingPrompt={pendingPrompt}
-          onAsk={(text) => {
+          pendingForceGoal={forceGoalPending}
+          onAsk={(text, forceGoal) => {
             setPendingPrompt(text)
+            setForceGoalPending(forceGoal ?? false)
             setActiveTab('chat')
           }}
-          onPendingConsumed={() => setPendingPrompt(null)}
+          onPendingConsumed={() => {
+            setPendingPrompt(null)
+            setForceGoalPending(false)
+          }}
         />
       </main>
     </div>
@@ -315,13 +325,15 @@ function View({
   tab,
   setActiveTab,
   pendingPrompt,
+  pendingForceGoal,
   onAsk,
   onPendingConsumed,
 }: {
   tab: Tab
   setActiveTab: (t: Tab) => void
   pendingPrompt: string | null
-  onAsk: (text: string) => void
+  pendingForceGoal: boolean
+  onAsk: (text: string, forceGoal?: boolean) => void
   onPendingConsumed: () => void
 }) {
   switch (tab) {
@@ -377,6 +389,7 @@ function View({
         <div className="view view--flush">
           <ChatView
             pendingPrompt={pendingPrompt}
+            pendingForceGoal={pendingForceGoal}
             onPendingConsumed={onPendingConsumed}
           />
         </div>

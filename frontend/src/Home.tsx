@@ -40,7 +40,7 @@ interface PeersResponse {
 
 interface HomeProps {
   onNavigate: (tab: string) => void
-  onAsk?: (prompt: string) => void
+  onAsk?: (prompt: string, forceGoal?: boolean) => void
 }
 
 const SUGGESTIONS = [
@@ -51,6 +51,7 @@ const SUGGESTIONS = [
 
 export default function Home({ onNavigate, onAsk }: HomeProps) {
   const [prompt, setPrompt] = useState('')
+  const [forceGoal, setForceGoal] = useState(false)
   const [values, setValues] = useState<ValuesResponse | null>(null)
   const [stats, setStats] = useState<FederationStats | null>(null)
   const [peers, setPeers] = useState<PeersResponse | null>(null)
@@ -93,7 +94,7 @@ export default function Home({ onNavigate, onAsk }: HomeProps) {
     const v = prompt.trim()
     if (!v) return
     if (onAsk) {
-      onAsk(v)
+      onAsk(v, forceGoal)
     } else {
       onNavigate('chat')
     }
@@ -147,6 +148,24 @@ export default function Home({ onNavigate, onAsk }: HomeProps) {
             Senden <ArrowRight size={14} />
           </button>
         </form>
+
+        <label
+          className={`home__toggle${forceGoal ? ' home__toggle--on' : ''}`}
+          title="Statt Single-LLM-Chat wird der CEO-Agent aktiviert und delegiert an mehrere Agenten."
+        >
+          <input
+            type="checkbox"
+            className="home__toggle-input"
+            checked={forceGoal}
+            onChange={(e) => setForceGoal(e.target.checked)}
+          />
+          <span className="home__toggle-track" aria-hidden="true">
+            <span className="home__toggle-thumb" />
+          </span>
+          <span className="home__toggle-label">
+            Als Ziel an den Schwarm senden (multi-agent)
+          </span>
+        </label>
 
         <div className="home__suggestions">
           {SUGGESTIONS.map((s) => (

@@ -113,12 +113,28 @@ fn looks_like_goal(msg: &str) -> bool {
 #[derive(Deserialize)]
 pub struct ChatRequest {
     pub message: String,
+    #[serde(default)]
+    pub force_intent: Option<String>, // "goal" or "chat" — overrides classifier
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
+pub struct DecisionTrace {
+    pub intent: String,
+    pub intent_confidence: f32,
+    pub intent_forced: bool,
+    pub path: String, // "single-llm" | "goal-orchestrator"
+    pub tier: Option<String>,
+    pub goal_id: Option<u64>,
+    pub tokens_estimated: u64,
+    pub duration_ms: u64,
+    pub tools_used: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct ChatResponse {
     pub response: String,
-    pub tier: String,
+    pub tier: Option<String>,
+    pub trace: Option<DecisionTrace>,
 }
 
 const SYSTEM_PROMPT: &str =
@@ -139,23 +155,45 @@ pub async fn chat(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ChatRequest>,
 ) -> Result<Json<ChatResponse>, (axum::http::StatusCode, String)> {
+    // Capture request start for duration_ms in the decision trace.
+    let request_started_at = std::time::Instant::now();
+
     // Classify intent using QO's QLANG-native model (Tier 0 — no LLM needed)
-    let (intent, intent_probs) = qo_agents::qlang_model::classify_intent_cached(&req.message);
+    let (classified_intent, intent_probs) =
+        qo_agents::qlang_model::classify_intent_cached(&req.message);
     tracing::info!(
         "QLANG model classified '{}' as {:?} (probs: {:?})",
         &req.message[..req.message.len().min(40)],
-        intent,
+        classified_intent,
         intent_probs.iter().map(|p| format!("{:.2}", p)).collect::<Vec<_>>()
     );
 
-    // Route based on QLANG model classification (replaces old string-matching heuristic)
-    let is_goal = intent == qo_agents::qlang_model::Intent::Goal;
+    // Apply force_intent override if present. "goal" forces goal-orchestrator,
+    // "chat" forces single-llm; any other value is ignored and falls through
+    // to the classifier's output.
+    let intent_forced = req.force_intent.is_some();
+    let effective_intent = match req.force_intent.as_deref() {
+        Some("goal") => qo_agents::qlang_model::Intent::Goal,
+        Some("chat") => qo_agents::qlang_model::Intent::Chat,
+        _ => classified_intent,
+    };
+
+    // Compute classifier confidence (max probability across the 4-element vec).
+    let intent_confidence = intent_probs
+        .iter()
+        .copied()
+        .fold(0.0f32, |acc, p| if p > acc { p } else { acc });
+
+    // Route based on effective intent (after any force_intent override).
+    let is_goal = effective_intent == qo_agents::qlang_model::Intent::Goal;
+    let mut trace_goal_id: Option<u64> = None;
     let goal_prefix = if is_goal {
         let goal_id = {
             let mut registry = state.agents.lock().await;
             let goal = registry.create_goal(req.message.clone());
             goal.id
         };
+        trace_goal_id = Some(goal_id);
 
         state.stream.publish_activity(
             format!("Chat-Ziel #{} erstellt und wird bearbeitet", goal_id),
@@ -362,9 +400,31 @@ pub async fn chat(
         }
     }
 
+    // Build the decision trace. `tools_used` stays empty here — the current
+    // QLANG executor does not surface per-tool invocations back to this
+    // handler, so tool attribution is a future enhancement. Callers can still
+    // observe the chosen path/tier/goal_id which covers the big routing
+    // decisions.
+    let tools_used: Vec<String> = Vec::new();
+    let tokens_estimated = (response.len() / 4) as u64;
+    let duration_ms = request_started_at.elapsed().as_millis() as u64;
+    let path = if is_goal { "goal-orchestrator" } else { "single-llm" };
+    let trace = DecisionTrace {
+        intent: format!("{:?}", effective_intent),
+        intent_confidence,
+        intent_forced,
+        path: path.to_string(),
+        tier: Some(provider_used.clone()),
+        goal_id: trace_goal_id,
+        tokens_estimated,
+        duration_ms,
+        tools_used,
+    };
+
     Ok(Json(ChatResponse {
         response,
-        tier: provider_used,
+        tier: Some(provider_used),
+        trace: Some(trace),
     }))
 }
 

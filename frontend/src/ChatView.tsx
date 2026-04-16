@@ -18,11 +18,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertCircle,
+  Clock,
+  Cpu,
   Download,
   ImageIcon,
   Paperclip,
   RefreshCw,
+  Route,
   Send,
+  Target,
   X,
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
@@ -42,6 +46,18 @@ interface Attachment {
   previewText?: string // for text attachments — first ~200 chars
 }
 
+interface DecisionTrace {
+  intent: string
+  intent_confidence: number
+  intent_forced: boolean
+  path: string
+  tier?: string
+  goal_id?: number
+  tokens_estimated: number
+  duration_ms: number
+  tools_used: string[]
+}
+
 interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
@@ -51,15 +67,18 @@ interface ChatMessage {
   error?: boolean
   originalText?: string
   attachments?: Attachment[]
+  trace?: DecisionTrace
 }
 
 interface ChatResponse {
   response: string
   tier?: string
+  trace?: DecisionTrace
 }
 
 interface ChatViewProps {
   pendingPrompt?: string | null
+  pendingForceGoal?: boolean
   onPendingConsumed?: () => void
 }
 
@@ -135,7 +154,7 @@ async function readAsText(file: File): Promise<string> {
 // ---------------------------------------------------------------------------
 
 export default function ChatView(props: ChatViewProps = {}) {
-  const { pendingPrompt, onPendingConsumed } = props
+  const { pendingPrompt, pendingForceGoal, onPendingConsumed } = props
 
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
@@ -144,6 +163,9 @@ export default function ChatView(props: ChatViewProps = {}) {
   const [healthError, setHealthError] = useState(false)
   const [visionWarning, setVisionWarning] = useState<string | null>(null)
   const [liveEvents, setLiveEvents] = useState<LiveEvent[]>([])
+  // Sticky-for-one-message toggle: when on, the next sendMessage call
+  // includes force_intent: "goal" and then resets to off.
+  const [forceGoalOnNext, setForceGoalOnNext] = useState<boolean>(false)
 
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -176,6 +198,8 @@ export default function ChatView(props: ChatViewProps = {}) {
               content: assistantText,
               tier: entry.tier as string | undefined,
               timestamp: ts,
+              // History entries may not carry a trace — handle undefined.
+              trace: (entry.trace as DecisionTrace | undefined) ?? undefined,
             })
           }
         }
@@ -236,9 +260,17 @@ export default function ChatView(props: ChatViewProps = {}) {
   // ─── Send ──────────────────────────────────────────────────────────
 
   const sendMessage = useCallback(
-    async (text?: string, explicitAttachments?: Attachment[]) => {
+    async (
+      text?: string,
+      explicitAttachments?: Attachment[],
+      explicitForceGoal?: boolean,
+    ) => {
       const msgText = (text ?? input).trim()
       const attached = explicitAttachments ?? attachments
+      // Callers pass explicitForceGoal when they already know the value
+      // (e.g. the pending-prompt effect from Home). Otherwise we read
+      // the sticky composer toggle and reset it right after.
+      const forceGoal = explicitForceGoal ?? forceGoalOnNext
       if ((!msgText && attached.length === 0) || loading) return
 
       const nowSec = Math.floor(Date.now() / 1000)
@@ -251,6 +283,10 @@ export default function ChatView(props: ChatViewProps = {}) {
       }
       if (!text) setInput('')
       if (!explicitAttachments) setAttachments([])
+      // Consume the composer toggle unless the caller supplied its own value.
+      if (explicitForceGoal === undefined && forceGoalOnNext) {
+        setForceGoalOnNext(false)
+      }
       setMessages((prev) => [...prev, userMsg])
       setLoading(true)
 
@@ -273,10 +309,14 @@ export default function ChatView(props: ChatViewProps = {}) {
       }
 
       try {
+        const body: { message: string; force_intent?: 'goal' | 'chat' } = {
+          message: payloadMessage,
+        }
+        if (forceGoal) body.force_intent = 'goal'
         const res = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: payloadMessage }),
+          body: JSON.stringify(body),
         })
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         const data = (await res.json()) as ChatResponse
@@ -286,6 +326,7 @@ export default function ChatView(props: ChatViewProps = {}) {
           content: data.response,
           tier: data.tier,
           timestamp: Math.floor(Date.now() / 1000),
+          trace: data.trace,
         }
         setMessages((prev) => [...prev, assistantMsg])
 
@@ -317,7 +358,7 @@ export default function ChatView(props: ChatViewProps = {}) {
         inputRef.current?.focus()
       }
     },
-    [attachments, input, loading],
+    [attachments, input, loading, forceGoalOnNext],
   )
 
   // ─── Pending prompt from Home ──────────────────────────────────────
@@ -327,7 +368,9 @@ export default function ChatView(props: ChatViewProps = {}) {
     const text = pendingPrompt.trim()
     if (!text) return
     pendingFiredRef.current = true
-    void sendMessage(text, [])
+    // Hand the Home toggle state down explicitly so it is not
+    // confused with the composer's sticky-for-one-message toggle.
+    void sendMessage(text, [], pendingForceGoal ?? false)
     onPendingConsumed?.()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingPrompt])
@@ -379,7 +422,7 @@ export default function ChatView(props: ChatViewProps = {}) {
 
   const retry = useCallback((originalText: string, errorMsgId: string) => {
     setMessages((prev) => prev.filter((m) => m.id !== errorMsgId))
-    void sendMessage(originalText, [])
+    void sendMessage(originalText, [], false)
   }, [sendMessage])
 
   const handleExport = useCallback(() => {
@@ -553,6 +596,18 @@ export default function ChatView(props: ChatViewProps = {}) {
           <Paperclip size={16} />
         </button>
 
+        <button
+          type="button"
+          className={`chat__composer-btn chat__composer-goal${forceGoalOnNext ? ' is-on' : ''}`}
+          onClick={() => setForceGoalOnNext((v) => !v)}
+          title="Multi-Agent-Orchestrator statt Single-LLM"
+          aria-label="Ziel-Modus"
+          aria-pressed={forceGoalOnNext}
+        >
+          <Target size={16} />
+          <span className="chat__composer-goal-label">Ziel</span>
+        </button>
+
         <textarea
           ref={inputRef}
           className="chat__composer-input"
@@ -650,6 +705,81 @@ function MessageRow({
           </span>
         ) : null}
       </div>
+
+      {!isUser && msg.trace ? <TraceRow trace={msg.trace} /> : null}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// DecisionTrace strip shown below an assistant bubble.
+// Compact, muted, mono tier/tool names, lucide icons.
+// ---------------------------------------------------------------------------
+
+function TraceRow({ trace }: { trace: DecisionTrace }) {
+  const isGoal = trace.path === 'goal-orchestrator'
+  const intentLabel =
+    trace.intent === 'Goal' ? 'Goal' :
+    trace.intent === 'Question' ? 'Frage' :
+    trace.intent === 'Command' ? 'Befehl' :
+    trace.intent === 'Chat' ? 'Chat' : trace.intent
+  const pathLabel = isGoal
+    ? 'CEO → Mehrere Agenten'
+    : 'Single-LLM'
+  const tokens = trace.tokens_estimated.toLocaleString('de-DE')
+  const durationSec = (trace.duration_ms / 1000).toFixed(1) + 's'
+
+  function openGoal() {
+    // TODO: wire real navigation — current shell already has a "goals"
+    // tab. Emit a custom event so App.tsx (or whoever) can intercept.
+    window.dispatchEvent(
+      new CustomEvent('qo:navigate', {
+        detail: { tab: 'goals', goalId: trace.goal_id },
+      }),
+    )
+  }
+
+  return (
+    <div className="chat__trace" role="note" aria-label="Decision-Trace">
+      <span
+        className={`chat__trace-badge${isGoal ? ' chat__trace-badge--goal' : ''}`}
+      >
+        {intentLabel}
+      </span>
+      <span className="chat__trace-item">
+        <Route size={11} />
+        <span className="chat__trace-mono">{pathLabel}</span>
+      </span>
+      {trace.tier ? (
+        <span className="chat__trace-item">
+          <Cpu size={11} />
+          <span className="chat__trace-mono">{trace.tier}</span>
+        </span>
+      ) : null}
+      <span className="chat__trace-item">
+        <span className="chat__trace-mono">{tokens} tok</span>
+      </span>
+      <span className="chat__trace-item">
+        <Clock size={11} />
+        <span className="chat__trace-mono">{durationSec}</span>
+      </span>
+      {trace.tools_used.length > 0 ? (
+        <span className="chat__trace-item">
+          <span className="chat__trace-mono">
+            {trace.tools_used.join(', ')}
+          </span>
+        </span>
+      ) : null}
+      {isGoal && typeof trace.goal_id === 'number' ? (
+        <button
+          type="button"
+          className="chat__trace-link"
+          onClick={openGoal}
+          title="Ziel in der Ziele-Ansicht öffnen"
+        >
+          Ziel #{trace.goal_id} ansehen
+        </button>
+      ) : null}
     </div>
   )
 }

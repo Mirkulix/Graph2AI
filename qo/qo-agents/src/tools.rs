@@ -28,6 +28,72 @@ pub fn tool_read_file(path: &str) -> ToolResult {
     }
 }
 
+/// Read a file from the sandboxed workspace directory. Agents call this
+/// when the user references `READ:rel/path.ext` in a task — it resolves
+/// the path under `<QO_DATA_DIR or "data">/workspace/` and enforces the
+/// same safety contract as the server's workspace route:
+///
+///   * absolute paths → refused
+///   * `..` traversal → refused
+///   * NUL byte       → refused
+///   * empty path     → refused
+///
+/// Tolerates a leading `workspace/` prefix (agents sometimes include it)
+/// the same way the server route does. Reads up to the first 6 KB of
+/// the file and returns it as-is — simple head-cap, no middle-strip.
+pub fn tool_read_workspace_file(rel_path: &str) -> ToolResult {
+    const LIMIT: usize = 6 * 1024;
+
+    // Path-safety gate — must mirror the server's workspace route.
+    if rel_path.is_empty()
+        || rel_path.contains("..")
+        || rel_path.starts_with('/')
+        || rel_path.starts_with('\\')
+        || rel_path.contains('\0')
+    {
+        return ToolResult {
+            tool: "read_workspace_file".into(),
+            success: false,
+            output: format!("Unzulässiger Pfad: '{rel_path}' (absolut, enthält .. oder NUL)"),
+        };
+    }
+
+    // Agents sometimes prepend `workspace/` — strip it to match the
+    // server's input tolerance.
+    let rel = rel_path
+        .strip_prefix("workspace/")
+        .or_else(|| rel_path.strip_prefix("workspace\\"))
+        .unwrap_or(rel_path);
+
+    let data_dir = std::env::var("QO_DATA_DIR").unwrap_or_else(|_| "data".to_string());
+    let full_path = std::path::Path::new(&data_dir).join("workspace").join(rel);
+
+    match std::fs::read_to_string(&full_path) {
+        Ok(content) => {
+            let output = if content.len() > LIMIT {
+                format!(
+                    "{}\n\n… [Datei gekürzt — {} B insgesamt, nur die ersten {} B gezeigt] …",
+                    &content[..LIMIT],
+                    content.len(),
+                    LIMIT
+                )
+            } else {
+                content
+            };
+            ToolResult {
+                tool: "read_workspace_file".into(),
+                success: true,
+                output,
+            }
+        }
+        Err(e) => ToolResult {
+            tool: "read_workspace_file".into(),
+            success: false,
+            output: format!("Konnte '{}' nicht lesen: {e}", full_path.display()),
+        },
+    }
+}
+
 /// List files in a directory
 pub fn tool_list_dir(path: &str) -> ToolResult {
     match std::fs::read_dir(path) {
