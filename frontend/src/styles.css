@@ -551,6 +551,172 @@ textarea.input { resize: none; min-height: 38px; }
   50% { opacity: 0.4; }
 }
 
+/* ─── Werte-Radar (Task 6.3) ────────────────────────── */
+
+.values-radar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 16px;
+  background: var(--card-bg, rgba(20, 24, 32, 0.6));
+  border: 1px solid var(--border-soft, rgba(255, 255, 255, 0.06));
+  border-radius: 14px;
+  width: fit-content;
+}
+
+.values-radar__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  align-self: stretch;
+  color: var(--text-primary, #e6e8ec);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.values-radar__header h2 {
+  font-size: 13px;
+  margin: 0;
+  flex: 1;
+}
+
+.values-radar__avg {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary, #a5a9b3);
+  font-weight: 500;
+  font-size: 12px;
+}
+
+.values-radar__svg {
+  display: block;
+}
+
+.values-radar__footer {
+  font-size: 11px;
+  color: var(--text-muted, #70757f);
+  font-variant-numeric: tabular-nums;
+}
+
+.values-radar__status--error {
+  color: var(--accent-error, #e8545d);
+}
+
+/* ─── Mission Control (Task 6.1) ─────────────────────── */
+
+.mission-control {
+  display: grid;
+  grid-template-columns: 1fr 300px;
+  gap: 20px;
+  padding: 16px;
+  height: 100%;
+  overflow: hidden;
+}
+
+.mission-control__graph {
+  position: relative;
+  background: var(--card-bg, rgba(20, 24, 32, 0.6));
+  border: 1px solid var(--border-soft, rgba(255, 255, 255, 0.06));
+  border-radius: 14px;
+  overflow: hidden;
+  min-height: 400px;
+}
+
+.mission-control__side {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+}
+
+.mission-control__header {
+  position: absolute;
+  top: 12px;
+  left: 16px;
+  right: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: rgba(20, 24, 32, 0.85);
+  backdrop-filter: blur(6px);
+  border-radius: 10px;
+  z-index: 2;
+  pointer-events: none;
+  color: var(--text-secondary, #a5a9b3);
+  font-size: 12px;
+}
+
+.mission-control__header h2 {
+  font-size: 13px;
+  margin: 0;
+  color: var(--text-primary, #e6e8ec);
+  flex: 1;
+}
+
+.mission-control__status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.mission-control__status-dot--live {
+  background: var(--accent-success, #16a87a);
+  box-shadow: 0 0 0 3px rgba(22, 168, 122, 0.22);
+}
+
+.mission-control__status-dot--idle {
+  background: var(--text-muted, #70757f);
+}
+
+.mission-control__status-dot--error {
+  background: var(--accent-error, #e8545d);
+  box-shadow: 0 0 0 3px rgba(232, 84, 93, 0.22);
+}
+
+.mission-control__empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted, #70757f);
+  font-size: 13px;
+  text-align: center;
+  padding: 0 24px;
+  pointer-events: none;
+}
+
+.qo-node {
+  border: 1.4px solid var(--border-soft, rgba(255, 255, 255, 0.06));
+  background: rgba(20, 24, 32, 0.88);
+  color: var(--text-primary, #e6e8ec);
+  border-radius: 10px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  min-width: 110px;
+  text-align: center;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+.qo-node--active {
+  border-color: var(--accent-sinn, #3b7de8);
+  box-shadow: 0 0 0 2px rgba(59, 125, 232, 0.25);
+  animation: qo-node-pulse 1.5s ease-in-out infinite;
+}
+
+.qo-node--error {
+  border-color: var(--accent-error, #e8545d);
+  box-shadow: 0 0 0 2px rgba(232, 84, 93, 0.22);
+}
+
+@keyframes qo-node-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(59, 125, 232, 0.25); }
+  50% { box-shadow: 0 0 0 6px rgba(59, 125, 232, 0.1); }
+}
+
 /* ─── Responsive ────────────────────────────────────── */
 
 @media (max-width: 768px) {
@@ -559,4 +725,6 @@ textarea.input { resize: none; min-height: 38px; }
   .sidebar-logo h1 { font-size: 14px; }
   .sidebar-footer span { display: none; }
   .view { padding: 12px; }
+  .mission-control { grid-template-columns: 1fr; }
+  .mission-control__side { display: none; }
 }
