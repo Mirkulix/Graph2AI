@@ -1,5 +1,10 @@
 # QLANG Status (12. April 2026)
 
+> **This file is the single source of truth for what works.**
+> If `README.md`, `docs/vault/*`, or any other document disagrees with the
+> tables below, this file wins. Update it whenever capabilities change —
+> never the other way around.
+
 ## Honesty Note
 All accuracies below are measured on REAL datasets:
 - MNIST full = 60,000 train / 10,000 test samples

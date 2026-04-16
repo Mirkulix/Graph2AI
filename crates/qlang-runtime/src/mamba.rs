@@ -1,5 +1,10 @@
 //! Mamba: Selective State Space Model for QLANG.
 //!
+//! **Status: experimental — BPE vocabulary is not persisted in `.qlmb`, so
+//! generation emits `<unk>`. The training loop in `mamba_train.rs` was
+//! aborted at step 50/10000 and has not been rerun to completion.**
+//! Tracked in `QLANG-STATUS.md` §"Was NICHT funktioniert".
+//!
 //! Based on "Mamba: Linear-Time Sequence Modeling with Selective State Spaces"
 //! (Gu & Dao, 2023) and "BitMamba" (2024) for 1.58-bit quantization.
 //!

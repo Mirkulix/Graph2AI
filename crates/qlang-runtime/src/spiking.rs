@@ -1,5 +1,9 @@
 //! Spiking Neural Network — bio-inspired neuromorphic computing.
 //!
+//! **Status: experimental — currently ~10% on MNIST (random).**
+//! The STDP loop does not learn; see `QLANG-STATUS.md` §"Was NICHT funktioniert".
+//! Do not use in production paths.
+//!
 //! Implements Leaky Integrate-and-Fire (LIF) neurons with Spike-Timing
 //! Dependent Plasticity (STDP) learning and ternary weights.
 //!

@@ -115,6 +115,9 @@ framework.
 All numbers below are measured on real datasets on the listed hardware.
 Source files are cited so claims can be reproduced.
 
+> The canonical status lives in [`QLANG-STATUS.md`](./QLANG-STATUS.md).
+> When that file and this README disagree, treat the status file as authoritative.
+
 ### Training (what works)
 
 | Method                         | Dataset       | Samples         | Result                    | Source                                    |

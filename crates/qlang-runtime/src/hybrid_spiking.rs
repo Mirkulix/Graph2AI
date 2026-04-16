@@ -1,5 +1,9 @@
 //! Hybrid Spiking Neural Network + MLP Classifier
 //!
+//! **Status: experimental — depends on `spiking.rs` whose STDP loop does not
+//! learn. The MLP readout is functional, but the full pipeline has not hit
+//! its claimed >90% MNIST target.** Tracked in `QLANG-STATUS.md`.
+//!
 //! Combines:
 //! - SNN spike generation (fixed STDP learning)
 //! - MLP readout layer (trainable with BPTT)

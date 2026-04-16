@@ -1,5 +1,9 @@
 //! Hebbian Learning for Ternary Weight Layers
 //!
+//! **Status: experimental — currently ~10% on MNIST (random).**
+//! The gradient-free update rule does not converge; see
+//! `QLANG-STATUS.md` §"Was NICHT funktioniert". Do not use in production paths.
+//!
 //! Ported from ParaDiffuse (Python/PyTorch) to Rust.
 //!
 //! Bio-inspired learning rule: "neurons that fire together wire together."
