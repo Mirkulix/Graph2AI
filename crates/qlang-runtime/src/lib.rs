@@ -59,6 +59,7 @@ pub mod ternary_ensemble;
 pub mod ternary_matrix;
 pub mod ternary_vote;
 pub mod federation;
+pub mod mcp_bridge;
 pub mod diffusion;
 pub mod hebbian;
 pub mod theorems;
