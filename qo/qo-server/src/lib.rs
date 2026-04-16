@@ -12,6 +12,10 @@ use qo_consciousness::{ConsciousnessState, ConsciousnessStream};
 use qo_evolution::{Pattern, PatternDetector, Proposal, ProposalEngine, QuantumState};
 use qo_llm::LlmRouter;
 use qo_memory::{GraphStore, MemoryContext, ObsidianBridge, Store};
+use qo_values::ValueScores;
+use tokio::sync::broadcast;
+
+use crate::routes::dashboard::GraphEvent;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -48,6 +52,13 @@ pub struct AppState {
     >,
     pub supervisor_daemon: Mutex<routes::supervisor::SupervisorDaemonState>,
     pub live_supervisor_sessions: Mutex<HashMap<u64, Arc<routes::supervisor::LiveSessionHandle>>>,
+    // --- Dashboard prerequisites (PRD Epic 6) ---
+    /// Current 5-Werte scores. Mutated by Guardian agent decisions, read
+    /// by `/api/values` for the frontend Werte-Radar (Task 6.3).
+    pub values: Mutex<ValueScores>,
+    /// Broadcast channel that fans out `GraphEvent`s to every
+    /// `/ws/graph-stream` WebSocket subscriber (Task 6.1 Mission Control).
+    pub graph_events_tx: broadcast::Sender<GraphEvent>,
 }
 
 pub struct QoConfig {
@@ -217,6 +228,11 @@ pub async fn build_app(
         real_evolution_daemon: Arc::new(Mutex::new(None)),
         supervisor_daemon: Mutex::new(routes::supervisor::SupervisorDaemonState::default()),
         live_supervisor_sessions: Mutex::new(HashMap::new()),
+        values: Mutex::new(ValueScores::default()),
+        // Channel capacity 256: plenty of headroom for a single-agent
+        // demo; subscribers that lag beyond this get a `Lagged` notice
+        // so they can show a "catching up" indicator.
+        graph_events_tx: broadcast::channel::<GraphEvent>(256).0,
     });
 
     // Register all QO agents on the message bus.
@@ -337,6 +353,12 @@ pub async fn build_app(
         // MCP ↔ QLMS bridge (spec §15.2 / PRD Task 2.2)
         .route("/qlms/v1.1/deliver", post(routes::mcp_qlms::deliver))
         .route("/qlms/v1.1/reply", post(routes::mcp_qlms::reply))
+        // Dashboard prerequisites (PRD Epic 6)
+        .route(
+            "/api/values",
+            get(routes::dashboard::get_values).post(routes::dashboard::update_values),
+        )
+        .route("/ws/graph-stream", get(routes::dashboard::graph_stream))
         .route("/api/evolution/start", post(routes::evolution_daemon::start))
         .route("/api/evolution/stop", post(routes::evolution_daemon::stop))
         .route("/api/evolution/status", get(routes::evolution_daemon::status))
