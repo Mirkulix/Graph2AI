@@ -364,7 +364,7 @@ function View({
       )
     case 'chat':
       return (
-        <div className="view">
+        <div className="view view--flush">
           <ChatView
             pendingPrompt={pendingPrompt}
             onPendingConsumed={onPendingConsumed}

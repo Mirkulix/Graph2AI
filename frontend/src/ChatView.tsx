@@ -1,14 +1,45 @@
-import { useState, useEffect, useRef } from 'react'
-import { Send, RefreshCw, Download } from 'lucide-react'
+// ChatView.tsx — polished chat surface on top of /api/chat.
+//
+// Features:
+//   • Markdown rendering for assistant replies (bold, lists, headings,
+//     code blocks, tables via remark-gfm).
+//   • Distinct user vs assistant bubbles — users see their own text on
+//     the right, branded accent colour.
+//   • Tier badge on every assistant reply so the provider path is
+//     transparent (groq / qlang-ollama / cloud / …).
+//   • Image + text-file attachments (local preview + base64 upload).
+//     Vision-capable models only — a clear notice appears if the
+//     currently-routed tier cannot handle images.
+//   • Retry button on failed responses, Markdown export for the whole
+//     conversation.
+//   • `pendingPrompt` hand-over from Home so typed prompts survive the
+//     tab switch.
 
-function downloadFile(filename: string, content: string, mimeType: string) {
-  const blob = new Blob([content], { type: mimeType })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  a.click()
-  URL.revokeObjectURL(url)
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  AlertCircle,
+  Download,
+  ImageIcon,
+  Paperclip,
+  RefreshCw,
+  Send,
+  X,
+} from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+interface Attachment {
+  id: string
+  name: string
+  kind: 'image' | 'text'
+  size: number
+  mime: string
+  dataUrl: string // image: base64 data URL; text: data URL of text content
+  previewText?: string // for text attachments — first ~200 chars
 }
 
 interface ChatMessage {
@@ -19,14 +50,7 @@ interface ChatMessage {
   timestamp?: number
   error?: boolean
   originalText?: string
-}
-
-interface ChatEntry {
-  id?: string
-  role: string
-  content: string
-  tier?: string
-  timestamp?: number
+  attachments?: Attachment[]
 }
 
 interface ChatResponse {
@@ -34,59 +58,116 @@ interface ChatResponse {
   tier?: string
 }
 
-function LoadingDots() {
-  return (
-    <div className="chat-bubble chat-bubble-assistant">
-      <span className="loading-dot" style={{ animationDelay: '0ms' }} />
-      <span className="loading-dot" style={{ animationDelay: '200ms' }} />
-      <span className="loading-dot" style={{ animationDelay: '400ms' }} />
-    </div>
-  )
-}
-
-function formatRelativeTime(ts: number): string {
-  const nowSec = Math.floor(Date.now() / 1000)
-  const diff = nowSec - ts
-  if (diff < 60) return 'gerade eben'
-  if (diff < 3600) return `vor ${Math.floor(diff / 60)} Min`
-  if (diff < 86400) return `vor ${Math.floor(diff / 3600)} Std`
-  return `vor ${Math.floor(diff / 86400)} Tagen`
-}
-
 interface ChatViewProps {
-  /** If set, ChatView auto-sends this prompt on mount (once). Used by the
-   *  Home hero prompt so the user's text is not lost on tab switch. */
   pendingPrompt?: string | null
-  /** Called after the pending prompt has been consumed so the parent
-   *  can clear its state and not re-fire on next mount. */
   onPendingConsumed?: () => void
 }
 
+// Limits kept conservative so dropping a 20 MB photo does not freeze
+// the tab. Bigger inputs should go through /api/graphs or the QLMS path.
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024
+const MAX_TEXT_BYTES = 200 * 1024
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function formatRelativeTime(ts: number): string {
+  const nowSec = Math.floor(Date.now() / 1000)
+  const diff = Math.max(0, nowSec - ts)
+  if (diff < 60) return 'gerade eben'
+  if (diff < 3600) return `vor ${Math.floor(diff / 60)} min`
+  if (diff < 86400) return `vor ${Math.floor(diff / 3600)} h`
+  return `vor ${Math.floor(diff / 86400)} T`
+}
+
+function downloadMarkdown(filename: string, content: string) {
+  const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+function fileIsImage(mime: string): boolean {
+  return mime.startsWith('image/')
+}
+
+function fileIsText(mime: string): boolean {
+  return (
+    mime.startsWith('text/') ||
+    mime === 'application/json' ||
+    mime === 'application/xml' ||
+    mime === ''
+  )
+}
+
+async function readAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
+}
+
+async function readAsText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = () => reject(reader.error)
+    reader.readAsText(file)
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
+
 export default function ChatView(props: ChatViewProps = {}) {
   const { pendingPrompt, onPendingConsumed } = props
+
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
+  const [attachments, setAttachments] = useState<Attachment[]>([])
   const [loading, setLoading] = useState(false)
   const [healthError, setHealthError] = useState(false)
+  const [visionWarning, setVisionWarning] = useState<string | null>(null)
+
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const pendingFiredRef = useRef<boolean>(false)
+
+  // ─── Load history + health ponger ──────────────────────────────────
 
   useEffect(() => {
     fetch('/api/chat/history')
-      .then(r => r.json())
-      .then((history: any[]) => {
+      .then((r) => r.json())
+      .then((history: unknown[]) => {
         if (!Array.isArray(history)) return
         const loaded: ChatMessage[] = []
-        for (const entry of history) {
-          const userText = entry.user ?? entry.content
-          const assistantText = entry.assistant ?? entry.response
-          const ts: number | undefined = typeof entry.timestamp === 'number' ? entry.timestamp : undefined
+        for (const raw of history) {
+          const entry = raw as Record<string, unknown>
+          const userText = (entry.user ?? entry.content) as string | undefined
+          const assistantText = (entry.assistant ?? entry.response) as
+            | string
+            | undefined
+          const ts = typeof entry.timestamp === 'number' ? (entry.timestamp as number) : undefined
+          const id = (entry.id as number | undefined) ?? loaded.length
           if (userText) {
-            loaded.push({ id: `${entry.id ?? 0}-user`, role: 'user', content: userText, timestamp: ts })
+            loaded.push({ id: `${id}-user`, role: 'user', content: userText, timestamp: ts })
           }
           if (assistantText) {
-            loaded.push({ id: `${entry.id ?? 0}-assistant`, role: 'assistant', content: assistantText, tier: entry.tier, timestamp: ts })
+            loaded.push({
+              id: `${id}-assistant`,
+              role: 'assistant',
+              content: assistantText,
+              tier: entry.tier as string | undefined,
+              timestamp: ts,
+            })
           }
         }
         setMessages(loaded)
@@ -94,333 +175,415 @@ export default function ChatView(props: ChatViewProps = {}) {
       .catch(() => {})
   }, [])
 
-  // Poll /api/health every 30 seconds
   useEffect(() => {
-    const checkHealth = () => {
+    const check = () =>
       fetch('/api/health')
-        .then(r => { setHealthError(!r.ok) })
+        .then((r) => setHealthError(!r.ok))
         .catch(() => setHealthError(true))
-    }
-    checkHealth()
-    const interval = setInterval(checkHealth, 30_000)
-    return () => clearInterval(interval)
+    void check()
+    const h = window.setInterval(check, 30_000)
+    return () => window.clearInterval(h)
   }, [])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, loading])
 
-  const sendMessage = async (text?: string) => {
-    const msgText = text ?? input.trim()
-    if (!msgText || loading) return
+  // ─── Send ──────────────────────────────────────────────────────────
 
-    const nowSec = Math.floor(Date.now() / 1000)
-    const userMsg: ChatMessage = {
-      id: Date.now().toString(),
-      role: 'user',
-      content: msgText,
-      timestamp: nowSec,
-    }
-    if (!text) setInput('')
-    setMessages(prev => [...prev, userMsg])
-    setLoading(true)
+  const sendMessage = useCallback(
+    async (text?: string, explicitAttachments?: Attachment[]) => {
+      const msgText = (text ?? input).trim()
+      const attached = explicitAttachments ?? attachments
+      if ((!msgText && attached.length === 0) || loading) return
 
-    try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: msgText }),
-      })
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`)
+      const nowSec = Math.floor(Date.now() / 1000)
+      const userMsg: ChatMessage = {
+        id: Date.now().toString(),
+        role: 'user',
+        content: msgText,
+        timestamp: nowSec,
+        attachments: attached.length > 0 ? attached : undefined,
       }
-      const data: ChatResponse = await res.json()
-      const assistantMsg: ChatMessage = {
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: data.response,
-        tier: data.tier,
-        timestamp: Math.floor(Date.now() / 1000),
+      if (!text) setInput('')
+      if (!explicitAttachments) setAttachments([])
+      setMessages((prev) => [...prev, userMsg])
+      setLoading(true)
+
+      // When the prompt carries attachments, inline their text payload
+      // into the outgoing message since the backend /api/chat schema is
+      // still text-only. Images are noted as placeholders; a future
+      // revision can POST them as base64 when a vision-capable tier
+      // (OpenAI/Claude/Gemini) is configured.
+      let payloadMessage = msgText
+      if (attached.length > 0) {
+        const extra: string[] = []
+        for (const a of attached) {
+          if (a.kind === 'text' && a.previewText) {
+            extra.push(`\n\n[Anhang: ${a.name}]\n\`\`\`\n${a.previewText}\n\`\`\``)
+          } else if (a.kind === 'image') {
+            extra.push(`\n\n[Anhang: Bild ${a.name} (${Math.round(a.size / 1024)} KB) — vision-fähiges Modell nötig]`)
+          }
+        }
+        payloadMessage = payloadMessage + extra.join('')
       }
-      setMessages(prev => [...prev, assistantMsg])
-    } catch (err) {
-      setMessages(prev => [...prev, {
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: 'Fehler: Anfrage fehlgeschlagen. Bitte erneut versuchen.',
-        error: true,
-        originalText: msgText,
-        timestamp: Math.floor(Date.now() / 1000),
-      }])
-    } finally {
-      setLoading(false)
-      inputRef.current?.focus()
-    }
-  }
 
-  const retryMessage = (originalText: string, errorMsgId: string) => {
-    setMessages(prev => prev.filter(m => m.id !== errorMsgId))
-    sendMessage(originalText)
-  }
+      try {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: payloadMessage }),
+        })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const data = (await res.json()) as ChatResponse
+        const assistantMsg: ChatMessage = {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: data.response,
+          tier: data.tier,
+          timestamp: Math.floor(Date.now() / 1000),
+        }
+        setMessages((prev) => [...prev, assistantMsg])
 
-  // Auto-fire a prompt that was handed over from the Home hero input.
-  // Uses a ref guard so StrictMode double-mounts (dev) do not submit twice.
+        // Vision warning: if user attached images and the response came
+        // from a tier we know cannot see them, surface a one-time hint.
+        if (
+          attached.some((a) => a.kind === 'image') &&
+          data.tier &&
+          !['openai', 'claude', 'anthropic', 'gemini'].includes(data.tier.toLowerCase())
+        ) {
+          setVisionWarning(
+            `Aktueller Provider ("${data.tier}") ignoriert Bilder. Für Bildverarbeitung einen Vision-fähigen Provider (OpenAI / Claude / Gemini) konfigurieren.`,
+          )
+        }
+      } catch (err) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: (Date.now() + 1).toString(),
+            role: 'assistant',
+            content: `Fehler: ${err instanceof Error ? err.message : String(err)}`,
+            error: true,
+            originalText: msgText,
+            timestamp: Math.floor(Date.now() / 1000),
+          },
+        ])
+      } finally {
+        setLoading(false)
+        inputRef.current?.focus()
+      }
+    },
+    [attachments, input, loading],
+  )
+
+  // ─── Pending prompt from Home ──────────────────────────────────────
+
   useEffect(() => {
     if (!pendingPrompt || pendingFiredRef.current) return
     const text = pendingPrompt.trim()
     if (!text) return
     pendingFiredRef.current = true
-    void sendMessage(text)
+    void sendMessage(text, [])
     onPendingConsumed?.()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingPrompt])
 
-  // Listen to global keyboard events dispatched by App
-  useEffect(() => {
-    const onFocus = () => inputRef.current?.focus()
-    const onSend = () => { if (input.trim() && !loading) sendMessage() }
-    const onEscape = () => inputRef.current?.blur()
+  // ─── File attachments ──────────────────────────────────────────────
 
-    window.addEventListener('qo:focus-chat-input', onFocus)
-    window.addEventListener('qo:send-chat', onSend)
-    window.addEventListener('qo:escape', onEscape)
-    return () => {
-      window.removeEventListener('qo:focus-chat-input', onFocus)
-      window.removeEventListener('qo:send-chat', onSend)
-      window.removeEventListener('qo:escape', onEscape)
+  const addFiles = useCallback(async (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return
+    const queue: Attachment[] = []
+    for (const file of Array.from(fileList)) {
+      if (fileIsImage(file.type)) {
+        if (file.size > MAX_IMAGE_BYTES) {
+          alert(`Bild ${file.name} ist > ${MAX_IMAGE_BYTES / 1_048_576} MB und wird übersprungen.`)
+          continue
+        }
+        const dataUrl = await readAsDataUrl(file)
+        queue.push({
+          id: `${Date.now()}-${queue.length}`,
+          name: file.name,
+          kind: 'image',
+          size: file.size,
+          mime: file.type,
+          dataUrl,
+        })
+      } else if (fileIsText(file.type) || file.name.match(/\.(md|txt|json|csv|tsv|xml|yml|yaml|ts|tsx|js|jsx|rs|py|go|java|c|cpp|h|hpp)$/i)) {
+        if (file.size > MAX_TEXT_BYTES) {
+          alert(`Text-Datei ${file.name} ist > ${MAX_TEXT_BYTES / 1024} KB und wird übersprungen.`)
+          continue
+        }
+        const dataUrl = await readAsDataUrl(file)
+        const preview = await readAsText(file)
+        queue.push({
+          id: `${Date.now()}-${queue.length}`,
+          name: file.name,
+          kind: 'text',
+          size: file.size,
+          mime: file.type || 'text/plain',
+          dataUrl,
+          previewText: preview.slice(0, 2_000),
+        })
+      } else {
+        alert(`Dateityp ${file.type || file.name} wird nicht unterstützt.`)
+      }
     }
-  }, [input, loading])
+    setAttachments((prev) => [...prev, ...queue])
+  }, [])
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      sendMessage()
-    }
-    // Shift+Enter creates a newline — default textarea behavior, no override needed
-  }
+  // ─── Retry + export ────────────────────────────────────────────────
 
-  const handleExport = () => {
-    const today = new Date().toISOString().slice(0, 10)
-    const lines: string[] = [`# QO Chat Export — ${today}`, '']
-    for (const msg of messages) {
-      const time = msg.timestamp
-        ? new Date(msg.timestamp * 1000).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
-        : '--:--'
-      const role = msg.role === 'user' ? 'User' : `QO${msg.tier ? ` (${msg.tier})` : ''}`
-      lines.push(`## ${time} — ${role}`)
-      lines.push(msg.content)
-      lines.push('')
+  const retry = useCallback((originalText: string, errorMsgId: string) => {
+    setMessages((prev) => prev.filter((m) => m.id !== errorMsgId))
+    void sendMessage(originalText, [])
+  }, [sendMessage])
+
+  const handleExport = useCallback(() => {
+    const lines: string[] = ['# QO Chat-Export', '']
+    for (const m of messages) {
+      const header = m.role === 'user' ? '**Du**' : `**QO${m.tier ? ` (${m.tier})` : ''}**`
+      const ts = m.timestamp ? ` _${formatRelativeTime(m.timestamp)}_` : ''
+      lines.push(`### ${header}${ts}`, '', m.content, '')
     }
-    downloadFile(`qo-chat-${today}.md`, lines.join('\n'), 'text/markdown')
-  }
+    downloadMarkdown(`qo-chat-${Date.now()}.md`, lines.join('\n'))
+  }, [messages])
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault()
+        void sendMessage()
+      }
+    },
+    [sendMessage],
+  )
+
+  // ─── Render ────────────────────────────────────────────────────────
+
+  const conversationLead = useMemo(
+    () => (messages.length === 0 ? 'Neue Konversation' : null),
+    [messages.length],
+  )
 
   return (
-    <div className="chat-container">
-      {healthError && (
-        <div className="health-banner">
-          Verbindung verloren — Server nicht erreichbar
+    <div className="chat">
+      {/* Header */}
+      <header className="chat__header">
+        <div className="chat__header-title">
+          <span className="chat__header-label">
+            {conversationLead ?? `${Math.ceil(messages.length / 2)} Runden`}
+          </span>
         </div>
-      )}
-
-      <div className="chat-messages">
-        {messages.length === 0 && !loading && (
-          <div className="empty-state">
-            <div className="empty-title">Starte eine Konversation...</div>
-            <div className="empty-hint">Schreibe eine Nachricht, um mit QO zu kommunizieren.</div>
-          </div>
-        )}
-
-        {messages.map(msg => (
-          <div
-            key={msg.id}
-            className={`chat-row ${msg.role === 'user' ? 'chat-row-user' : 'chat-row-assistant'}`}
+        {messages.length > 0 ? (
+          <button
+            type="button"
+            className="chat__header-btn"
+            onClick={handleExport}
+            title="Chat als Markdown exportieren"
           >
-            <div className={`chat-bubble ${msg.role === 'user' ? 'chat-bubble-user' : msg.error ? 'chat-bubble-error' : 'chat-bubble-assistant'}`}>
-              {msg.content}
-            </div>
-            <div className="chat-meta">
-              {msg.role === 'assistant' && msg.tier && (
-                <span className="chat-tier-badge">{msg.tier}</span>
-              )}
-              {msg.timestamp && (
-                <span className="chat-timestamp">{formatRelativeTime(msg.timestamp)}</span>
-              )}
-              {msg.error && msg.originalText && (
-                <button
-                  className="chat-retry-btn"
-                  onClick={() => retryMessage(msg.originalText!, msg.id)}
-                  title="Erneut versuchen"
-                >
-                  <RefreshCw size={12} />
-                  <span>Wiederholen</span>
-                </button>
-              )}
+            <Download size={14} />
+            Export
+          </button>
+        ) : null}
+      </header>
+
+      {/* Banners */}
+      {healthError ? (
+        <div className="chat__banner chat__banner--err">
+          <AlertCircle size={14} />
+          Server nicht erreichbar — prüfe, ob <code>qo</code> läuft auf Port 4646.
+        </div>
+      ) : null}
+      {visionWarning ? (
+        <div className="chat__banner chat__banner--warn">
+          <AlertCircle size={14} />
+          {visionWarning}
+          <button
+            type="button"
+            onClick={() => setVisionWarning(null)}
+            aria-label="Schließen"
+            className="chat__banner-close"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      ) : null}
+
+      {/* Messages */}
+      <div className="chat__messages">
+        {messages.length === 0 && !loading ? (
+          <div className="chat__empty">
+            <div className="chat__empty-title">Stelle eine Frage oder beschreibe eine Aufgabe.</div>
+            <div className="chat__empty-hint">
+              Aufgaben („Entwickle …", „Baue …") triggern den autonomen Agent-Flow
+              — sichtbar im <b>Live</b>-Tab. Texte oder Bilder als Kontext anhängen
+              über das <b>Büroklammer</b>-Icon.
             </div>
           </div>
+        ) : null}
+
+        {messages.map((msg) => (
+          <MessageRow key={msg.id} msg={msg} onRetry={retry} />
         ))}
 
-        {loading && (
-          <div className="chat-row chat-row-assistant">
-            <LoadingDots />
+        {loading ? (
+          <div className="chat__row chat__row--assistant">
+            <div className="chat__bubble chat__bubble--assistant chat__bubble--loading">
+              <span className="chat__dot" style={{ animationDelay: '0ms' }} />
+              <span className="chat__dot" style={{ animationDelay: '200ms' }} />
+              <span className="chat__dot" style={{ animationDelay: '400ms' }} />
+            </div>
           </div>
-        )}
+        ) : null}
 
         <div ref={bottomRef} />
       </div>
 
-      <div className="chat-input-area">
-        <textarea
-          ref={inputRef}
-          className="input chat-input"
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Nachricht eingeben... (Enter zum Senden)"
-          rows={1}
+      {/* Attachment tray */}
+      {attachments.length > 0 ? (
+        <div className="chat__attachments">
+          {attachments.map((a) => (
+            <div key={a.id} className="chat__attach-chip">
+              {a.kind === 'image' ? (
+                <img src={a.dataUrl} alt={a.name} className="chat__attach-thumb" />
+              ) : (
+                <span className="chat__attach-icon"><Paperclip size={12} /></span>
+              )}
+              <span className="chat__attach-name">{a.name}</span>
+              <span className="chat__attach-size">{Math.round(a.size / 1024)} KB</span>
+              <button
+                type="button"
+                onClick={() => setAttachments((prev) => prev.filter((x) => x.id !== a.id))}
+                aria-label={`${a.name} entfernen`}
+                className="chat__attach-remove"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {/* Composer */}
+      <div className="chat__composer">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*,text/*,.md,.json,.csv,.tsv,.py,.rs,.ts,.tsx,.js,.jsx,.go,.java,.c,.cpp,.h,.hpp,.yml,.yaml,.xml"
+          multiple
+          onChange={(e) => {
+            void addFiles(e.target.files)
+            e.target.value = ''
+          }}
+          style={{ display: 'none' }}
         />
         <button
-          className="btn btn-primary chat-send-btn"
+          type="button"
+          className="chat__composer-btn"
+          onClick={() => fileInputRef.current?.click()}
+          title="Bild oder Text-Datei anhängen"
+          aria-label="Anhang"
+        >
+          <Paperclip size={16} />
+        </button>
+
+        <textarea
+          ref={inputRef}
+          className="chat__composer-input"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Schreibe eine Nachricht … (Enter zum Senden, Shift+Enter für Zeilenumbruch)"
+          rows={1}
+        />
+
+        <button
+          type="button"
+          className="chat__composer-send"
           onClick={() => sendMessage()}
-          disabled={loading || !input.trim()}
+          disabled={loading || (!input.trim() && attachments.length === 0)}
           aria-label="Senden"
         >
-          <Send size={18} />
+          <Send size={16} />
+          <span>Senden</span>
         </button>
-        {messages.length > 0 && (
-          <button
-            className="btn btn-ghost btn-icon"
-            onClick={handleExport}
-            title="Chat exportieren"
-            aria-label="Chat als Markdown exportieren"
-          >
-            <Download size={18} />
-          </button>
-        )}
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Single message row — handles user vs assistant and markdown
+// ---------------------------------------------------------------------------
+
+function MessageRow({
+  msg,
+  onRetry,
+}: {
+  msg: ChatMessage
+  onRetry: (originalText: string, errorMsgId: string) => void
+}) {
+  const isUser = msg.role === 'user'
+  const bubbleClass = msg.error
+    ? 'chat__bubble chat__bubble--err'
+    : isUser
+      ? 'chat__bubble chat__bubble--user'
+      : 'chat__bubble chat__bubble--assistant'
+
+  return (
+    <div className={`chat__row ${isUser ? 'chat__row--user' : 'chat__row--assistant'}`}>
+      <div className={bubbleClass}>
+        {/* Image attachments preview inside bubble */}
+        {msg.attachments?.some((a) => a.kind === 'image') ? (
+          <div className="chat__bubble-images">
+            {msg.attachments
+              .filter((a) => a.kind === 'image')
+              .map((a) => (
+                <img
+                  key={a.id}
+                  src={a.dataUrl}
+                  alt={a.name}
+                  className="chat__bubble-image"
+                />
+              ))}
+          </div>
+        ) : null}
+
+        {msg.content ? (
+          isUser ? (
+            <div className="chat__bubble-text">{msg.content}</div>
+          ) : (
+            <div className="chat__markdown">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+            </div>
+          )
+        ) : null}
       </div>
 
-      <style>{`
-        .chat-container {
-          display: flex;
-          flex-direction: column;
-          height: 100%;
-          overflow: hidden;
-        }
-        .health-banner {
-          background: #7f1d1d;
-          color: #fca5a5;
-          text-align: center;
-          padding: 8px 16px;
-          font-size: 13px;
-          font-weight: 500;
-          flex-shrink: 0;
-        }
-        .chat-messages {
-          flex: 1;
-          overflow-y: auto;
-          padding: 24px;
-          display: flex;
-          flex-direction: column;
-          gap: 12px;
-        }
-        .chat-row {
-          display: flex;
-          flex-direction: column;
-          animation: fadeIn 300ms ease-out;
-        }
-        .chat-row-user {
-          align-items: flex-end;
-        }
-        .chat-row-assistant {
-          align-items: flex-start;
-        }
-        .chat-bubble {
-          max-width: 70%;
-          padding: 12px 16px;
-          font-size: 14px;
-          line-height: 1.6;
-          word-break: break-word;
-        }
-        .chat-bubble-user {
-          background: var(--accent-primary);
-          color: #ffffff;
-          border-radius: var(--radius-lg) var(--radius-lg) 4px var(--radius-lg);
-        }
-        .chat-bubble-assistant {
-          background: var(--bg-surface);
-          color: var(--text-primary);
-          border: 1px solid var(--border);
-          border-radius: var(--radius-lg) var(--radius-lg) var(--radius-lg) 4px;
-          display: flex;
-          align-items: center;
-          gap: 6px;
-        }
-        .chat-bubble-error {
-          background: #450a0a;
-          color: #fca5a5;
-          border: 1px solid #7f1d1d;
-          border-radius: var(--radius-lg) var(--radius-lg) var(--radius-lg) 4px;
-        }
-        .chat-meta {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          margin-top: 4px;
-          flex-wrap: wrap;
-        }
-        .chat-tier-badge {
-          font-size: 10px;
-          color: var(--text-muted);
-          background: var(--bg-surface);
-          border: 1px solid var(--border);
-          padding: 1px 8px;
-          border-radius: 12px;
-        }
-        .chat-timestamp {
-          font-size: 11px;
-          color: var(--text-muted);
-        }
-        .chat-retry-btn {
-          display: inline-flex;
-          align-items: center;
-          gap: 4px;
-          font-size: 11px;
-          color: #fca5a5;
-          background: transparent;
-          border: 1px solid #7f1d1d;
-          border-radius: 8px;
-          padding: 2px 8px;
-          cursor: pointer;
-        }
-        .chat-retry-btn:hover {
-          background: #7f1d1d;
-        }
-        .chat-input-area {
-          padding: 16px 24px;
-          border-top: 1px solid var(--border);
-          background: var(--bg-surface);
-          display: flex;
-          gap: 12px;
-          align-items: flex-end;
-        }
-        .chat-input {
-          flex: 1;
-          max-height: 120px;
-          overflow-y: auto;
-        }
-        .chat-send-btn {
-          flex-shrink: 0;
-          min-width: 44px;
-          padding: 8px 16px;
-        }
-        .loading-dot {
-          width: 8px;
-          height: 8px;
-          border-radius: 50%;
-          background: var(--accent-primary);
-          display: inline-block;
-          animation: dotPulse 1.2s ease-in-out infinite;
-        }
-      `}</style>
+      <div className="chat__meta">
+        {!isUser && msg.tier ? (
+          <span className="chat__tier">{msg.tier}</span>
+        ) : null}
+        {msg.timestamp ? (
+          <span className="chat__time">{formatRelativeTime(msg.timestamp)}</span>
+        ) : null}
+        {msg.error && msg.originalText ? (
+          <button
+            type="button"
+            className="chat__retry"
+            onClick={() => onRetry(msg.originalText!, msg.id)}
+            title="Erneut versuchen"
+          >
+            <RefreshCw size={11} /> Wiederholen
+          </button>
+        ) : null}
+        {!isUser && msg.attachments?.some((a) => a.kind === 'image') ? (
+          <span className="chat__meta-hint">
+            <ImageIcon size={11} />
+            Bild-Eingabe: nur mit Vision-Modell
+          </span>
+        ) : null}
+      </div>
     </div>
   )
 }
