@@ -108,25 +108,151 @@ pub fn tool_shell(cmd: &str) -> ToolResult {
     }
 }
 
-/// Search the web.
+/// Search the web across three sources, merging what's available:
 ///
-/// Uses the Tavily API when `TAVILY_API_KEY` is set (much better
-/// results — indexed web content with snippets). Falls back to
-/// DuckDuckGo's Instant Answer API when no key is available. Both
-/// paths return the same `ToolResult` shape so the caller never has
-/// to branch on provider.
+///   1. **Tavily** (when `TAVILY_API_KEY` is set) — indexed web content,
+///      current news, snippets with URLs. Best quality. Free tier: 1000
+///      searches/month.
+///   2. **Wikipedia** (always free, no key) — encyclopedic articles in
+///      the user's language + English. Great for factual grounding;
+///      complements Tavily's fresh-content strength.
+///   3. **DuckDuckGo Instant Answer** — last-resort fallback that only
+///      returns well-known Wikipedia-like topics. Kept because it
+///      works offline-ish (no auth, minimal rate limit).
+///
+/// The implementation runs Tavily and Wikipedia **in parallel** when
+/// Tavily is configured, then merges their outputs. If Tavily is
+/// absent, Wikipedia alone fills the gap — no single-source blind
+/// spot. DuckDuckGo only kicks in when both higher-quality sources
+/// return empty.
 pub async fn tool_web_search(query: &str) -> ToolResult {
-    if let Ok(key) = std::env::var("TAVILY_API_KEY") {
-        if !key.trim().is_empty() {
-            match tavily_search(&key, query).await {
-                Ok(result) => return result,
-                Err(e) => {
-                    tracing::warn!("Tavily failed: {e} — falling back to DuckDuckGo");
-                }
-            }
+    let tavily_key = std::env::var("TAVILY_API_KEY").ok().filter(|k| !k.trim().is_empty());
+
+    let (tavily_res, wiki_res) = if let Some(key) = &tavily_key {
+        let (a, b) = tokio::join!(tavily_search(key, query), wikipedia_search(query));
+        (Some(a), Some(b))
+    } else {
+        (None, Some(wikipedia_search(query).await))
+    };
+
+    let mut merged = Vec::new();
+    let mut sources = Vec::new();
+
+    if let Some(Ok(r)) = &tavily_res {
+        if r.success {
+            sources.push("Tavily");
+            merged.push(format!("### Websuche (Tavily)\n\n{}", r.output));
         }
     }
+    if let Some(Ok(r)) = &wiki_res {
+        if r.success {
+            sources.push("Wikipedia");
+            merged.push(format!("### Wikipedia\n\n{}", r.output));
+        }
+    }
+
+    if !merged.is_empty() {
+        return ToolResult {
+            tool: format!("web_search[{}]", sources.join("+")),
+            success: true,
+            output: merged.join("\n\n---\n\n"),
+        };
+    }
+
+    // Last resort — DuckDuckGo Instant Answer.
     duckduckgo_search(query).await
+}
+
+/// Wikipedia Search + Summary API. Queries the user's preferred
+/// language (env `WIKI_LANG`, default `de`) with an English fallback.
+/// No API key. Returns up to 3 articles with snippets.
+async fn wikipedia_search(query: &str) -> Result<ToolResult, Box<dyn std::error::Error + Send + Sync>> {
+    let primary_lang = std::env::var("WIKI_LANG").unwrap_or_else(|_| "de".to_string());
+    let langs = if primary_lang == "en" {
+        vec!["en"]
+    } else {
+        vec![primary_lang.as_str(), "en"]
+    };
+
+    let client = reqwest::Client::new();
+    let mut all_hits: Vec<(String, String, String)> = Vec::new(); // (title, snippet, url)
+
+    for lang in &langs {
+        let url = format!(
+            "https://{lang}.wikipedia.org/w/api.php?action=query&format=json&list=search&srsearch={}&srlimit=3&srprop=snippet",
+            urlencoding::encode(query)
+        );
+        let resp = match client
+            .get(&url)
+            .header("User-Agent", "QO/0.1 (qlang research agent)")
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        if !resp.status().is_success() {
+            continue;
+        }
+        let json: serde_json::Value = match resp.json().await {
+            Ok(j) => j,
+            Err(_) => continue,
+        };
+        if let Some(hits) = json
+            .get("query")
+            .and_then(|v| v.get("search"))
+            .and_then(|v| v.as_array())
+        {
+            for hit in hits.iter().take(3) {
+                let title = hit
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let snippet_html = hit
+                    .get("snippet")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let snippet = strip_html_tags(&snippet_html).trim().to_string();
+                if title.is_empty() {
+                    continue;
+                }
+                let url_out = format!(
+                    "https://{lang}.wikipedia.org/wiki/{}",
+                    urlencoding::encode(&title.replace(' ', "_"))
+                );
+                all_hits.push((title, snippet, url_out));
+            }
+        }
+        if !all_hits.is_empty() {
+            break; // primary language already found results
+        }
+    }
+
+    if all_hits.is_empty() {
+        return Ok(ToolResult {
+            tool: "web_search[wikipedia]".into(),
+            success: false,
+            output: format!("Wikipedia liefert keine Treffer für '{query}'."),
+        });
+    }
+
+    let mut parts = Vec::new();
+    for (title, snippet, url) in &all_hits {
+        parts.push(format!(
+            "**{title}**\n{snippet}\n({url})",
+            title = title,
+            snippet = if snippet.is_empty() { "_(kein Snippet)_" } else { snippet.as_str() },
+            url = url
+        ));
+    }
+    Ok(ToolResult {
+        tool: "web_search[wikipedia]".into(),
+        success: true,
+        output: parts.join("\n\n"),
+    })
 }
 
 async fn tavily_search(
