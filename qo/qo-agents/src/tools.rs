@@ -108,32 +108,47 @@ pub fn tool_shell(cmd: &str) -> ToolResult {
     }
 }
 
-/// Search the web across three sources, merging what's available:
+/// Search the web across several providers, merging whatever the
+/// operator has configured:
 ///
-///   1. **Tavily** (when `TAVILY_API_KEY` is set) — indexed web content,
-///      current news, snippets with URLs. Best quality. Free tier: 1000
-///      searches/month.
-///   2. **Wikipedia** (always free, no key) — encyclopedic articles in
-///      the user's language + English. Great for factual grounding;
-///      complements Tavily's fresh-content strength.
-///   3. **DuckDuckGo Instant Answer** — last-resort fallback that only
-///      returns well-known Wikipedia-like topics. Kept because it
-///      works offline-ish (no auth, minimal rate limit).
+///   1. **Tavily** (`TAVILY_API_KEY`) — indexed web content, current
+///      news, snippets with URLs. Free tier: 1000 searches/month.
+///   2. **SearXNG** (`SEARXNG_URL`) — self-hosted OSS meta-search
+///      (aggregates Google, Bing, DDG, Brave, …). Privacy-respecting,
+///      no key, free forever when you run it locally (docker image
+///      is 2-line setup: `docker run -p 8080:8080 searxng/searxng`).
+///   3. **Wikipedia** (always free, no key) — encyclopedic articles
+///      in the user's language + English. Great for factual grounding.
+///   4. **DuckDuckGo Instant Answer** — last-resort; only returns
+///      well-known Wikipedia-like topics, but works with zero setup.
 ///
-/// The implementation runs Tavily and Wikipedia **in parallel** when
-/// Tavily is configured, then merges their outputs. If Tavily is
-/// absent, Wikipedia alone fills the gap — no single-source blind
-/// spot. DuckDuckGo only kicks in when both higher-quality sources
-/// return empty.
+/// The implementation runs ALL configured providers **in parallel**
+/// (tokio::join) and merges their outputs into one markdown blob the
+/// LLM can read. If a provider errors or returns empty, it is simply
+/// skipped. This way the researcher never has a single point of
+/// failure — even without any API keys, Wikipedia + DDG still give it
+/// something to work with.
 pub async fn tool_web_search(query: &str) -> ToolResult {
     let tavily_key = std::env::var("TAVILY_API_KEY").ok().filter(|k| !k.trim().is_empty());
+    let searxng_url = std::env::var("SEARXNG_URL").ok().filter(|u| !u.trim().is_empty());
 
-    let (tavily_res, wiki_res) = if let Some(key) = &tavily_key {
-        let (a, b) = tokio::join!(tavily_search(key, query), wikipedia_search(query));
-        (Some(a), Some(b))
-    } else {
-        (None, Some(wikipedia_search(query).await))
+    // Kick off every configured provider in parallel.
+    let tavily_fut = async {
+        match &tavily_key {
+            Some(k) => Some(tavily_search(k, query).await),
+            None => None,
+        }
     };
+    let searxng_fut = async {
+        match &searxng_url {
+            Some(u) => Some(searxng_search(u, query).await),
+            None => None,
+        }
+    };
+    let wiki_fut = wikipedia_search(query);
+
+    let (tavily_res, searxng_res, wiki_res) =
+        tokio::join!(tavily_fut, searxng_fut, wiki_fut);
 
     let mut merged = Vec::new();
     let mut sources = Vec::new();
@@ -144,7 +159,13 @@ pub async fn tool_web_search(query: &str) -> ToolResult {
             merged.push(format!("### Websuche (Tavily)\n\n{}", r.output));
         }
     }
-    if let Some(Ok(r)) = &wiki_res {
+    if let Some(Ok(r)) = &searxng_res {
+        if r.success {
+            sources.push("SearXNG");
+            merged.push(format!("### Meta-Suche (SearXNG)\n\n{}", r.output));
+        }
+    }
+    if let Ok(r) = &wiki_res {
         if r.success {
             sources.push("Wikipedia");
             merged.push(format!("### Wikipedia\n\n{}", r.output));
@@ -161,6 +182,182 @@ pub async fn tool_web_search(query: &str) -> ToolResult {
 
     // Last resort — DuckDuckGo Instant Answer.
     duckduckgo_search(query).await
+}
+
+/// SearXNG is a self-hosted meta-search engine (MIT licensed,
+/// github.com/searxng/searxng). It aggregates results from Google,
+/// Bing, DuckDuckGo, Brave and dozens more — with zero per-query cost
+/// and zero tracking. Expects a JSON-enabled instance; set the env
+/// `SEARXNG_URL=http://localhost:8080` (or wherever the container
+/// runs). Query parameter `format=json` needs to be whitelisted in
+/// the instance's `settings.yml` (`formats: [html, json]`).
+async fn searxng_search(
+    base_url: &str,
+    query: &str,
+) -> Result<ToolResult, Box<dyn std::error::Error + Send + Sync>> {
+    let trimmed = base_url.trim_end_matches('/');
+    let url = format!("{trimmed}/search?q={}&format=json", urlencoding::encode(query));
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(&url)
+        .header("User-Agent", "QO/0.1 (qlang research agent)")
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        return Err(format!("SearXNG HTTP {}: check settings.yml formats list", resp.status()).into());
+    }
+    let json: serde_json::Value = resp.json().await?;
+    let mut parts = Vec::new();
+
+    // "infoboxes" — direct structured answers (Wikipedia-style cards)
+    if let Some(ibx) = json.get("infoboxes").and_then(|v| v.as_array()) {
+        for ib in ibx.iter().take(1) {
+            let title = ib.get("infobox").and_then(|v| v.as_str()).unwrap_or("");
+            let content = ib.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            if !content.is_empty() {
+                parts.push(format!("**{title}**\n{content}"));
+            }
+        }
+    }
+
+    // "results" — the ranked search hits
+    if let Some(results) = json.get("results").and_then(|v| v.as_array()) {
+        for r in results.iter().take(5) {
+            let title = r.get("title").and_then(|v| v.as_str()).unwrap_or("");
+            let content = r.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            let url_out = r.get("url").and_then(|v| v.as_str()).unwrap_or("");
+            if title.is_empty() {
+                continue;
+            }
+            let trimmed_content = &content[..content.len().min(220)];
+            parts.push(format!("- {title}\n  {trimmed_content}\n  ({url_out})"));
+        }
+    }
+
+    Ok(ToolResult {
+        tool: "web_search[searxng]".into(),
+        success: !parts.is_empty(),
+        output: if parts.is_empty() {
+            format!("SearXNG lieferte keine Treffer für '{query}'.")
+        } else {
+            parts.join("\n\n")
+        },
+    })
+}
+
+/// Read a URL and return its content as clean markdown — what an LLM
+/// actually wants to consume.
+///
+/// Provider chain:
+///   1. **Firecrawl** (`FIRECRAWL_API_KEY` for cloud *or* `FIRECRAWL_URL`
+///      for a self-hosted instance — mendableai/firecrawl is MIT on
+///      GitHub). Best quality: headless Chrome, ad/nav/footer removal,
+///      markdown with preserved structure.
+///   2. **Jina Reader** (always free, no key: `https://r.jina.ai/{url}`).
+///      Simple GET, returns plain text. Works on most sites.
+///
+/// Returns a short summary when the content is > 6 KB so the LLM does
+/// not drown in nav/footer noise.
+pub async fn tool_fetch_url(url: &str) -> ToolResult {
+    // 1. Firecrawl — cloud or self-hosted
+    let firecrawl_key = std::env::var("FIRECRAWL_API_KEY").ok().filter(|k| !k.trim().is_empty());
+    let firecrawl_host = std::env::var("FIRECRAWL_URL")
+        .ok()
+        .filter(|u| !u.trim().is_empty())
+        .unwrap_or_else(|| "https://api.firecrawl.dev".to_string());
+    if firecrawl_key.is_some() || firecrawl_host != "https://api.firecrawl.dev" {
+        match firecrawl_scrape(&firecrawl_host, firecrawl_key.as_deref(), url).await {
+            Ok(r) if r.success => return r,
+            Ok(_) => {}
+            Err(e) => tracing::warn!("Firecrawl failed: {e} — falling back to Jina Reader"),
+        }
+    }
+
+    // 2. Jina Reader — zero-setup fallback
+    match jina_reader(url).await {
+        Ok(r) => r,
+        Err(e) => ToolResult {
+            tool: "fetch_url".into(),
+            success: false,
+            output: format!("Fehler beim Abruf: {e}"),
+        },
+    }
+}
+
+async fn firecrawl_scrape(
+    host: &str,
+    api_key: Option<&str>,
+    target_url: &str,
+) -> Result<ToolResult, Box<dyn std::error::Error + Send + Sync>> {
+    let endpoint = format!("{}/v1/scrape", host.trim_end_matches('/'));
+    let body = serde_json::json!({
+        "url": target_url,
+        "formats": ["markdown"],
+        "onlyMainContent": true,
+    });
+    let client = reqwest::Client::new();
+    let mut req = client
+        .post(&endpoint)
+        .json(&body)
+        .timeout(std::time::Duration::from_secs(30));
+    if let Some(key) = api_key {
+        req = req.bearer_auth(key);
+    }
+    let resp = req.send().await?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("Firecrawl HTTP {status}: {text}").into());
+    }
+    let json: serde_json::Value = resp.json().await?;
+    let markdown = json
+        .get("data")
+        .and_then(|d| d.get("markdown"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    Ok(ToolResult {
+        tool: "fetch_url[firecrawl]".into(),
+        success: !markdown.is_empty(),
+        output: cap_reader_output(markdown),
+    })
+}
+
+async fn jina_reader(
+    target_url: &str,
+) -> Result<ToolResult, Box<dyn std::error::Error + Send + Sync>> {
+    let endpoint = format!("https://r.jina.ai/{target_url}");
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(&endpoint)
+        .header("User-Agent", "QO/0.1 (qlang research agent)")
+        .timeout(std::time::Duration::from_secs(30))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        return Err(format!("Jina Reader HTTP {}", resp.status()).into());
+    }
+    let body = resp.text().await?;
+    Ok(ToolResult {
+        tool: "fetch_url[jina-reader]".into(),
+        success: !body.is_empty(),
+        output: cap_reader_output(&body),
+    })
+}
+
+/// Keep a fetched page under a sane size so a text-heavy news article
+/// doesn't blow up the LLM context. Head + tail are preserved.
+fn cap_reader_output(s: &str) -> String {
+    const LIMIT: usize = 6 * 1024;
+    if s.len() <= LIMIT {
+        return s.to_string();
+    }
+    let head = &s[..LIMIT / 2];
+    let tail = &s[s.len() - LIMIT / 2..];
+    format!(
+        "{head}\n\n… [Dokument gekürzt — {} B insgesamt, Mittelteil entfernt] …\n\n{tail}",
+        s.len()
+    )
 }
 
 /// Wikipedia Search + Summary API. Queries the user's preferred

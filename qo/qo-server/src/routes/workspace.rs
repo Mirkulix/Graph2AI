@@ -452,6 +452,33 @@ pub async fn web_search(
     })
 }
 
+/// GET /api/tools/fetch_url?url=... — grab clean markdown from a page
+/// via Firecrawl (if configured) → Jina Reader (always free).
+#[derive(Debug, Deserialize)]
+pub struct FetchUrlQuery {
+    pub url: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FetchUrlResponse {
+    pub url: String,
+    pub provider: String,
+    pub success: bool,
+    pub content: String,
+}
+
+pub async fn fetch_url(
+    Query(q): Query<FetchUrlQuery>,
+) -> Json<FetchUrlResponse> {
+    let result = qo_agents::tools::tool_fetch_url(&q.url).await;
+    Json(FetchUrlResponse {
+        url: q.url,
+        provider: result.tool,
+        success: result.success,
+        content: result.output,
+    })
+}
+
 pub async fn tree(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<TreeResponse>, (StatusCode, String)> {

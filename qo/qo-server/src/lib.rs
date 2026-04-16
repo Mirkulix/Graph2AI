@@ -395,6 +395,7 @@ pub async fn build_app(
         .route("/api/tools/write_file", post(routes::workspace::write_file))
         .route("/api/tools/exec_file", post(routes::workspace::exec_file))
         .route("/api/tools/web_search", get(routes::workspace::web_search))
+        .route("/api/tools/fetch_url", get(routes::workspace::fetch_url))
         .route("/api/workspace/tree", get(routes::workspace::tree))
         .route(
             "/api/workspace/file",
