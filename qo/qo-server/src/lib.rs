@@ -242,7 +242,9 @@ pub async fn build_app(
     });
 
     // Register all QO agents on the message bus.
-    // Mailboxes are kept alive in background tasks that drain messages.
+    // Mailboxes are kept alive in background tasks that drain messages —
+    // and each received message is also fanned out to any dashboard
+    // subscriber via `graph_events_tx` (Mission Control live stream).
     {
         use qlang_agent::protocol::{AgentId, Capability};
         let agent_names = ["ceo", "researcher", "developer", "guardian", "strategist", "artisan"];
@@ -252,8 +254,8 @@ pub async fn build_app(
                 capabilities: vec![Capability::Execute],
             };
             let mut mailbox = message_bus.register(agent_id).await;
-            // Keep mailbox alive in a background task that logs received messages
             let agent_name = name.to_string();
+            let events_tx = state.graph_events_tx.clone();
             tokio::spawn(async move {
                 loop {
                     match mailbox.recv().await {
@@ -262,6 +264,23 @@ pub async fn build_app(
                                 "Agent '{}' received QLMS message from '{}' (intent: {:?})",
                                 agent_name, msg.from.name, msg.intent
                             );
+                            // Best-effort: a rough byte estimate is good enough for
+                            // the dashboard's edge-width animation.
+                            let size_bytes = serde_json::to_vec(&msg.graph)
+                                .map(|v| v.len() as u32)
+                                .unwrap_or(0);
+                            let intent_label = format!("{:?}", msg.intent)
+                                .split('{')
+                                .next()
+                                .unwrap_or("Unknown")
+                                .trim()
+                                .to_string();
+                            let _ = events_tx.send(routes::dashboard::GraphEvent::now(
+                                &msg.from.name,
+                                &agent_name,
+                                &intent_label,
+                                size_bytes,
+                            ));
                         }
                         None => break, // Channel closed
                     }

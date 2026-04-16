@@ -80,15 +80,31 @@ async fn run_evolution_cycle(state: &Arc<qo_server::AppState>) {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
-    // Load env vars from ~/.openclaw/.env if it exists
-    let env_path = dirs_home().join(".openclaw/.env");
-    if env_path.exists() {
-        for line in std::fs::read_to_string(&env_path)?.lines() {
-            if let Some((key, value)) = line.split_once('=') {
-                let key = key.trim();
-                let value = value.trim().trim_matches('"');
-                if !key.is_empty() && !key.starts_with('#') {
-                    std::env::set_var(key, value);
+    // Load env vars from (in order): project-root .env, ~/.openclaw/.env.
+    // Project-root .env wins (gitignored; preferred per-repo place for
+    // provider API keys). Both files are tolerated-missing.
+    for env_path in [
+        PathBuf::from(".env"),
+        dirs_home().join(".openclaw/.env"),
+    ] {
+        if !env_path.exists() {
+            continue;
+        }
+        tracing::info!("Loading env from {}", env_path.display());
+        if let Ok(contents) = std::fs::read_to_string(&env_path) {
+            for line in contents.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                if let Some((key, value)) = line.split_once('=') {
+                    let key = key.trim();
+                    let value = value.trim().trim_matches('"').trim_matches('\'');
+                    // Respect existing env: shell > file, so operators can
+                    // override on the command line without editing .env.
+                    if !key.is_empty() && std::env::var(key).is_err() {
+                        std::env::set_var(key, value);
+                    }
                 }
             }
         }
