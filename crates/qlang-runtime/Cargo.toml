@@ -10,6 +10,9 @@ gpu = ["wgpu", "pollster"]
 cuda = ["tch"]
 mlx = ["mlx-rs"]
 tls = ["rustls", "webpki-roots"]
+# Experimental ML modules that do not yet reach useful accuracy on real data
+# (see QLANG-STATUS.md). Opt-in only; the default build excludes them.
+experimental-ml = []
 
 [dependencies]
 qlang-core = { workspace = true }

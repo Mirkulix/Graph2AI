@@ -64,6 +64,12 @@ qlang bench model.qlbg
 - CLI Training mit 60K Samples (zu langsam, braucht Batch-Parallelisierung)
 - Forward-Forward auf CIFAR-10 (nicht getestet, wahrscheinlich ~35%)
 
+> Experimentelle ML-Module sind standardmäßig deaktiviert. Aktivieren mit
+> `--features experimental-ml` (betroffen: `spiking`, `hebbian`,
+> `hybrid_spiking`, `mamba` / `mamba_train`, `cifar10` / `cifar10_features`,
+> `vision_transformer` sowie davon abhängige `qlang_lm`, `gpu_mamba`,
+> `gpu_train`, `candle_train`, `lm_export`, `organism`).
+
 ## Offene Fragen
 
 1. Skaliert TernaryBrain ueber MNIST/CIFAR-10 hinaus?
