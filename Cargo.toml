@@ -113,56 +113,12 @@ name = "hello_qlang"
 path = "examples/hello_qlang.rs"
 
 [[example]]
-name = "neural_network"
-path = "examples/neural_network.rs"
-
-[[example]]
 name = "jit_compile"
 path = "examples/jit_compile.rs"
 
 [[example]]
-name = "benchmark"
-path = "examples/benchmark.rs"
-
-[[example]]
-name = "quantum_training"
-path = "examples/quantum_training.rs"
-
-[[example]]
-name = "train_model"
-path = "examples/train_model.rs"
-
-[[example]]
-name = "train_autograd"
-path = "examples/train_autograd.rs"
-
-[[example]]
 name = "train_mnist"
 path = "examples/train_mnist.rs"
-
-[[example]]
-name = "transformer"
-path = "examples/transformer.rs"
-
-[[example]]
-name = "full_pipeline"
-path = "examples/full_pipeline.rs"
-
-[[example]]
-name = "full_mnist_pipeline"
-path = "examples/full_mnist_pipeline.rs"
-
-[[example]]
-name = "onnx_import_compress"
-path = "examples/onnx_import_compress.rs"
-
-[[example]]
-name = "benchmark_qlang_vs_json"
-path = "examples/benchmark_qlang_vs_json.rs"
-
-[[example]]
-name = "benchmark_binary_format"
-path = "examples/benchmark_binary_format.rs"
 
 [[example]]
 name = "hybrid_llm_router"

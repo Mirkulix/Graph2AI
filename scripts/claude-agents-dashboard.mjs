@@ -9,7 +9,7 @@ import { chromium } from 'playwright';
 import { readFileSync, readdirSync, statSync, existsSync } from 'fs';
 import { join } from 'path';
 
-const PROJECT_DIR = '/home/mirkulix/.claude/projects/-home-mirkulix-AI-neoqlang-qlang';
+const PROJECT_DIR = '${NEO_TRANSCRIPT_ROOT:-$HOME/.claude/projects}';
 
 function findSubagentsDir() {
   if (!existsSync(PROJECT_DIR)) return null;
@@ -58,15 +58,15 @@ function parseAgent(dir, metaFile) {
             totalTools++;
             const input = block.input || {};
             let summary = '';
-            if (name === 'Read') summary = input.file_path?.replace('/home/mirkulix/AI/neoqlang/qlang/', '') || '';
-            else if (name === 'Edit') { summary = (input.file_path?.replace('/home/mirkulix/AI/neoqlang/qlang/', '') || '') + ' (edit)'; filesWritten.add(summary.replace(' (edit)','')); }
-            else if (name === 'Write') { summary = (input.file_path?.replace('/home/mirkulix/AI/neoqlang/qlang/', '') || '') + ' (write)'; filesWritten.add(summary.replace(' (write)','')); }
+            if (name === 'Read') summary = input.file_path?.replace('${REPO_ROOT:-.}/', '') || '';
+            else if (name === 'Edit') { summary = (input.file_path?.replace('${REPO_ROOT:-.}/', '') || '') + ' (edit)'; filesWritten.add(summary.replace(' (edit)','')); }
+            else if (name === 'Write') { summary = (input.file_path?.replace('${REPO_ROOT:-.}/', '') || '') + ' (write)'; filesWritten.add(summary.replace(' (write)','')); }
             else if (name === 'Bash') summary = (input.command || '').substring(0, 80);
             else if (name === 'Grep') summary = `"${input.pattern}" in ${input.path || '.'}`;
             else if (name === 'Glob') summary = input.pattern || '';
             else summary = JSON.stringify(input).substring(0, 80);
 
-            if (name === 'Read' && input.file_path) filesRead.add(input.file_path.replace('/home/mirkulix/AI/neoqlang/qlang/', ''));
+            if (name === 'Read' && input.file_path) filesRead.add(input.file_path.replace('${REPO_ROOT:-.}/', ''));
 
             interactions.push({ type: 'tool', role, name, summary });
           }

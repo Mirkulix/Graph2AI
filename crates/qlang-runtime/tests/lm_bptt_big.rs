@@ -5,8 +5,7 @@ use std::time::Instant;
 
 #[test]
 fn lm_bptt_big() {
-    let paths = ["data/wikitext2/train.txt", "../data/wikitext2/train.txt",
-        "/home/mirkulix/neoqlang/qlang/data/wikitext2/train.txt"];
+    let paths = ["data/wikitext2/train.txt", "../data/wikitext2/train.txt"];
     let text = paths.iter().find_map(|p| std::fs::read_to_string(p).ok())
         .unwrap_or_else(|| String::new());
     if text.is_empty() { println!("WikiText-2 not found"); return; }

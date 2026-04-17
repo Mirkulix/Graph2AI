@@ -16,7 +16,6 @@ fn cifar10_resnet_ternary() {
     let paths = [
         "data/cifar10",
         "../data/cifar10",
-        "/home/mirkulix/neoqlang/qlang/data/cifar10",
     ];
     let mut data = None;
     for p in &paths { if let Ok(d) = Cifar10Data::load(p) { data = Some(d); break; } }

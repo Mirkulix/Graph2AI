@@ -7,7 +7,7 @@
 import { readFileSync } from 'fs';
 import http from 'http';
 
-const QLANG_FILE = '/home/mirkulix/AI/neoqlang/qlang/data/session_2026_04_11.qlang';
+const QLANG_FILE = '${REPO_ROOT:-.}/data/session_2026_04_11.qlang';
 const QO_HOST = 'localhost';
 const QO_PORT = 4646;
 

@@ -131,7 +131,7 @@ fn run_training(
     // Load data
     let data = if dataset == "mnist" {
         // Try multiple paths
-        let paths = ["data/mnist", "../data/mnist", "/home/mirkulix/neoqlang/qlang/data/mnist"];
+        let paths = ["data/mnist", "../data/mnist"];
         let mut loaded = None;
         for p in &paths {
             if let Ok(d) = MnistData::load_from_dir(p) {

@@ -16,8 +16,20 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::AppState;
 
-const NEO_TRANSCRIPT_ROOT: &str =
-    "/home/mirkulix/.claude/projects/-home-mirkulix-AI-neoqlang-qlang";
+/// Directory that holds Claude Code subagent transcripts.  Override with the
+/// `NEO_TRANSCRIPT_ROOT` env var; defaults to `$HOME/.claude/projects/<cwd>`.
+fn neo_transcript_root() -> PathBuf {
+    if let Ok(explicit) = std::env::var("NEO_TRANSCRIPT_ROOT") {
+        return PathBuf::from(explicit);
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    // Claude Code slugifies the project path by replacing `/` with `-`.
+    let cwd_slug = std::env::current_dir()
+        .ok()
+        .and_then(|p| p.to_str().map(|s| s.replace('/', "-")))
+        .unwrap_or_default();
+    PathBuf::from(format!("{home}/.claude/projects/{cwd_slug}"))
+}
 
 #[derive(Serialize, Default)]
 pub struct GpuInfo {
@@ -409,7 +421,8 @@ fn parse_agent_summary(jsonl: &Path, session_id: &str) -> Option<AgentSummary> {
 
 fn scan_all_agents() -> Vec<AgentSummary> {
     let mut out = Vec::new();
-    let root = Path::new(NEO_TRANSCRIPT_ROOT);
+    let root = neo_transcript_root();
+    let root = root.as_path();
     let sessions = match std::fs::read_dir(root) {
         Ok(r) => r,
         Err(_) => return out,
@@ -445,7 +458,8 @@ pub async fn list_agents() -> Json<Vec<AgentSummary>> {
 }
 
 fn find_agent_jsonl(agent_id: &str) -> Option<(PathBuf, String)> {
-    let root = Path::new(NEO_TRANSCRIPT_ROOT);
+    let root = neo_transcript_root();
+    let root = root.as_path();
     for session in std::fs::read_dir(root).ok()?.flatten() {
         let sp = session.path();
         if !sp.is_dir() {

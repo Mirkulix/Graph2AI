@@ -13,7 +13,6 @@ fn cifar10_with_features() {
     let paths = [
         "data/cifar10",
         "../data/cifar10",
-        "/home/mirkulix/neoqlang/qlang/data/cifar10",
     ];
 
     let mut data = None;

@@ -18,10 +18,10 @@
 
 set -u
 
-cd /home/mirkulix/AI/neoqlang/qlang
+cd ${REPO_ROOT:-.}
 
 TORCH_LIB=$(python3 -c "import torch,os; print(os.path.join(os.path.dirname(torch.__file__),'lib'))" 2>/dev/null || echo "")
-CUDA_LIBS="/home/mirkulix/.local/lib/python3.14/site-packages/nvidia/cu13/lib"
+CUDA_LIBS="${CUDA_LIBS:-}"
 
 PORTS=(4646 4747 4848)
 NODES=(a b c)

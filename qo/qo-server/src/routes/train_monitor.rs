@@ -29,11 +29,7 @@ pub struct EpochData {
 
 /// GET /api/training/monitor — live training progress from log file.
 pub async fn monitor(State(_state): State<Arc<AppState>>) -> Json<TrainMonitorData> {
-    let log_paths = [
-        "data/training-90pct.log",
-        "../data/training-90pct.log",
-        "/home/mirkulix/neoqlang/qlang/data/training-90pct.log",
-    ];
+    let log_paths = ["data/training-90pct.log", "../data/training-90pct.log"];
 
     let mut log_content = String::new();
     for path in &log_paths {

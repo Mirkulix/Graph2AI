@@ -11,7 +11,6 @@ fn main() {
     let paths = [
         "data/mnist",
         "../data/mnist",
-        "/home/mirkulix/AI/neoqlang/qlang/data/mnist",
     ];
     let data = paths
         .iter()

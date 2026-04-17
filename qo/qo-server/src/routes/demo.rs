@@ -60,7 +60,7 @@ pub async fn start_mnist_igqk_demo(
         // === Phase 1: Load MNIST ===
         send_event("loading", DemoEvent::Loading { progress: 0.0, message: "Lade MNIST...".into() });
 
-        let paths = ["data/mnist", "../data/mnist", "/home/mirkulix/AI/neoqlang/qlang/data/mnist"];
+        let paths = ["data/mnist", "../data/mnist"];
         let data = paths.iter().filter_map(|p| qlang_runtime::mnist::MnistData::load_from_dir(p).ok()).next();
         let data = match data {
             Some(d) => d,

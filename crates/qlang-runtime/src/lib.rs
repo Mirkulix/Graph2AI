@@ -37,9 +37,6 @@ pub mod cifar10;
 #[cfg(feature = "experimental-ml")]
 pub mod cifar10_features;
 pub mod fisher;
-pub mod random_conv_features;
-#[cfg(feature = "experimental-ml")]
-pub mod vision_transformer;
 pub mod forward_forward;
 pub mod forward_forward_gpu;
 // `candle_train` / `gpu_train` consume `mamba_train` + `qlang_lm` types,
@@ -81,8 +78,6 @@ pub mod ternary_vote;
 pub mod federation;
 pub mod mcp_bridge;
 pub mod diffusion;
-#[cfg(feature = "experimental-ml")]
-pub mod hebbian;
 pub mod theorems;
 pub mod igqk;
 pub mod igqk_compress;

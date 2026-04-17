@@ -46,8 +46,7 @@ fn build_vocab(texts: &[String], max_vocab: usize) -> HashMap<String, usize> {
 }
 
 fn load_ag_news() -> Option<(Vec<String>, Vec<u8>)> {
-    let paths = ["data/agnews/train.csv", "../data/agnews/train.csv",
-        "/home/mirkulix/neoqlang/qlang/data/agnews/train.csv"];
+    let paths = ["data/agnews/train.csv", "../data/agnews/train.csv"];
     for p in &paths {
         if let Ok(content) = std::fs::read_to_string(p) {
             let mut texts = Vec::new();

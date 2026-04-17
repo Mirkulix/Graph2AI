@@ -828,8 +828,7 @@ mod tests {
 
     #[test]
     fn gpu_train_cpu_test() {
-        let paths = ["data/wikitext2/train.txt", "../data/wikitext2/train.txt",
-            "/home/mirkulix/neoqlang/qlang/data/wikitext2/train.txt"];
+        let paths = ["data/wikitext2/train.txt", "../data/wikitext2/train.txt"];
 
         let mut found = false;
         for p in &paths {

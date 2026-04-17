@@ -130,14 +130,12 @@ pub async fn start_gpu_training(
         resolve_path(&[
             "data/mnist/train-images-idx3-ubyte",
             "../data/mnist/train-images-idx3-ubyte",
-            "/home/mirkulix/AI/neoqlang/qlang/data/mnist/train-images-idx3-ubyte",
         ])
         .unwrap_or_else(|| "data/mnist".into())
     } else {
         resolve_path(&[
             "data/wikitext2/train.txt",
             "../data/wikitext2/train.txt",
-            "/home/mirkulix/AI/neoqlang/qlang/data/wikitext2/train.txt",
         ])
         .unwrap_or_else(|| "data/wikitext2/train.txt".into())
     };

@@ -26,7 +26,6 @@ impl ResNetExtractor {
         let weights_paths = [
             "data/resnet18_pytorch.safetensors",
             "../data/resnet18_pytorch.safetensors",
-            "/home/mirkulix/neoqlang/qlang/data/resnet18_pytorch.safetensors",
         ];
 
         let weights_path = weights_paths.iter()

@@ -7,7 +7,6 @@ fn load_wikitext2() -> Option<String> {
     let paths = [
         "data/wikitext2/train.txt",
         "../data/wikitext2/train.txt",
-        "/home/mirkulix/neoqlang/qlang/data/wikitext2/train.txt",
     ];
     for p in &paths {
         if let Ok(text) = std::fs::read_to_string(p) { return Some(text); }

@@ -56,19 +56,15 @@ fn build_classifier_graph(input_dim: usize, hidden_dim: usize, n_classes: usize)
 fn cifar10_full_qlang_pipeline() {
     // Load pre-extracted features
     let train_feat = match load_f32_bin("data/cifar10_resnet_train.bin")
-        .or_else(|| load_f32_bin("/home/mirkulix/neoqlang/qlang/data/cifar10_resnet_train.bin"))
     {
         Some(f) => f,
         None => { println!("Features not found. Run cifar10_extract_save first."); return; }
     };
     let test_feat = load_f32_bin("data/cifar10_resnet_test.bin")
-        .or_else(|| load_f32_bin("/home/mirkulix/neoqlang/qlang/data/cifar10_resnet_test.bin"))
         .unwrap();
     let train_labels = std::fs::read("data/cifar10_train_labels.bin")
-        .or_else(|_| std::fs::read("/home/mirkulix/neoqlang/qlang/data/cifar10_train_labels.bin"))
         .unwrap();
     let test_labels = std::fs::read("data/cifar10_test_labels.bin")
-        .or_else(|_| std::fs::read("/home/mirkulix/neoqlang/qlang/data/cifar10_test_labels.bin"))
         .unwrap();
 
     let feat_dim = 512;
