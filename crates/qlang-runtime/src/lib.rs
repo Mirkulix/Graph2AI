@@ -28,27 +28,47 @@ pub mod bytecode;
 pub mod debugger;
 pub mod linalg;
 pub mod bitnet_math;
+// --- Experimental ML modules ---------------------------------------------
+// The following paths are known-broken on real data (see QLANG-STATUS.md)
+// and are gated behind the `experimental-ml` feature so the default build
+// only exposes stable code. Enable with `--features experimental-ml`.
+#[cfg(feature = "experimental-ml")]
 pub mod cifar10;
+#[cfg(feature = "experimental-ml")]
 pub mod cifar10_features;
 pub mod fisher;
 pub mod random_conv_features;
+#[cfg(feature = "experimental-ml")]
 pub mod vision_transformer;
 pub mod forward_forward;
 pub mod forward_forward_gpu;
+// `candle_train` / `gpu_train` consume `mamba_train` + `qlang_lm` types,
+// so they follow the experimental gate.
+#[cfg(feature = "experimental-ml")]
 pub mod candle_train;
+#[cfg(feature = "experimental-ml")]
 pub mod gpu_train;
 pub mod graph_ff_train;
 pub mod hdc;
+#[cfg(feature = "experimental-ml")]
 pub mod lm_export;
+#[cfg(feature = "experimental-ml")]
 pub mod mamba;
+#[cfg(feature = "experimental-ml")]
 pub mod mamba_train;
 pub mod neurosymbolic;
 pub mod noprop;
+// `organism` embeds `SpikingNetwork` + `TrainableLM` directly, so it moves
+// with the experimental gate.
+#[cfg(feature = "experimental-ml")]
 pub mod organism;
 pub mod evolution;
+#[cfg(feature = "experimental-ml")]
 pub mod spiking;
+#[cfg(feature = "experimental-ml")]
 pub mod hybrid_spiking;
 pub mod ttt;
+#[cfg(feature = "experimental-ml")]
 pub mod qlang_lm;
 pub mod quantum_flow;
 pub mod tci;
@@ -61,6 +81,7 @@ pub mod ternary_vote;
 pub mod federation;
 pub mod mcp_bridge;
 pub mod diffusion;
+#[cfg(feature = "experimental-ml")]
 pub mod hebbian;
 pub mod theorems;
 pub mod igqk;
@@ -71,6 +92,7 @@ pub mod unified;
 pub mod concurrency;
 pub mod graph_ops;
 pub mod gpu_compute;
+#[cfg(feature = "experimental-ml")]
 pub mod gpu_mamba;
 pub mod gpu_runtime;
 pub mod registry;
