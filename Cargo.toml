@@ -80,6 +80,7 @@ path = "src/cli.rs"
 [[bin]]
 name = "gpu_train"
 path = "src/gpu_train_bin.rs"
+required-features = ["experimental-ml"]
 
 [[bin]]
 name = "classify-request"
@@ -103,6 +104,9 @@ llvm = ["inkwell", "qlang-compile/llvm"]
 gpu = ["qlang-runtime/gpu"]
 cuda = ["qlang-runtime/cuda"]
 mlx = ["qlang-runtime/mlx"]
+# Known-broken ML paths (Mamba / gpu_train / organism / spiking / CIFAR-10).
+# Disabled by default so the workspace stays honest — see QLANG-STATUS.md.
+experimental-ml = ["qlang-runtime/experimental-ml", "qo-server/experimental-ml"]
 
 [[example]]
 name = "hello_qlang"

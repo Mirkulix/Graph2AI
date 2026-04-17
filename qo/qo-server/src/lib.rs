@@ -40,6 +40,7 @@ pub struct AppState {
     /// QLANG Message Bus — routes GraphMessages between AI agents.
     pub message_bus: Arc<MessageBus>,
     /// GPU training state — tracks running training job for SSE streaming.
+    #[cfg(feature = "experimental-ml")]
     pub gpu_training: Arc<routes::gpu_training::GpuTrainingState>,
     /// Evolution daemon (legacy stub — simulated fitness drift).
     /// Still kept for backwards compatibility with any CLI/tests that pin
@@ -228,6 +229,7 @@ pub async fn build_app(
         configured_providers: Mutex::new(configured_providers),
         memory: Mutex::new(memory_ctx),
         message_bus: message_bus.clone(),
+        #[cfg(feature = "experimental-ml")]
         gpu_training: Arc::new(routes::gpu_training::GpuTrainingState::default()),
         evolution_daemon: Arc::new(Mutex::new(None)),
         real_evolution_daemon: Arc::new(Mutex::new(None)),
@@ -357,16 +359,8 @@ pub async fn build_app(
         .route("/api/supervisor/daemon/start", post(routes::supervisor::daemon_start))
         .route("/api/supervisor/daemon/stop", post(routes::supervisor::daemon_stop))
         .route("/api/proof/tensor-exchange", post(routes::proof::tensor_exchange))
-        .route("/api/organism/chat", post(routes::organism::chat))
-        .route("/api/organism/evolve", post(routes::organism::evolve))
-        .route("/api/organism/status", get(routes::organism::status))
-        .route("/api/organism/load-model", post(routes::organism::load_model))
         .route("/api/training/qlang", post(routes::training::train_qlang))
         .route("/api/training/monitor", get(routes::train_monitor::monitor))
-        .route("/api/training/gpu", post(routes::gpu_training::start_gpu_training))
-        .route("/api/training/gpu/status", get(routes::gpu_training::gpu_training_status))
-        .route("/api/training/gpu/stop", post(routes::gpu_training::stop_gpu_training))
-        .route("/api/training/gpu/stream", get(routes::gpu_training::gpu_training_stream))
         .route("/api/spiking/run", post(routes::spiking::run_spiking))
         .route("/api/spiking/train", post(routes::spiking::train_spiking))
         .route("/api/spiking/status", get(routes::spiking::spiking_status))
@@ -416,7 +410,22 @@ pub async fn build_app(
         .route("/api/neo/status", get(routes::neo::status))
         .route("/api/neo/agents", get(routes::neo::list_agents))
         .route("/api/neo/agents/{id}", get(routes::neo::get_agent))
-        .route("/supervisor", get(routes::supervisor::cockpit))
+        .route("/supervisor", get(routes::supervisor::cockpit));
+
+    // Experimental ML routes — only present when built with
+    // `--features experimental-ml` (see qlang-runtime/QLANG-STATUS.md).
+    #[cfg(feature = "experimental-ml")]
+    let api_router = api_router
+        .route("/api/organism/chat", post(routes::organism::chat))
+        .route("/api/organism/evolve", post(routes::organism::evolve))
+        .route("/api/organism/status", get(routes::organism::status))
+        .route("/api/organism/load-model", post(routes::organism::load_model))
+        .route("/api/training/gpu", post(routes::gpu_training::start_gpu_training))
+        .route("/api/training/gpu/status", get(routes::gpu_training::gpu_training_status))
+        .route("/api/training/gpu/stop", post(routes::gpu_training::stop_gpu_training))
+        .route("/api/training/gpu/stream", get(routes::gpu_training::gpu_training_stream));
+
+    let api_router = api_router
         .layer(middleware::from_fn(auth::auth_middleware))
         .with_state(state.clone());
 

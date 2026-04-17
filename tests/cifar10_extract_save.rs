@@ -1,5 +1,9 @@
 //! Extract ResNet-18 features for all CIFAR-10 and save to disk.
 //! Run once, then cifar10_full_brain.rs loads instantly.
+//!
+//! Requires `--features experimental-ml` (see QLANG-STATUS.md).
+
+#![cfg(feature = "experimental-ml")]
 
 use qlang_runtime::cifar10::Cifar10Data;
 use std::time::Instant;

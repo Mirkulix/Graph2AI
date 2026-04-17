@@ -2,6 +2,10 @@
 //!
 //! Pipeline: CIFAR-10 → ResNet-18 (pretrained, frozen) → 512-dim features → TernaryBrain
 //! This is transfer learning: pretrained deep features + ternary classification.
+//!
+//! Requires `--features experimental-ml` (see QLANG-STATUS.md).
+
+#![cfg(feature = "experimental-ml")]
 
 use qlang_runtime::cifar10::Cifar10Data;
 use qlang_runtime::ternary_brain::TernaryBrain;

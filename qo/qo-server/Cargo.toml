@@ -29,3 +29,10 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 base64 = "0.22"
+
+[features]
+default = []
+# Exposes `/api/organism/*` and `/api/training/gpu/*` routes.
+# These depend on gated qlang-runtime modules (organism, gpu_train, mamba,
+# spiking, cifar10, vision_transformer, etc.) — see QLANG-STATUS.md.
+experimental-ml = ["qlang-runtime/experimental-ml"]
