@@ -68,7 +68,7 @@ cargo build --release
 # Build without LLVM (JIT disabled)
 cargo build --release --no-default-features
 
-# Run the QO server (port 4747 by default)
+# Run the QO server (port 4646 by default; override with QO_PORT)
 cargo run --bin qo -- --offline
 
 # Tests
