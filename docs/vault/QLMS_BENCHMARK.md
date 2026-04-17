@@ -1,3 +1,9 @@
+> Status: stable
+> Sync: Reale Messung (Ryzen 9 3900X, 2026-04-12). Reproduzierbar via
+> `cargo run --release --no-default-features --example qlms_benchmark
+> -p qlang-runtime`. Quelle der Wahrheit fuer alle QLMS-vs-MCP-Zahlen, die in
+> `Comparison.md` oder `STRATEGIC_VISION.md` zitiert werden.
+
 # QLMS Binary Protocol vs MCP JSON — Real Measurements
 
 **Task:** T016

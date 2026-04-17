@@ -1,3 +1,9 @@
+> Status: stable
+> Sync: QLBG-Encoder/Decoder implementiert in `qlang-core/binary.rs`.
+> Reale Messungen fuer das daraufliegende QLMS-Envelope siehe
+> `QLMS_BENCHMARK.md`; die hier zitierten "244x"-Zahlen sind die internen
+> Mikro-Benchmarks der Serialisierung, nicht End-to-End RTT.
+
 # BinaryFormat
 
 QLANG verwendet das QLBG (QLANG Binary Graph) Format fuer kompakte Graph-Serialisierung. 3.5x kleiner und 244x schneller als JSON.

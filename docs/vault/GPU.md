@@ -1,3 +1,9 @@
+> Status: stable
+> Sync: GPU-Backends (wgpu, Accelerate, MLX) und Multi-GPU-Pfade sind
+> implementiert. Reale Trainingszahlen auf RTX 2070 Super siehe
+> `QLANG-STATUS.md`; das hier dokumentierte MNIST-Profil
+> (`forward_forward_gpu`) ist in `archive/GPU_QAT_PROFILING.md` historisiert.
+
 # GPU
 
 QLANG unterstuetzt mehrere Hardware-Beschleunigungsbackends: Apple Silicon, wgpu Compute Shaders (NVIDIA/AMD/Intel), und Pure Rust Fallback.

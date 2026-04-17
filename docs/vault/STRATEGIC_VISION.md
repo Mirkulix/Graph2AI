@@ -1,3 +1,11 @@
+> Status: planned
+> Sync: Vision-/Roadmap-Dokument. Abschnitt 1-3 (Why/What/UVP) zitiert
+> bewusst die *angestrebte* Plattform, Abschnitt 4-5 listet konkrete Goals
+> P0-P2 inklusive bekannter Schwaechen. Was *heute* messbar laeuft, gehoert
+> in `QLANG-STATUS.md`; dieses Dokument bleibt der einzige Vision-Track
+> innerhalb von `docs/vault/` (Vision.md / QLANG_v2_Architecture.md /
+> Roadmap.md / MASTER_AGENT.md sind nach `archive/` verschoben).
+
 # STRATEGIC VISION — QLANG
 
 **Stand:** 2026-04-12

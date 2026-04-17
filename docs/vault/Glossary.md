@@ -1,3 +1,8 @@
+> Status: stable
+> Sync: Begriffsreferenz; einige Eintraege (Hebbian, Swarm, Diffusion) zeigen
+> auf Module, die heute hinter `--features experimental-ml` liegen. Siehe
+> `QLANG-STATUS.md` fuer den aktuellen Implementations-Stand pro Begriff.
+
 # Glossary
 
 Alle QLANG-spezifischen Begriffe und Abkuerzungen.

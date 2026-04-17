@@ -1,3 +1,9 @@
+> Status: experimental
+> Sync: IGQK-Kompression auf gepackte ternaere Tensoren ist real und
+> reproduzierbar (16x auf 570K Gewichte — siehe `QLANG-STATUS.md`).
+> Der vollstaendige Quantum-Gradient-Flow im Executor ist *vereinfacht*
+> umgesetzt; voller Algorithmus 1 ist Forschungsthema (P1).
+
 # IGQK
 
 **Informationsgeometrische Quantenkompression** (Information-Geometric Quantum Compression)
