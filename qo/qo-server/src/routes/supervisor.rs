@@ -15,7 +15,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::convert::Infallible;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -90,6 +89,7 @@ pub struct SupervisorConsoleResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)] // serde-deserialized schema; some fields read via serde_json::Value path
 struct SupervisorStateFile {
     next_task_id: Option<u64>,
     next_session_id: Option<u64>,
