@@ -12,7 +12,9 @@ target/
 *.swo
 *~
 Dockerfile
+Dockerfile.qo
 docker-compose.yml
+docker-compose.swarm.yml
 .dockerignore
 docs/
 spec/

@@ -1,3 +1,7 @@
+# Legacy compose for the standalone `qlang-cli` web/REPL container
+# (Dockerfile at repo root). For the QO supervisor server use
+# Dockerfile.qo and docker-compose.swarm.yml. QO listens on :4646 per
+# docs/SESSION_HANDOFF.md.
 version: "3.8"
 
 services:

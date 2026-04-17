@@ -1,6 +1,6 @@
 #!/bin/bash
 # QLANG Setup Script
-# Usage: curl -sSf https://raw.githubusercontent.com/Mirkulix/qland/main/qlang/setup.sh | bash
+# Usage: curl -sSf https://raw.githubusercontent.com/Mirkulix/A-2A-qlang/main/setup.sh | bash
 
 set -e
 

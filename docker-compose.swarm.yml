@@ -15,6 +15,11 @@
 #     every 10 seconds against that list.
 #
 # A shared volume per node keeps AgentDB + model files across restarts.
+#
+# TODO(orbitqlang): docs/SESSION_HANDOFF.md §7 Option B refers to these
+# services as `qo-1 / qo-2 / qo-3` on host ports 4646 / 4747 / 4848.
+# Port-mappings match; service names differ (qo-a / qo-b / qo-c) but the
+# PEER_DISCOVERY_SEEDS below must use whatever names this file exports.
 
 version: "3.8"
 
@@ -24,7 +29,8 @@ services:
       context: .
       dockerfile: Dockerfile.qo
     container_name: qo-a
-    command: ["web"]
+    # The `qo` binary ignores argv and reads config from env vars (QO_PORT,
+    # QO_NODE_ID, PEER_DISCOVERY_SEEDS, ...). No subcommand needed.
     ports:
       - "4646:4646"
     environment:
@@ -45,7 +51,8 @@ services:
       context: .
       dockerfile: Dockerfile.qo
     container_name: qo-b
-    command: ["web"]
+    # The `qo` binary ignores argv and reads config from env vars (QO_PORT,
+    # QO_NODE_ID, PEER_DISCOVERY_SEEDS, ...). No subcommand needed.
     ports:
       - "4747:4646"
     environment:
@@ -68,7 +75,8 @@ services:
       context: .
       dockerfile: Dockerfile.qo
     container_name: qo-c
-    command: ["web"]
+    # The `qo` binary ignores argv and reads config from env vars (QO_PORT,
+    # QO_NODE_ID, PEER_DISCOVERY_SEEDS, ...). No subcommand needed.
     ports:
       - "4848:4646"
     environment:
