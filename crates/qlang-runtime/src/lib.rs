@@ -36,7 +36,6 @@ pub mod bitnet_math;
 pub mod cifar10;
 #[cfg(feature = "experimental-ml")]
 pub mod cifar10_features;
-pub mod fisher;
 pub mod forward_forward;
 pub mod forward_forward_gpu;
 // `candle_train` / `gpu_train` consume `mamba_train` + `qlang_lm` types,
