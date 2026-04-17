@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================================
-#  QLANG Installer — KI-zu-KI Programmiersprache
+#  QLANG Installer - KI-zu-KI Programmiersprache
 #  Funktioniert auf macOS und Linux
 # ============================================================================
 
@@ -15,12 +15,7 @@ PURPLE='\033[0;35m'
 NC='\033[0m'
 
 echo -e "${PURPLE}"
-echo "  ██████╗ ██╗      █████╗ ███╗   ██╗ ██████╗ "
-echo "  ██╔═══██╗██║     ██╔══██╗████╗  ██║██╔════╝ "
-echo "  ██║   ██║██║     ███████║██╔██╗ ██║██║  ███╗"
-echo "  ██║▄▄ ██║██║     ██╔══██║██║╚██╗██║██║   ██║"
-echo "  ╚██████╔╝███████╗██║  ██║██║ ╚████║╚██████╔╝"
-echo "   ╚══▀▀═╝ ╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝ ╚═════╝ "
+echo "  QLANG INSTALLER"
 echo -e "${NC}"
 echo -e "${BLUE}  Graph-basierte KI-zu-KI Programmiersprache${NC}"
 echo ""
@@ -31,7 +26,7 @@ ARCH="$(uname -m)"
 echo -e "${YELLOW}System:${NC} $OS $ARCH"
 
 if [[ "$OS" != "Darwin" && "$OS" != "Linux" ]]; then
-    echo -e "${RED}Fehler: Nur macOS und Linux werden unterstützt.${NC}"
+    echo -e "${RED}Fehler: Nur macOS und Linux werden unterstuetzt.${NC}"
     exit 1
 fi
 
@@ -52,9 +47,9 @@ step() {
 TOTAL_STEPS=7
 
 # ============================================================================
-#  Schritt 1: Voraussetzungen prüfen
+#  Schritt 1: Voraussetzungen pruefen
 # ============================================================================
-step 1 "Voraussetzungen prüfen..."
+step 1 "Voraussetzungen pruefen..."
 
 # Git
 if ! check_cmd git; then
@@ -66,24 +61,24 @@ if ! check_cmd git; then
     fi
     exit 1
 fi
-echo -e "  ${GREEN}✓${NC} git $(git --version | head -1)"
+echo -e "  ${GREEN}[OK]${NC} git $(git --version | head -1)"
 
 # Rust
 if ! check_cmd cargo; then
     echo -e "${YELLOW}Rust nicht gefunden. Wird jetzt installiert...${NC}"
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
     source "$HOME/.cargo/env"
-    echo -e "  ${GREEN}✓${NC} Rust installiert"
+    echo -e "  ${GREEN}[OK]${NC} Rust installiert"
 else
-    echo -e "  ${GREEN}✓${NC} cargo $(cargo --version)"
+    echo -e "  ${GREEN}[OK]${NC} cargo $(cargo --version)"
 fi
 
-# LLVM 18 (optional, für JIT-Compilation)
+# LLVM 18 (optional, fuer JIT-Compilation)
 if [[ "$OS" == "Darwin" ]] && check_cmd brew; then
     if [ -d "/opt/homebrew/opt/llvm@18" ] || [ -d "/usr/local/opt/llvm@18" ]; then
-        echo -e "  ${GREEN}✓${NC} LLVM 18 gefunden"
+        echo -e "  ${GREEN}[OK]${NC} LLVM 18 gefunden"
     else
-        echo -e "  ${YELLOW}⚠${NC} LLVM 18 nicht gefunden (optional, für JIT)"
+        echo -e "  ${YELLOW}[WARN]${NC} LLVM 18 nicht gefunden (optional, fuer JIT)"
         echo "    Installiere mit: brew install llvm@18"
     fi
 fi
@@ -92,19 +87,19 @@ fi
 PYTHON_CMD=""
 if check_cmd python3; then
     PYTHON_CMD="python3"
-    echo -e "  ${GREEN}✓${NC} python3 $($PYTHON_CMD --version 2>&1)"
+    echo -e "  ${GREEN}[OK]${NC} python3 $($PYTHON_CMD --version 2>&1)"
 elif check_cmd python; then
     PYTHON_CMD="python"
-    echo -e "  ${GREEN}✓${NC} python $($PYTHON_CMD --version 2>&1)"
+    echo -e "  ${GREEN}[OK]${NC} python $($PYTHON_CMD --version 2>&1)"
 else
-    echo -e "  ${YELLOW}⚠${NC} Python nicht gefunden (optional, für Python-Bindings)"
+    echo -e "  ${YELLOW}[WARN]${NC} Python nicht gefunden (optional, fuer Python-Bindings)"
 fi
 
 # curl oder wget
 if check_cmd curl; then
-    echo -e "  ${GREEN}✓${NC} curl"
+    echo -e "  ${GREEN}[OK]${NC} curl"
 elif check_cmd wget; then
-    echo -e "  ${GREEN}✓${NC} wget"
+    echo -e "  ${GREEN}[OK]${NC} wget"
 else
     echo -e "${RED}Weder curl noch wget gefunden.${NC}"
     exit 1
@@ -119,39 +114,42 @@ if [ -d "$INSTALL_DIR/.git" ]; then
     echo "  Verzeichnis existiert, aktualisiere..."
     cd "$INSTALL_DIR"
     git fetch origin
+    # TODO(orbitqlang): production branch laut SESSION_HANDOFF.md ist
+    # `NewWayLLMHandling`. Installer zieht aktuell nur `main`; ggf. die
+    # Branch-Auswahl konfigurierbar machen.
     git checkout main
     git pull origin main
 else
-    git clone https://github.com/Mirkulix/qland.git "$INSTALL_DIR"
+    git clone https://github.com/Mirkulix/A-2A-qlang.git "$INSTALL_DIR"
     cd "$INSTALL_DIR"
     git checkout main
 fi
 
-echo -e "  ${GREEN}✓${NC} Repository bereit in $INSTALL_DIR"
+echo -e "  ${GREEN}[OK]${NC} Repository bereit in $INSTALL_DIR"
 
 # ============================================================================
 #  Schritt 3: Rust-Projekt bauen
 # ============================================================================
 step 3 "QLANG bauen (das dauert 2-3 Minuten beim ersten Mal)..."
 
-cd "$INSTALL_DIR/qlang"
+cd "$INSTALL_DIR"
 cargo build --release --no-default-features 2>&1 | tail -3
-echo -e "  ${GREEN}✓${NC} Build erfolgreich"
+echo -e "  ${GREEN}[OK]${NC} Build erfolgreich"
 
 # ============================================================================
 #  Schritt 4: Tests laufen lassen
 # ============================================================================
-step 4 "Tests ausführen..."
+step 4 "Tests ausfuehren..."
 
 TEST_OUTPUT=$(cargo test --workspace --no-default-features 2>&1)
 TEST_COUNT=$(echo "$TEST_OUTPUT" | grep "test result" | awk '{sum += $4} END {print sum}')
 FAIL_COUNT=$(echo "$TEST_OUTPUT" | grep "test result" | awk '{sum += $8} END {print sum}')
 
 if [ "$FAIL_COUNT" = "0" ]; then
-    echo -e "  ${GREEN}✓${NC} $TEST_COUNT Tests bestanden, 0 Fehler"
+    echo -e "  ${GREEN}[OK]${NC} $TEST_COUNT Tests bestanden, 0 Fehler"
 else
-    echo -e "  ${RED}✗${NC} $FAIL_COUNT Tests fehlgeschlagen"
-    echo "  Führe 'cargo test --workspace --no-default-features' aus für Details"
+    echo -e "  ${RED}[FAIL]${NC} $FAIL_COUNT Tests fehlgeschlagen"
+    echo "  Fuehre 'cargo test --workspace --no-default-features' aus fuer Details"
 fi
 
 # ============================================================================
@@ -159,14 +157,14 @@ fi
 # ============================================================================
 step 5 "CLI-Tool installieren..."
 
-QLANG_BIN="$INSTALL_DIR/qlang/target/release/qlang-cli"
+QLANG_BIN="$INSTALL_DIR/target/release/qlang-cli"
 if [ -f "$QLANG_BIN" ]; then
     # Symlink in ~/.cargo/bin (ist normalerweise im PATH)
     mkdir -p "$HOME/.cargo/bin"
     ln -sf "$QLANG_BIN" "$HOME/.cargo/bin/qlang-cli"
-    echo -e "  ${GREEN}✓${NC} qlang-cli installiert in ~/.cargo/bin/qlang-cli"
+    echo -e "  ${GREEN}[OK]${NC} qlang-cli installiert in ~/.cargo/bin/qlang-cli"
 else
-    echo -e "  ${YELLOW}⚠${NC} qlang-cli Binary nicht gefunden, überspringe"
+    echo -e "  ${YELLOW}[WARN]${NC} qlang-cli Binary nicht gefunden, ueberspringe"
 fi
 
 # ============================================================================
@@ -177,24 +175,24 @@ step 6 "Python-Bindings installieren (optional)..."
 if [ -n "$PYTHON_CMD" ]; then
     if check_cmd maturin; then
         echo "  maturin gefunden, baue Python-Wheel..."
-        cd "$INSTALL_DIR/qlang/crates/qlang-python"
+        cd "$INSTALL_DIR/crates/qlang-python"
         maturin build --release 2>&1 | tail -2
-        WHEEL=$(ls "$INSTALL_DIR/qlang/target/wheels"/qlang-*.whl 2>/dev/null | head -1)
+        WHEEL=$(ls "$INSTALL_DIR/target/wheels"/qlang-*.whl 2>/dev/null | head -1)
         if [ -n "$WHEEL" ]; then
             pip3 install "$WHEEL" --force-reinstall --quiet 2>/dev/null || \
             pip install "$WHEEL" --force-reinstall --quiet 2>/dev/null || true
-            echo -e "  ${GREEN}✓${NC} Python-Bindings installiert (pip install qlang)"
+            echo -e "  ${GREEN}[OK]${NC} Python-Bindings installiert (pip install qlang)"
         else
-            echo -e "  ${YELLOW}⚠${NC} Wheel nicht gefunden"
+            echo -e "  ${YELLOW}[WARN]${NC} Wheel nicht gefunden"
         fi
-        cd "$INSTALL_DIR/qlang"
+        cd "$INSTALL_DIR"
     else
-        echo -e "  ${YELLOW}⚠${NC} maturin nicht installiert"
+        echo -e "  ${YELLOW}[WARN]${NC} maturin nicht installiert"
         echo "  Installiere mit: pip3 install maturin"
-        echo "  Dann: cd $INSTALL_DIR/qlang/crates/qlang-python && maturin develop --release"
+        echo "  Dann: cd $INSTALL_DIR/crates/qlang-python && maturin develop --release"
     fi
 else
-    echo -e "  ${YELLOW}⚠${NC} Python nicht verfügbar, überspringe"
+    echo -e "  ${YELLOW}[WARN]${NC} Python nicht verfuegbar, ueberspringe"
 fi
 
 # ============================================================================
@@ -202,9 +200,9 @@ fi
 # ============================================================================
 step 7 "MNIST-Daten herunterladen (optional)..."
 
-MNIST_DIR="$INSTALL_DIR/qlang/data/mnist"
+MNIST_DIR="$INSTALL_DIR/data/mnist"
 if [ -f "$MNIST_DIR/train-images-idx3-ubyte" ]; then
-    echo -e "  ${GREEN}✓${NC} MNIST-Daten bereits vorhanden"
+    echo -e "  ${GREEN}[OK]${NC} MNIST-Daten bereits vorhanden"
 else
     echo -n "  MNIST herunterladen? (~11 MB) [j/N] "
     read -r REPLY
@@ -216,12 +214,12 @@ else
                 echo "  Lade $FILE..."
                 curl -fSL "$BASE_URL/$FILE.gz" -o "$MNIST_DIR/$FILE.gz" 2>/dev/null && \
                 gunzip -f "$MNIST_DIR/$FILE.gz" || \
-                echo -e "  ${YELLOW}⚠${NC} Fehler beim Laden von $FILE"
+                echo -e "  ${YELLOW}[WARN]${NC} Fehler beim Laden von $FILE"
             fi
         done
-        echo -e "  ${GREEN}✓${NC} MNIST-Daten heruntergeladen"
+        echo -e "  ${GREEN}[OK]${NC} MNIST-Daten heruntergeladen"
     else
-        echo "  Übersprungen. Später mit: bash scripts/download_mnist.sh"
+        echo "  Uebersprungen. Spaeter mit: bash scripts/download_mnist.sh"
     fi
 fi
 
@@ -229,22 +227,22 @@ fi
 #  Fertig!
 # ============================================================================
 echo ""
-echo -e "${GREEN}════════════════════════════════════════════════════════${NC}"
+echo -e "${GREEN}========================================================${NC}"
 echo -e "${GREEN}  QLANG erfolgreich installiert!${NC}"
-echo -e "${GREEN}════════════════════════════════════════════════════════${NC}"
+echo -e "${GREEN}========================================================${NC}"
 echo ""
-echo -e "  ${BLUE}Installationsort:${NC} $INSTALL_DIR/qlang"
+echo -e "  ${BLUE}Installationsort:${NC} $INSTALL_DIR"
 echo -e "  ${BLUE}Tests:${NC}            $TEST_COUNT bestanden"
 echo ""
 echo -e "  ${PURPLE}Schnellstart:${NC}"
 echo ""
 echo -e "  ${YELLOW}# Dashboard starten${NC}"
-echo -e "  cd $INSTALL_DIR/qlang"
+echo -e "  cd $INSTALL_DIR"
 echo -e "  cargo run --release --no-default-features -p qlang-compile --bin qlang-cli -- web --port 8081"
-echo -e "  ${BLUE}→ http://localhost:8081${NC}"
+echo -e "  ${BLUE}-> http://localhost:8081${NC}"
 echo ""
-echo -e "  ${YELLOW}# Demo im Browser (kein Server nötig)${NC}"
-echo -e "  open $INSTALL_DIR/qlang/web/demo.html"
+echo -e "  ${YELLOW}# Demo im Browser (kein Server noetig)${NC}"
+echo -e "  open $INSTALL_DIR/web/demo.html"
 echo ""
 echo -e "  ${YELLOW}# REPL starten${NC}"
 echo -e "  qlang-cli repl"
@@ -260,4 +258,4 @@ fi
 echo -e "  ${YELLOW}# Alle Befehle${NC}"
 echo -e "  qlang-cli --help"
 echo ""
-echo -e "${PURPLE}Viel Spaß mit QLANG!${NC}"
+echo -e "${PURPLE}Viel Spass mit QLANG!${NC}"
