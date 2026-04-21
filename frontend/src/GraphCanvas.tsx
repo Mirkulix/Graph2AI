@@ -18,17 +18,22 @@ interface MessageEdge {
   from: string
   to: string
   intent: string
-  timestamp: number
+  timestamp_ms: number
   age: number // 0..1, fades out
 }
 
-interface LiveMessage {
-  id: number
+interface GraphEvent {
+  timestamp_ms: number
   from: string
   to: string
   intent: string
-  graph_name: string
-  timestamp: number
+  size_bytes: number
+  status?: string | null
+}
+
+function readAuthToken(): string | null {
+  const v = localStorage.getItem('qo_auth_token')
+  return v && v.trim().length > 0 ? v.trim() : null
 }
 
 // ============================================================
@@ -92,11 +97,15 @@ export default function GraphCanvas() {
 
   // Fetch agents and layout once canvas is sized
   useEffect(() => {
-    fetch('/api/messages/agents')
+    fetch('/api/agents')
       .then(r => r.json())
-      .then(data => {
-        const list = Array.isArray(data) ? data : []
-        setAgents(list)
+      .then(body => {
+        if (Array.isArray(body.agents)) {
+          const list = body.agents.map((a: { role: string }) => a.role.toLowerCase());
+          // Optional: ensure base agents are present if API returns empty
+          const fullList = list.length > 0 ? list : ['ceo', 'researcher', 'developer', 'guardian', 'strategist', 'artisan'];
+          setAgents(Array.from(new Set(fullList)));
+        }
       })
       .catch(() => {})
   }, [])
@@ -109,18 +118,27 @@ export default function GraphCanvas() {
     }
   }, [agents, canvasReady])
 
-  // SSE stream for live messages
+  // WebSocket stream for live messages
   useEffect(() => {
-    const es = new EventSource('/api/messages/stream')
-    es.onmessage = (event) => {
+    const token = readAuthToken()
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const base = `${proto}//${window.location.host}/ws/graph-stream`
+    const url = token ? `${base}?token=${encodeURIComponent(token)}` : base
+
+    const ws = new WebSocket(url)
+
+    ws.onmessage = (event) => {
       try {
-        const msg: LiveMessage = JSON.parse(event.data)
+        const data = JSON.parse(event.data)
+        if (data && typeof data === 'object' && 'type' in data && data.type === 'hello') return;
+        
+        const msg: GraphEvent = data;
         const edge: MessageEdge = {
-          id: `${msg.id}-${Date.now()}`,
+          id: `${msg.from}-${msg.to}-${msg.timestamp_ms}-${Math.random()}`,
           from: msg.from,
           to: msg.to,
           intent: msg.intent,
-          timestamp: Date.now(),
+          timestamp_ms: msg.timestamp_ms,
           age: 0,
         }
         edgesRef.current.push(edge)
@@ -140,7 +158,7 @@ export default function GraphCanvas() {
         }, 800)
       } catch {}
     }
-    return () => es.close()
+    return () => ws.close()
   }, [])
 
   // Canvas resize
@@ -220,7 +238,7 @@ export default function GraphCanvas() {
 
       // Update edge ages, remove old ones
       edgesRef.current = edgesRef.current.filter(e => {
-        e.age = (now - e.timestamp) / EDGE_LIFETIME
+        e.age = (now - e.timestamp_ms) / EDGE_LIFETIME
         return e.age < 1
       })
 
@@ -330,24 +348,6 @@ export default function GraphCanvas() {
           </span>
         )}
         <div style={{ flex: 1 }} />
-        <button
-          className="btn btn-primary"
-          style={{ fontSize: '12px', padding: '6px 14px' }}
-          onClick={async () => {
-            try {
-              await fetch('/api/proof/tensor-exchange', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  text_a: 'Rust ist eine Systemprogrammiersprache',
-                  text_b: 'Python ist eine Skriptsprache',
-                }),
-              })
-            } catch {}
-          }}
-        >
-          Tensor-Proof senden
-        </button>
         <button
           className="btn"
           style={{ fontSize: '12px', padding: '6px 14px' }}

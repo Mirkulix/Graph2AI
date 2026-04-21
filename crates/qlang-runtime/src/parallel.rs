@@ -231,41 +231,6 @@ fn execute_single_node(
             let a = get_input(0)?;
             softmax(&a)?
         }
-        Op::ToTernary => {
-            let a = get_input(0)?;
-            ternary(&a)?
-        }
-        Op::Superpose => {
-            let a = get_input(0)?;
-            let b = get_input(1)?;
-            binop(&a, &b, |x, y| (x + y) / 2.0)?
-        }
-        Op::Measure => {
-            let state = get_input(0)?;
-            if let Ok(operators) = get_input(1) {
-                measure_with_operators(&state, &operators)?
-            } else {
-                measure(&state)?
-            }
-        }
-        Op::Entangle => {
-            let a = get_input(0)?;
-            let b = get_input(1)?;
-            entangle(&a, &b)?
-        }
-        Op::Collapse => {
-            let a = get_input(0)?;
-            measure(&a)?
-        }
-        Op::Evolve { gamma, dt } => {
-            let state = get_input(0)?;
-            let gradient = if let Ok(gradient) = get_input(2) {
-                gradient
-            } else {
-                get_input(1)?
-            };
-            evolve(&state, &gradient, *gamma, *dt)?
-        }
         _ => {
             // Fallback: pass through first input if available
             get_input(0).unwrap_or_else(|_| {
@@ -323,77 +288,6 @@ fn softmax(a: &TensorData) -> Result<TensorData, ExecutionError> {
     let sum: f32 = exps.iter().sum();
     let result: Vec<f32> = exps.iter().map(|&e| e / sum).collect();
     Ok(TensorData::from_f32(a.shape.clone(), &result))
-}
-
-fn ternary(a: &TensorData) -> Result<TensorData, ExecutionError> {
-    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError("not f32".into()))?;
-    let mean_abs: f32 = va.iter().map(|x| x.abs()).sum::<f32>() / va.len().max(1) as f32;
-    let threshold = mean_abs * 0.7;
-    let result: Vec<f32> = va.iter().map(|&x| {
-        if x > threshold { 1.0 } else if x < -threshold { -1.0 } else { 0.0 }
-    }).collect();
-    Ok(TensorData::from_f32(a.shape.clone(), &result))
-}
-
-fn measure(a: &TensorData) -> Result<TensorData, ExecutionError> {
-    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError("measure: not f32".into()))?;
-    let mut max_idx = 0;
-    let mut max_val = f32::NEG_INFINITY;
-    for (i, &v) in va.iter().enumerate() {
-        if v > max_val {
-            max_val = v;
-            max_idx = i;
-        }
-    }
-    let mut result = vec![0.0f32; va.len()];
-    result[max_idx] = 1.0;
-    Ok(TensorData::from_f32(a.shape.clone(), &result))
-}
-
-fn measure_with_operators(state: &TensorData, operators: &TensorData) -> Result<TensorData, ExecutionError> {
-    let vs = state.as_f32_slice().ok_or(ExecutionError::RuntimeError("measure: state not f32".into()))?;
-    let vo = operators.as_f32_slice().ok_or(ExecutionError::RuntimeError("measure: operators not f32".into()))?;
-    let len = vs.len();
-    if len == 0 || vo.len() % len != 0 {
-        return Err(ExecutionError::RuntimeError(
-            "measure: operators length must be a multiple of state length".into(),
-        ));
-    }
-    let num_ops = vo.len() / len;
-    let mut probs = vec![0.0f32; num_ops];
-    for i in 0..num_ops {
-        let op_slice = &vo[i * len..(i + 1) * len];
-        probs[i] = vs.iter().zip(op_slice.iter()).map(|(s, o)| s * o).sum();
-    }
-    Ok(TensorData::from_f32(qlang_core::tensor::Shape::vector(num_ops), &probs))
-}
-
-fn entangle(a: &TensorData, b: &TensorData) -> Result<TensorData, ExecutionError> {
-    use qlang_core::tensor::{Dim, Shape};
-
-    let va = a.as_f32_slice().ok_or(ExecutionError::RuntimeError("entangle: input a not f32".into()))?;
-    let vb = b.as_f32_slice().ok_or(ExecutionError::RuntimeError("entangle: input b not f32".into()))?;
-    let mut result = vec![0.0f32; va.len() * vb.len()];
-    for (i, &val_a) in va.iter().enumerate() {
-        for (j, &val_b) in vb.iter().enumerate() {
-            result[i * vb.len() + j] = val_a * val_b;
-        }
-    }
-    let shape = match (a.shape.0.as_slice(), b.shape.0.as_slice()) {
-        ([Dim::Fixed(m1), Dim::Fixed(n1)], [Dim::Fixed(m2), Dim::Fixed(n2)]) => {
-            Shape::matrix(m1 * m2, n1 * n2)
-        }
-        _ => Shape::vector(va.len() * vb.len()),
-    };
-    Ok(TensorData::from_f32(shape, &result))
-}
-
-fn evolve(state: &TensorData, gradient: &TensorData, gamma: f64, dt: f64) -> Result<TensorData, ExecutionError> {
-    let vs = state.as_f32_slice().ok_or(ExecutionError::RuntimeError("evolve: state not f32".into()))?;
-    let vg = gradient.as_f32_slice().ok_or(ExecutionError::RuntimeError("evolve: gradient not f32".into()))?;
-    let step = (gamma * dt) as f32;
-    let result: Vec<f32> = vs.iter().zip(vg.iter()).map(|(s, g)| s - step * g).collect();
-    Ok(TensorData::from_f32(state.shape.clone(), &result))
 }
 
 #[cfg(test)]
@@ -467,29 +361,5 @@ mod tests {
         let par_vals = par_result.outputs["y"].as_f32_slice().unwrap();
         let seq_vals = seq_result.outputs["y"].as_f32_slice().unwrap();
         assert_eq!(par_vals, seq_vals);
-    }
-
-    #[test]
-    fn test_parallel_quantum_ops() {
-        let mut g = Graph::new("par_quantum");
-        let state = g.add_node(Op::Input { name: "state".into() }, vec![], vec![f32_vec(2)]);
-        let partner = g.add_node(Op::Input { name: "partner".into() }, vec![], vec![f32_vec(2)]);
-        let entangle = g.add_node(Op::Entangle, vec![f32_vec(2), f32_vec(2)], vec![f32_vec(4)]);
-        let collapse = g.add_node(Op::Collapse, vec![f32_vec(4)], vec![f32_vec(4)]);
-        let out = g.add_node(Op::Output { name: "y".into() }, vec![f32_vec(4)], vec![]);
-        g.add_edge(state, 0, entangle, 0, f32_vec(2));
-        g.add_edge(partner, 0, entangle, 1, f32_vec(2));
-        g.add_edge(entangle, 0, collapse, 0, f32_vec(4));
-        g.add_edge(collapse, 0, out, 0, f32_vec(4));
-
-        let mut inputs = HashMap::new();
-        inputs.insert("state".into(), TensorData::from_f32(Shape::vector(2), &[0.2, 0.8]));
-        inputs.insert("partner".into(), TensorData::from_f32(Shape::vector(2), &[0.1, 0.9]));
-
-        let result = execute_parallel(&g, inputs, &ParallelConfig::default()).unwrap();
-        let vals = result.outputs["y"].as_f32_slice().unwrap();
-
-        assert_eq!(vals, vec![0.0, 0.0, 0.0, 1.0]);
-        assert_eq!(result.stats.quantum_ops, 2);
     }
 }

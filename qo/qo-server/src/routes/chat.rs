@@ -1,7 +1,7 @@
 use axum::{extract::State, Json};
-use qo_consciousness::StateEvent;
 use qo_memory::graph_builders;
 use serde::{Deserialize, Serialize};
+
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -195,12 +195,6 @@ pub async fn chat(
         };
         trace_goal_id = Some(goal_id);
 
-        state.stream.publish_activity(
-            format!("Chat-Ziel #{} erstellt und wird bearbeitet", goal_id),
-            None,
-            "info",
-        );
-
         // Spawn background execution
         let state_clone = state.clone();
         let description = req.message.clone();
@@ -333,11 +327,6 @@ pub async fn chat(
                         a.path,
                         a.content.len()
                     );
-                    state.stream.publish_activity(
-                        format!("Datei geschrieben: {}", a.path),
-                        Some("QO".to_string()),
-                        "success",
-                    );
                 }
                 Err(e) => {
                     tracing::warn!("chat: artefact {:?} rejected: {e}", a.path);
@@ -381,24 +370,7 @@ pub async fn chat(
         tracing::warn!("failed to log chat action: {e}");
     }
 
-    // Update consciousness and log to Obsidian
-    {
-        let mut cs = state.consciousness.lock().await;
-        cs.process_event(&StateEvent::ChatReceived);
-        let mood_str = format!("{:?}", cs.mood);
-        let energy = cs.energy;
-        let heartbeat = cs.heartbeat;
-        state.stream.publish(cs.clone());
-        drop(cs);
 
-        if let Err(e) = state
-            .obsidian
-            .log_consciousness_event(&mood_str, energy, heartbeat, "ChatReceived")
-            .await
-        {
-            tracing::warn!("failed to log consciousness event to Obsidian: {e}");
-        }
-    }
 
     // Build the decision trace. `tools_used` stays empty here — the current
     // QLANG executor does not surface per-tool invocations back to this

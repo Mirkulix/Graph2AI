@@ -1,7 +1,6 @@
 use qlang_core::graph::Graph;
-use qlang_core::ops::{Manifold, Op};
+use qlang_core::ops::Op;
 use qlang_core::tensor::{Dtype, Shape, TensorType};
-use qlang_core::verify::{Constraint, ConstraintKind, Proof, ProofStatus, TheoremRef};
 
 /// A graph builder that provides the structured interface for AI agents.
 ///
@@ -96,47 +95,6 @@ impl GraphEmitter {
         node
     }
 
-    /// IGQK: Compress to ternary weights {-1, 0, +1}.
-    /// Automatically attaches Theorem 5.2 proof (assumed).
-    pub fn to_ternary(&mut self, input: u32, input_type: TensorType) -> u32 {
-        let output_type = TensorType::new(Dtype::Ternary, input_type.shape.clone());
-
-        let node = self.graph.add_node(
-            Op::ToTernary,
-            vec![input_type.clone()],
-            vec![output_type.clone()],
-        );
-
-        // Attach IGQK compression bound proof
-        self.graph.nodes.last_mut().unwrap().constraints.push(Constraint {
-            kind: ConstraintKind::DistortionBound {
-                max_distortion: 0.01,
-            },
-            proof: Some(Proof {
-                theorem: TheoremRef::IgqkCompressionBound,
-                status: ProofStatus::Assumed,
-                parameters: vec![
-                    ("n".to_string(), input_type.shape.numel().unwrap_or(0) as f64),
-                    ("beta".to_string(), 1.0),
-                ],
-            }),
-        });
-
-        self.graph.add_edge(input, 0, node, 0, input_type);
-        node
-    }
-
-    /// IGQK: Project onto a submanifold.
-    pub fn project(&mut self, input: u32, tensor_type: TensorType, manifold: Manifold) -> u32 {
-        let node = self.graph.add_node(
-            Op::Project { manifold },
-            vec![tensor_type.clone()],
-            vec![tensor_type.clone()],
-        );
-        self.graph.add_edge(input, 0, node, 0, tensor_type);
-        node
-    }
-
     /// Finalize and return the graph.
     pub fn build(self) -> Graph {
         self.graph
@@ -160,35 +118,6 @@ mod tests {
         assert_eq!(graph.nodes.len(), 4);
         assert_eq!(graph.edges.len(), 3);
         assert!(graph.validate().is_ok());
-    }
-
-    #[test]
-    fn emit_igqk_compression_pipeline() {
-        let mut e = GraphEmitter::new("igqk_compress");
-
-        // Neural network weights as input
-        let weights = e.input("weights", Dtype::F32, Shape::matrix(768, 768));
-
-        // IGQK ternary compression
-        let compressed = e.to_ternary(weights, TensorType::f32_matrix(768, 768));
-
-        // Output
-        e.output(
-            "compressed_weights",
-            compressed,
-            TensorType::ternary_matrix(768, 768),
-        );
-
-        let graph = e.build();
-        assert!(graph.validate().is_ok());
-
-        // Check that the compression node has a proof
-        let compress_node = &graph.nodes[1];
-        assert!(!compress_node.constraints.is_empty());
-
-        if let Some(constraint) = compress_node.constraints.first() {
-            assert!(constraint.proof.is_some());
-        }
     }
 
     #[test]

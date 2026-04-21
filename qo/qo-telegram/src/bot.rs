@@ -78,7 +78,6 @@ impl TelegramBot {
     }
 
     async fn handle_message(&self, msg: TelegramMessage) {
-        // Check if chat is allowed
         if let Some(allowed) = self.allowed_chat_id {
             if msg.chat.id != allowed {
                 let _ = self.send_message(msg.chat.id, "Nicht autorisiert.").await;
@@ -91,26 +90,29 @@ impl TelegramBot {
             None => return,
         };
 
-        // Handle commands
         if text.starts_with("/start") || text.starts_with("/help") {
             let help = "QO Telegram Bot\n\n\
                 Befehle:\n\
-                /chat &lt;nachricht&gt; — Mit QO chatten\n\
-                /goal &lt;beschreibung&gt; — Neues Ziel erstellen\n\
-                /status — QO Status anzeigen\n\
-                /agents — Agenten anzeigen\n\n\
-                Oder einfach eine Nachricht schreiben — wird als Chat behandelt.";
+                /chat &lt;nachricht&gt; - Mit QO chatten\n\
+                /goal &lt;beschreibung&gt; - Neues Ziel erstellen\n\
+                /status - QO Status anzeigen\n\
+                /agents - Agenten anzeigen\n\n\
+                Oder einfach eine Nachricht schreiben - wird als Chat behandelt.";
             let _ = self.send_message(msg.chat.id, help).await;
             return;
         }
 
         if text.starts_with("/status") {
-            match self.qo_request("GET", "/api/consciousness/state", None).await {
+            match self.qo_request("GET", "/api/neo/status", None).await {
                 Ok(body) => {
-                    let mood = body["mood"].as_str().unwrap_or("?");
-                    let energy = body["energy"].as_f64().unwrap_or(0.0);
-                    let hb = body["heartbeat"].as_u64().unwrap_or(0);
-                    let status = format!("QO Status\n\nStimmung: {mood}\nEnergie: {energy:.0}%\nHeartbeat: #{hb}");
+                    let specialists = body["specialists"].as_u64().unwrap_or(0);
+                    let interactions = body["organism_interactions"].as_u64().unwrap_or(0);
+                    let memory = body["hdc_memory"].as_u64().unwrap_or(0)
+                        + body["organism_memory_items"].as_u64().unwrap_or(0);
+                    let generation = body["organism_generation"].as_u64().unwrap_or(0);
+                    let status = format!(
+                        "QO Status\n\nGeneration: {generation}\nSpecialists: {specialists}\nInteractions: {interactions}\nMemory: {memory}"
+                    );
                     let _ = self.send_message(msg.chat.id, &status).await;
                 }
                 Err(e) => {
@@ -161,7 +163,6 @@ impl TelegramBot {
             return;
         }
 
-        // Default: treat as chat
         let chat_text = text.trim_start_matches("/chat ").trim_start_matches("/chat");
         let chat_text = if chat_text.is_empty() { &text } else { chat_text };
 

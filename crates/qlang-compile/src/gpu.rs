@@ -70,18 +70,6 @@ pub fn to_wgsl(graph: &Graph) -> String {
             Op::Relu => format!("    let {} = max({}, 0.0);\n", result_var, current_var),
             Op::Sigmoid => format!("    let {} = 1.0 / (1.0 + exp(-{}));\n", result_var, current_var),
             Op::Tanh => format!("    let {} = tanh({});\n", result_var, current_var),
-            Op::ToTernary => {
-                let mut s = String::new();
-                s.push_str(&format!("    var {}: f32;\n", result_var));
-                s.push_str(&format!("    if ({} > 0.3) {{\n", current_var));
-                s.push_str(&format!("        {} = 1.0;\n", result_var));
-                s.push_str(&format!("    }} else if ({} < -0.3) {{\n", current_var));
-                s.push_str(&format!("        {} = -1.0;\n", result_var));
-                s.push_str("    } else {\n");
-                s.push_str(&format!("        {} = 0.0;\n", result_var));
-                s.push_str("    }\n");
-                s
-            }
             _ => format!("    let {} = {}; // unsupported: {}\n", result_var, current_var, op),
         };
         shader.push_str(&expr);
@@ -195,22 +183,6 @@ mod tests {
         assert!(wgsl.contains("@workgroup_size(256)"));
         assert!(wgsl.contains("a + b"));
         assert!(wgsl.contains("max("));
-    }
-
-    #[test]
-    fn wgsl_ternary() {
-        let mut g = Graph::new("ternary_gpu");
-        let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![TensorType::f32_vector(512)]);
-        let _b = g.add_node(Op::Input { name: "b".into() }, vec![], vec![TensorType::f32_vector(512)]);
-        let t = g.add_node(Op::ToTernary, vec![TensorType::f32_vector(512)], vec![TensorType::f32_vector(512)]);
-        let out = g.add_node(Op::Output { name: "y".into() }, vec![TensorType::f32_vector(512)], vec![]);
-        g.add_edge(a, 0, t, 0, TensorType::f32_vector(512));
-        g.add_edge(t, 0, out, 0, TensorType::f32_vector(512));
-
-        let wgsl = to_wgsl(&g);
-        assert!(wgsl.contains("1.0"));
-        assert!(wgsl.contains("-1.0"));
-        assert!(wgsl.contains("0.3"));
     }
 
     #[test]

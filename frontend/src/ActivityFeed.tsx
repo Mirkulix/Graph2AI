@@ -34,25 +34,23 @@ export default function ActivityFeed() {
   const esRef = useRef<EventSource | null>(null)
 
   useEffect(() => {
-    const es = new EventSource('/api/consciousness/stream')
+    const es = new EventSource('/api/messages/stream')
     esRef.current = es
 
     es.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data)
-        if (data.type === 'activity') {
-          const entry: ActivityEntry = {
-            id: ++_entryCounter,
-            message: data.message,
-            agent: data.agent ?? undefined,
-            level: data.level ?? 'info',
-            timestamp: data.timestamp,
-          }
-          setEntries(prev => {
-            const next = [...prev, entry]
-            return next.length > MAX_ENTRIES ? next.slice(next.length - MAX_ENTRIES) : next
-          })
+        const entry: ActivityEntry = {
+          id: ++_entryCounter,
+          message: `${data.intent ?? 'Message'}: ${data.from ?? '?'} -> ${data.to ?? '?'}`,
+          agent: data.graph_name ?? undefined,
+          level: 'info',
+          timestamp: data.timestamp ?? Math.floor(Date.now() / 1000),
         }
+        setEntries(prev => {
+          const next = [...prev, entry]
+          return next.length > MAX_ENTRIES ? next.slice(next.length - MAX_ENTRIES) : next
+        })
       } catch {}
     }
 

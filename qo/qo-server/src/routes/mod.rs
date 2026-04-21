@@ -1,29 +1,16 @@
 pub mod agents;
 pub mod chat;
-pub mod consciousness;
-pub mod demo;
-pub mod evolution;
-pub mod evolution_daemon;
+
 pub mod goals;
-#[cfg(feature = "experimental-ml")]
-pub mod gpu_training;
 pub mod graphs;
 pub mod health;
 pub mod history;
 pub mod memory;
 pub mod messages;
 pub mod neo;
-#[cfg(feature = "experimental-ml")]
-pub mod organism;
-pub mod proof;
 pub mod providers;
-pub mod train_monitor;
-pub mod training;
-pub mod simulation;
-pub mod spiking;
+
 pub mod supervisor;
-pub mod qlms_demo;
-pub mod qlms_federation;
 pub mod mcp_qlms;
 pub mod dashboard;
 pub mod workspace;

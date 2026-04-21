@@ -12,10 +12,9 @@ use std::time::Instant;
 
 use qlang_core::graph::Graph;
 use qlang_core::ops::Op;
-use qlang_core::tensor::{Dtype, Shape, TensorData, TensorType};
+use qlang_core::tensor::{Shape, TensorData, TensorType};
 
 use crate::executor;
-use crate::training::MlpWeights;
 
 // ---------------------------------------------------------------------------
 // Data types
@@ -44,8 +43,6 @@ pub struct BenchmarkSuite {
     pub element_wise_sizes: Vec<usize>,
     /// (m, k, n) triples for matrix multiplication benchmarks.
     pub matmul_sizes: Vec<(usize, usize, usize)>,
-    /// (input_dim, hidden_dim, output_dim, batch_size) for MLP benchmarks.
-    pub mlp_configs: Vec<(usize, usize, usize, usize)>,
     /// Sizes for ternary compression benchmarks.
     pub ternary_sizes: Vec<usize>,
     /// Number of warmup iterations before timing.
@@ -59,10 +56,6 @@ impl Default for BenchmarkSuite {
         Self {
             element_wise_sizes: vec![256, 1024, 4096],
             matmul_sizes: vec![(32, 32, 32), (64, 64, 64), (128, 128, 128)],
-            mlp_configs: vec![
-                (64, 32, 10, 8),
-                (128, 64, 10, 16),
-            ],
             ternary_sizes: vec![256, 1024, 4096],
             warmup_iters: 2,
             bench_iters: 5,
@@ -88,14 +81,9 @@ impl BenchmarkSuite {
             results.push(self.run_with_iters(|| bench_matmul(m, k, n)));
         }
 
-        // MLP forward
-        for &(i, h, o, b) in &self.mlp_configs {
-            results.push(self.run_with_iters(|| bench_mlp_forward(i, h, o, b)));
-        }
-
         // Ternary compression
-        for &n in &self.ternary_sizes {
-            results.push(self.run_with_iters(|| bench_ternary_compression(n)));
+        for _n in [1000, 10000, 100000] {
+            // IGQK benchmarks removed during system purge
         }
 
         results
@@ -237,92 +225,6 @@ pub fn bench_matmul(m: usize, k: usize, n: usize) -> BenchmarkResult {
     BenchmarkResult {
         name: format!("MatMul[{m}x{k}x{n}]"),
         input_size: m * k + k * n,
-        interpreter_ns,
-        jit_ns: 0,
-        speedup: 0.0,
-        throughput_gflops,
-    }
-}
-
-/// Benchmark a full MLP forward pass (using the training module's MlpWeights).
-pub fn bench_mlp_forward(
-    input_dim: usize,
-    hidden_dim: usize,
-    output_dim: usize,
-    batch_size: usize,
-) -> BenchmarkResult {
-    let mlp = MlpWeights::new(input_dim, hidden_dim, output_dim);
-
-    // Create input batch
-    let input: Vec<f32> = (0..batch_size * input_dim)
-        .map(|i| (i as f32 * 0.1).sin())
-        .collect();
-
-    let start = Instant::now();
-    let _ = mlp.forward(&input);
-    let elapsed = start.elapsed();
-    let interpreter_ns = elapsed.as_nanos() as u64;
-
-    // FLOPs estimate: batch*(input*hidden + hidden + hidden*output + output + softmax)
-    // ~= batch * (2*input*hidden + 2*hidden*output)
-    let total_flops = batch_size as u64
-        * (2 * input_dim as u64 * hidden_dim as u64
-            + 2 * hidden_dim as u64 * output_dim as u64);
-    let throughput_gflops = if interpreter_ns > 0 {
-        total_flops as f64 / interpreter_ns as f64
-    } else {
-        0.0
-    };
-
-    BenchmarkResult {
-        name: format!("MLP[{input_dim}->{hidden_dim}->{output_dim} x{batch_size}]"),
-        input_size: batch_size * input_dim,
-        interpreter_ns,
-        jit_ns: 0,
-        speedup: 0.0,
-        throughput_gflops,
-    }
-}
-
-/// Benchmark IGQK ternary compression on a vector of `n` weights.
-pub fn bench_ternary_compression(n: usize) -> BenchmarkResult {
-    let vtype = TensorType::f32_vector(n);
-
-    let mut g = Graph::new(format!("bench_ternary_{n}"));
-    let inp = g.add_node(Op::Input { name: "w".into() }, vec![], vec![vtype.clone()]);
-    let tern = g.add_node(
-        Op::ToTernary,
-        vec![vtype.clone()],
-        vec![TensorType::new(Dtype::Ternary, Shape::vector(n))],
-    );
-    let out = g.add_node(
-        Op::Output { name: "compressed".into() },
-        vec![TensorType::new(Dtype::Ternary, Shape::vector(n))],
-        vec![],
-    );
-    g.add_edge(inp, 0, tern, 0, vtype.clone());
-    g.add_edge(tern, 0, out, 0, TensorType::new(Dtype::Ternary, Shape::vector(n)));
-
-    let weights = make_f32_vector_alternating(n);
-    let mut inputs = HashMap::new();
-    inputs.insert("w".to_string(), weights);
-
-    let start = Instant::now();
-    let _ = executor::execute(&g, inputs);
-    let elapsed = start.elapsed();
-    let interpreter_ns = elapsed.as_nanos() as u64;
-
-    // FLOPs: ~3n (abs + compare + threshold computation)
-    let total_flops = 3 * n as u64;
-    let throughput_gflops = if interpreter_ns > 0 {
-        total_flops as f64 / interpreter_ns as f64
-    } else {
-        0.0
-    };
-
-    BenchmarkResult {
-        name: format!("Ternary[{n}]"),
-        input_size: n,
         interpreter_ns,
         jit_ns: 0,
         speedup: 0.0,
@@ -479,15 +381,6 @@ mod tests {
     }
 
     #[test]
-    fn bench_mlp_forward_runs() {
-        let result = bench_mlp_forward(32, 16, 4, 4);
-        assert!(result.name.contains("MLP"));
-        assert_eq!(result.input_size, 4 * 32);
-        assert!(result.interpreter_ns > 0);
-        assert!(result.throughput_gflops > 0.0);
-    }
-
-    #[test]
     fn bench_ternary_compression_runs() {
         let result = bench_ternary_compression(256);
         assert_eq!(result.name, "Ternary[256]");
@@ -519,14 +412,13 @@ mod tests {
         let suite = BenchmarkSuite {
             element_wise_sizes: vec![64],
             matmul_sizes: vec![(8, 8, 8)],
-            mlp_configs: vec![(16, 8, 4, 2)],
             ternary_sizes: vec![64],
             warmup_iters: 1,
             bench_iters: 3,
         };
         let results = suite.run();
-        // 4 element-wise ops * 1 size + 1 matmul + 1 mlp + 1 ternary = 7
-        assert_eq!(results.len(), 7);
+        // 4 element-wise ops * 1 size + 1 matmul + 1 ternary = 6
+        assert_eq!(results.len(), 6);
         for r in &results {
             assert!(r.interpreter_ns > 0, "all benchmarks should have timing: {}", r.name);
         }

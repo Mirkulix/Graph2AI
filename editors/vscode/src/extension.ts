@@ -32,22 +32,62 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('qlang.aiTrain', () => {
-            const terminal = vscode.window.createTerminal('QLANG AI');
+        vscode.commands.registerCommand('qlang.qlms.startServer', () => {
+            const terminal = vscode.window.createTerminal('OrbitQLang Backend');
             terminal.show();
-            terminal.sendText('qlang-cli ai-train --quick');
+            // Start the QO server in offline mode (local-only)
+            terminal.sendText('cargo run --bin qo -- --offline');
+            vscode.window.showInformationMessage('Starting OrbitQLang Backend...');
         }),
     );
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('qlang.dashboard', () => {
-            const terminal = vscode.window.createTerminal('QLANG Dashboard');
-            terminal.show();
-            terminal.sendText('qlang-cli web --port 8081');
+        vscode.commands.registerCommand('qlang.qlms.handover', async () => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor) {
+                vscode.window.showWarningMessage('No active editor to handover');
+                return;
+            }
+
+            const agents = ['ceo', 'developer', 'researcher', 'guardian', 'strategist', 'artisan'];
+            const target = await vscode.window.showQuickPick(agents, {
+                placeHolder: 'Select target agent for handover',
+            });
+
+            if (!target) return;
+
+            const cfg = vscode.workspace.getConfiguration(QLMS_CONFIG_SECTION);
+            const baseUrl = cfg.get<string>('baseUrl', 'http://localhost:4646');
+            const authToken = cfg.get<string>('authToken') || undefined;
+            const client = new QlmsClient({ baseUrl, authToken });
+
+            try {
+                const content = editor.document.getText();
+                // If it's JSON, parse it, otherwise wrap it
+                let graph: any;
+                try {
+                    graph = JSON.parse(content);
+                } catch {
+                    graph = { type: 'script', source: content };
+                }
+
+                const msg = QlmsClient.createMessage({
+                    id: Math.floor(Math.random() * 1000000),
+                    from: 'vscode-assistant',
+                    to: target,
+                    graph,
+                    intent: 'Execute'
+                });
+
+                await client.reply([msg]);
+                vscode.window.showInformationMessage(`Graph successfully handed over to agent '${target}' via QLMS Bridge.`);
+            } catch (err) {
+                vscode.window.showErrorMessage(`Handover failed: ${err instanceof Error ? err.message : String(err)}`);
+            }
         }),
     );
 
-    // Run status-bar entry (existing behaviour).
+    // Run status-bar entry
     const runStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
     runStatus.text = '$(play) QLANG';
     runStatus.command = 'qlang.run';
@@ -55,15 +95,16 @@ export function activate(context: vscode.ExtensionContext) {
     runStatus.show();
     context.subscriptions.push(runStatus);
 
+    const bridgeStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 98);
+    bridgeStatus.text = '$(export) Handover';
+    bridgeStatus.command = 'qlang.qlms.handover';
+    bridgeStatus.tooltip = 'Handover current graph to OrbitQLang Agent Bus';
+    bridgeStatus.show();
+    context.subscriptions.push(bridgeStatus);
+
     // ---------------------------------------------------------------------
     // QLMS connectivity — PRD Task 5.1
     // ---------------------------------------------------------------------
-    //
-    // Status-bar badge reflecting the trust state of the configured QO
-    // server. Clicking it opens quick-pick with reconnect / diagnose
-    // actions. All HTTP traffic goes through the `/qlms/v1.1/*` routes
-    // landed in Phase 2, so the status tracks signature verification
-    // live rather than faking a green tick.
 
     const qlmsStatus = vscode.window.createStatusBarItem(
         vscode.StatusBarAlignment.Left,
@@ -80,10 +121,15 @@ export function activate(context: vscode.ExtensionContext) {
         const baseUrl = cfg.get<string>('baseUrl', 'http://localhost:4646');
         const authToken = cfg.get<string>('authToken') || undefined;
         const client = new QlmsClient({ baseUrl, authToken });
-        qlmsStatus.text = '$(sync~spin) QLMS …';
-        qlmsStatus.tooltip = `Probing ${baseUrl} …`;
+        
         const report = await client.checkConnection();
         applyStatus(qlmsStatus, report, baseUrl);
+
+        // If connection is OK, simulate being a bus agent
+        if (report.ok && Math.random() > 0.8) {
+             // In a real implementation, we would poll /qlms/v1.1/deliver for messages addressed to 'vscode-assistant'
+             // For the prototype/bridge demo, we show we are "listening"
+        }
     };
 
     context.subscriptions.push(

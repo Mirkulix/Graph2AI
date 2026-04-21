@@ -193,22 +193,9 @@ pub async fn memory(State(state): State<Arc<AppState>>) -> Json<MemoryListRespon
         count
     };
 
-    // ── Organism shared memory (only when experimental-ml is enabled)
-    #[cfg(feature = "experimental-ml")]
-    let organism_count = {
-        let org = crate::routes::organism::organism_snapshot().await;
-        for item in org.items.iter().rev().take(20) {
-            let preview = if item.len() > 120 { format!("{}…", &item[..120]) } else { item.clone() };
-            entries.push(MemEntry {
-                source: "organism".into(),
-                key: item.clone(),
-                preview,
-            });
-        }
-        org.items.len()
-    };
-    #[cfg(not(feature = "experimental-ml"))]
+
     let organism_count: usize = 0;
+
 
     Json(MemoryListResponse {
         hdc_count,
@@ -235,12 +222,7 @@ pub async fn status(State(state): State<Arc<AppState>>) -> Json<StatusSnapshot> 
     let hdc = { state.memory.lock().await.count() };
     let hw = hardware().await.0;
 
-    #[cfg(feature = "experimental-ml")]
-    let (organism_generation, organism_interactions, organism_memory_items, specialists) = {
-        let org = crate::routes::organism::organism_snapshot().await;
-        (org.generation, org.interactions, org.items.len(), org.specialists)
-    };
-    #[cfg(not(feature = "experimental-ml"))]
+
     let (organism_generation, organism_interactions, organism_memory_items, specialists) =
         (0u32, 0usize, 0usize, 0usize);
 

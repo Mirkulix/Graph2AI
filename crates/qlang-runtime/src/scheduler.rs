@@ -173,7 +173,6 @@ fn estimate_node_flops(op: &Op, output_types: &[qlang_core::tensor::TensorType])
         Op::Relu => n,
         Op::Sigmoid | Op::Tanh | Op::Gelu => n * 4,
         Op::Softmax { .. } => n * 5,
-        Op::ToTernary => n * 2,
         Op::Attention { .. } => n * 10,
         Op::LayerNorm { .. } => n * 5,
         _ => n,

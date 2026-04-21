@@ -24,10 +24,6 @@ pub fn to_dot(graph: &Graph) -> String {
         let (color, shape) = match &node.op {
             Op::Input { .. } => ("#d4edda", "ellipse"),   // green
             Op::Output { .. } => ("#d1ecf1", "ellipse"),  // blue
-            Op::ToTernary | Op::ToLowRank { .. } | Op::ToSparse { .. } | Op::Project { .. } => {
-                ("#f8d7da", "box") // red - compression
-            }
-            op if op.is_quantum() => ("#e2d5f1", "box"),  // purple - quantum
             _ => ("#fff3cd", "box"),                       // yellow - compute
         };
 
@@ -86,12 +82,11 @@ pub fn to_ascii(graph: &Graph) -> String {
             let icon = match &node.op {
                 Op::Input { .. } => "▶",
                 Op::Output { .. } => "◀",
-                op if op.is_quantum() => "◈",
-                Op::ToTernary | Op::ToLowRank { .. } | Op::ToSparse { .. } => "▼",
                 Op::Relu | Op::Sigmoid | Op::Tanh | Op::Softmax { .. } => "σ",
                 Op::MatMul => "×",
                 Op::Add => "+",
                 Op::Mul => "·",
+                Op::ArgMax => "M",
                 _ => "■",
             };
 

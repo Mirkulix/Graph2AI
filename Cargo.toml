@@ -10,18 +10,14 @@ members = [
     "crates/qlang-compile",
     "crates/qlang-runtime",
     "crates/qlang-agent",
-    "crates/qlang-python",
     "crates/qlang-sdk",
     "qo/qo-server",
     "qo/qo-llm",
     "qo/qo-memory",
-    "qo/qo-consciousness",
     "qo/qo-values",
     "qo/qo-agents",
-    "qo/qo-evolution",
-    "qo/qo-simulation",
     "qo/qo-telegram",
-    "qo/qo-embed",
+    "qo/qo-qlms-bridge",
 ]
 resolver = "2"
 
@@ -58,13 +54,10 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 inkwell = { version = "0.5", features = ["llvm18-0"], optional = true }
 tokio = { version = "1.51.0", features = ["full"] }
-qo-embed = { path = "qo/qo-embed" }
 qo-server = { path = "qo/qo-server" }
 qo-telegram = { path = "qo/qo-telegram" }
 qo-memory = { path = "qo/qo-memory" }
 qo-agents = { path = "qo/qo-agents" }
-qo-consciousness = { path = "qo/qo-consciousness" }
-qo-evolution = { path = "qo/qo-evolution" }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 axum = { workspace = true }
@@ -77,36 +70,9 @@ path = "src/main.rs"
 name = "qlang"
 path = "src/cli.rs"
 
-[[bin]]
-name = "gpu_train"
-path = "src/gpu_train_bin.rs"
-required-features = ["experimental-ml"]
-
-[[bin]]
-name = "classify-request"
-path = "src/classify_request.rs"
-
-[[bin]]
-name = "train-hybrid-router"
-path = "src/train_hybrid_router.rs"
-
-[[bin]]
-name = "eval-hybrid-router"
-path = "src/eval_hybrid_router.rs"
-
-[[bin]]
-name = "coding-handover"
-path = "src/coding_handover.rs"
-
 [features]
 default = ["llvm"]
 llvm = ["inkwell", "qlang-compile/llvm"]
-gpu = ["qlang-runtime/gpu"]
-cuda = ["qlang-runtime/cuda"]
-mlx = ["qlang-runtime/mlx"]
-# Known-broken ML paths (Mamba / gpu_train / organism / spiking / CIFAR-10).
-# Disabled by default so the workspace stays honest — see QLANG-STATUS.md.
-experimental-ml = ["qlang-runtime/experimental-ml", "qo-server/experimental-ml"]
 
 [[example]]
 name = "hello_qlang"
@@ -117,17 +83,5 @@ name = "jit_compile"
 path = "examples/jit_compile.rs"
 
 [[example]]
-name = "train_mnist"
-path = "examples/train_mnist.rs"
-
-[[example]]
-name = "hybrid_llm_router"
-path = "examples/hybrid_llm_router.rs"
-
-[[example]]
 name = "benchmark_suite"
 path = "examples/benchmark_suite.rs"
-
-[[example]]
-name = "multi_agent"
-path = "examples/multi_agent.rs"

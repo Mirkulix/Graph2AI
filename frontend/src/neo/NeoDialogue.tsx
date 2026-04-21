@@ -1,14 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 
-interface OrganismResponse {
-  text: string
-  specialist: string
-  confidence: number
-  reasoning: string[]
-  memory_stored: boolean
-  total_interactions: number
-  generation: number
-  memory_items: number
+interface ChatResponse {
+  response: string
+  tier?: string
 }
 
 interface Turn {
@@ -44,24 +38,21 @@ export default function NeoDialogue() {
     setErr(null)
     const t0 = performance.now()
     try {
-      const r = await fetch('/api/organism/chat', {
+      const r = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: msg }),
       })
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
-      const data: OrganismResponse = await r.json()
+      const data: ChatResponse = await r.json()
       const latencyMs = Math.round(performance.now() - t0)
-      const cleanText = (data.text ?? '').trim()
+      const cleanText = (data.response ?? '').trim()
       setTurns(t => [...t, {
         role: 'organism',
         text: cleanText.length === 0 ? '(no response — organism returned empty)' : cleanText,
         meta: {
-          specialist: data.specialist,
-          confidence: data.confidence,
+          specialist: data.tier ?? 'QO',
           latencyMs,
-          reasoning: data.reasoning,
-          memory_stored: data.memory_stored,
         },
       }])
     } catch (e) {
@@ -130,7 +121,7 @@ export default function NeoDialogue() {
                 color: t.role === 'user' ? '#4f8eff' : '#2dd4a0',
                 marginBottom: 6, fontFamily: 'Outfit', fontWeight: 700,
               }}>
-                {t.role === 'user' ? 'You' : (t.meta?.specialist ?? 'Organism')}
+                {t.role === 'user' ? 'You' : (t.meta?.specialist ?? 'QO')}
               </div>
               <div style={{
                 fontSize: 13, lineHeight: 1.6,

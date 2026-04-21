@@ -173,11 +173,6 @@ async fn handle_tools_call(
                 }
             }
             let _ = state.store.log_action("goal_created", &goal_desc, "mcp");
-            state.stream.publish_activity(
-                format!("Neues Ziel (MCP) erstellt: {}", goal_desc),
-                None,
-                "info",
-            );
 
             // Kick off the background executor.
             let state_clone = state.clone();

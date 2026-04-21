@@ -2,8 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 use crate::graph::{Graph, NodeId};
-use crate::ops::Op;
-use crate::tensor::{Dtype, Shape};
+use crate::tensor::Shape;
 
 /// A constraint attached to a node or graph, with optional formal proof.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -54,18 +53,6 @@ pub struct Proof {
 /// Reference to a theorem from the IGQK theory.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TheoremRef {
-    /// Theorem 5.1: Convergence of quantum gradient flow
-    IgqkConvergence,
-    /// Theorem 5.2: Compression distortion bound
-    IgqkCompressionBound,
-    /// Theorem 5.3: Entanglement improves generalization
-    IgqkEntanglementGeneralization,
-    /// Proposition 6.1: HLWT as Fourier transform of quantum gradient flow
-    IgqkHlwt,
-    /// Proposition 6.2: TLGT as discrete subgroup
-    IgqkTlgt,
-    /// Proposition 6.3: FCHL as fractional Laplace-Beltrami
-    IgqkFchl,
     /// External theorem reference
     External { name: String },
 }
@@ -170,19 +157,7 @@ pub fn verify_graph(graph: &Graph) -> VerificationResult {
             }
         }
 
-        // Check ternary output type
-        if matches!(node.op, Op::ToTernary) {
-            if let Some(out_type) = node.output_types.first() {
-                if out_type.dtype != Dtype::Ternary {
-                    failed.push(VerificationCheck {
-                        node_id: Some(node.id),
-                        check: "ternary_output".into(),
-                        passed: false,
-                        detail: "ToTernary op must output Ternary dtype".into(),
-                    });
-                }
-            }
-        }
+        // Operations are now verified via Op::n_inputs and Op::n_outputs metadata.
     }
 
     // 4. Warnings

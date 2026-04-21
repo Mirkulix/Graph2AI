@@ -2,7 +2,7 @@ use crate::agent::{Agent, AgentRole, AgentStatus};
 use crate::goal::{Goal, GoalStatus};
 use crate::executor;
 use qlang_agent::bus::MessageBus;
-use qo_evolution::QuantumState;
+
 use qo_llm::LlmRouter;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -87,7 +87,6 @@ impl AgentRegistry {
         &mut self,
         goal_id: u64,
         llm: &LlmRouter,
-        quantum_state: Option<&QuantumState>,
         bus: Option<Arc<MessageBus>>,
     ) -> Result<(String, bool), Box<dyn std::error::Error + Send + Sync>> {
         // Mark CEO active
@@ -101,7 +100,7 @@ impl AgentRegistry {
             .find(|g| g.id == goal_id)
             .ok_or("Goal not found")?;
 
-        let result = executor::execute_goal_qlang(llm, goal, quantum_state, bus).await;
+        let result = executor::execute_goal_qlang(llm, goal, bus).await;
 
         // Update agent stats based on subtask results
         if let Some(goal) = self.goals.iter().find(|g| g.id == goal_id) {
@@ -135,7 +134,7 @@ impl AgentRegistry {
         &mut self,
         goal_id: u64,
         llm: &LlmRouter,
-        quantum_state: Option<&QuantumState>,
+        preferred_tier: Option<qo_llm::Tier>,
     ) -> Result<(usize, String), Box<dyn std::error::Error + Send + Sync>> {
         if let Some(ceo) = self.agents.get_mut(&AgentRole::Ceo) {
             ceo.status = AgentStatus::Active;
@@ -147,7 +146,7 @@ impl AgentRegistry {
             .find(|g| g.id == goal_id)
             .ok_or("Goal not found")?;
 
-        let chosen_strategy = executor::decompose_goal(llm, goal, quantum_state).await?;
+        let chosen_strategy = executor::decompose_goal(llm, goal, preferred_tier).await?;
         let count = goal.subtasks.len();
         Ok((count, chosen_strategy))
     }
@@ -158,6 +157,7 @@ impl AgentRegistry {
         goal_id: u64,
         subtask_index: usize,
         llm: &LlmRouter,
+        preferred_tier: Option<qo_llm::Tier>,
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         // Mark the agent for this subtask as active
         let agent_role = {
@@ -182,7 +182,7 @@ impl AgentRegistry {
             .find(|g| g.id == goal_id)
             .ok_or("Goal not found")?;
 
-        let result = executor::execute_subtask(llm, goal, subtask_index).await;
+        let result = executor::execute_subtask(llm, goal, subtask_index, preferred_tier).await;
 
         if let Some(agent) = self.agents.get_mut(&agent_role) {
             agent.status = AgentStatus::Idle;
@@ -200,6 +200,7 @@ impl AgentRegistry {
         &mut self,
         goal_id: u64,
         llm: &LlmRouter,
+        preferred_tier: Option<qo_llm::Tier>,
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let goal = self
             .goals
@@ -207,7 +208,7 @@ impl AgentRegistry {
             .find(|g| g.id == goal_id)
             .ok_or("Goal not found")?;
 
-        executor::summarize_goal(llm, goal).await
+        executor::summarize_goal(llm, goal, preferred_tier).await
     }
 
     /// Step 2 (parallel): Execute all subtasks of a goal concurrently.
@@ -216,6 +217,7 @@ impl AgentRegistry {
         &mut self,
         goal_id: u64,
         llm: std::sync::Arc<qo_llm::LlmRouter>,
+        preferred_tier: Option<qo_llm::Tier>,
     ) -> Vec<(usize, String, String, bool, u64)> {
         // Collect subtask metadata without holding &mut self across await points
         let subtask_info: Vec<(usize, crate::agent::AgentRole, String, String)> = {
@@ -251,7 +253,8 @@ impl AgentRegistry {
             let assigned_to = subtask_info[idx].1;
             handles.push(tokio::spawn(async move {
                 let start = std::time::Instant::now();
-                let result = crate::llm_node::llm_reason(&*llm_arc, assigned_to, &goal_desc_c, &desc).await;
+                let preferred_tier_c = preferred_tier;
+                let result = crate::llm_node::llm_reason(&*llm_arc, assigned_to, &goal_desc_c, &desc, preferred_tier_c).await;
                 let duration_ms = start.elapsed().as_millis() as u64;
                 (idx, agent_name, desc, result, duration_ms)
             }));
@@ -336,7 +339,7 @@ impl AgentRegistry {
         // are captured on the subtask — we still flip the goal back to
         // Completed so the UI doesn't get stuck on InProgress.
         if let Err(e) = self
-            .execute_goal_subtask(goal_id, new_idx, &*llm)
+            .execute_goal_subtask(goal_id, new_idx, &*llm, None)
             .await
         {
             if let Some(goal) = self.goals.iter_mut().find(|g| g.id == goal_id) {

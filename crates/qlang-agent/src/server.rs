@@ -237,41 +237,13 @@ pub fn handle_request(store: &GraphStore, request: &Request) -> Response {
             None => Response::Error(format!("graph not found: {graph_id}")),
         },
         Request::ListGraphs => Response::GraphList(store.list()),
-        Request::CompressGraph { graph_id, method } => {
+        Request::CompressGraph { graph_id, .. } => {
             match store.get(*graph_id) {
                 Some(graph) => {
                     let mut compressed = graph.clone();
-
-                    let igqk_method = match method {
-                        CompressionMethod::Ternary => qlang_runtime::igqk::CompressionMethod::Ternary,
-                        CompressionMethod::LowRank(r) => qlang_runtime::igqk::CompressionMethod::LowRank(*r),
-                        CompressionMethod::Sparse(s) => qlang_runtime::igqk::CompressionMethod::Sparse(*s),
-                    };
-
-                    let weights = if let Some(w_str) = graph.metadata.get("weights") {
-                        serde_json::from_str::<Vec<f32>>(w_str).unwrap_or_else(|_| vec![1.0, -1.0, 0.5, -0.5])
-                    } else {
-                        vec![1.0, -1.0, 0.5, -0.5]
-                    };
-
-                    let result = qlang_runtime::igqk::compress_with_bound(&weights, igqk_method, 1.0);
-
                     compressed.metadata.insert(
-                        "compressed_weights".to_string(),
-                        format!("{:?}", result.compressed)
-                    );
-                    compressed.metadata.insert(
-                        "compression_distortion".to_string(),
-                        result.distortion.to_string()
-                    );
-
-                    compressed.metadata.insert(
-                        "compressed_from".to_string(),
-                        graph_id.to_string(),
-                    );
-                    compressed.metadata.insert(
-                        "compression_method".to_string(),
-                        format!("{method:?}"),
+                        "compression".to_string(),
+                        "disabled (system purge)".into()
                     );
                     let compressed_id = store.insert(compressed);
                     Response::GraphCompressed {

@@ -320,14 +320,7 @@ pub async fn tensor_exchange(
     // ================================================================
     // Final: Publish activity event so it shows in the UI
     // ================================================================
-    state.stream.publish_activity(
-        format!(
-            "PROOF: Tensor-Austausch! researcher→developer: {}B, similarity={:.4}, {}us, 0 LLM calls",
-            total_bytes, similarity, total_start.elapsed().as_micros()
-        ),
-        Some("QLMS".to_string()),
-        "success",
-    );
+
 
     let total_us = total_start.elapsed().as_micros() as u64;
 

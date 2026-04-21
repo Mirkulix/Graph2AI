@@ -185,21 +185,6 @@ pub fn type_check(graph: &Graph) -> Vec<TypeError> {
                 }
             }
 
-            Op::ToTernary => {
-                if let Some(tt) = input_types.first() {
-                    if tt.dtype != Dtype::F32 && tt.dtype != Dtype::F64 {
-                        errors.push(TypeError {
-                            node_id,
-                            message: format!("ToTernary requires float input, got {}", tt.dtype),
-                            expected: Some("f32 or f64".into()),
-                            got: Some(format!("{}", tt.dtype)),
-                            suggestion: Some("Cast input to f32 first".into()),
-                        });
-                    }
-                    node_output_types.insert(node_id,
-                        TensorType::new(Dtype::Ternary, tt.shape.clone()));
-                }
-            }
 
             Op::Constant => {
                 if let Some(tt) = node.output_types.first() {
@@ -272,17 +257,6 @@ mod tests {
         assert!(errors[0].message.contains("Shape mismatch"));
     }
 
-    #[test]
-    fn ternary_requires_float() {
-        let mut g = Graph::new("ternary_type");
-        let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![TensorType::new(Dtype::I32, Shape::vector(4))]);
-        let t = g.add_node(Op::ToTernary, vec![], vec![]);
-        g.add_edge(a, 0, t, 0, TensorType::new(Dtype::I32, Shape::vector(4)));
-
-        let errors = type_check(&g);
-        assert!(!errors.is_empty());
-        assert!(errors[0].message.contains("float"));
-    }
 
     #[test]
     fn output_without_input() {

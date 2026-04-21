@@ -145,20 +145,6 @@ impl Registry {
             stdlib.add_graph(g);
         }
 
-        // IGQK compression graph
-        {
-            let mut g = Graph::new("igqk_ternary");
-            let w = g.add_node(Op::Input { name: "weights".into() }, vec![], vec![TensorType::f32_matrix(128, 128)]);
-            let t = g.add_node(Op::ToTernary,
-                vec![TensorType::f32_matrix(128, 128)],
-                vec![TensorType::ternary_matrix(128, 128)]);
-            let out = g.add_node(Op::Output { name: "compressed".into() },
-                vec![TensorType::ternary_matrix(128, 128)], vec![]);
-            g.add_edge(w, 0, t, 0, TensorType::f32_matrix(128, 128));
-            g.add_edge(t, 0, out, 0, TensorType::ternary_matrix(128, 128));
-            stdlib.add_graph(g);
-        }
-
         self.register(stdlib);
     }
 }
@@ -198,7 +184,6 @@ mod tests {
 
         let stdlib = registry.get("std").unwrap();
         assert!(stdlib.get_graph("dense").is_some());
-        assert!(stdlib.get_graph("igqk_ternary").is_some());
         assert!(stdlib.total_nodes() > 0);
     }
 }

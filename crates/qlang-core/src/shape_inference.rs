@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use crate::graph::{Graph, NodeId};
 use crate::ops::Op;
-use crate::tensor::{Dim, Dtype, Shape, TensorType};
+use crate::tensor::{Dim, Shape, TensorType};
 
 // ---------------------------------------------------------------------------
 // Error types
@@ -239,11 +239,6 @@ fn infer_node(
             }
         }
 
-        // --- ToTernary: same shape, dtype changes ---
-        Op::ToTernary => {
-            let a = unary_input(nid, inputs)?;
-            Ok(vec![TensorType::new(Dtype::Ternary, a.shape.clone())])
-        }
 
         // --- LayerNorm: same shape ---
         Op::LayerNorm { .. } => {
@@ -481,23 +476,6 @@ mod tests {
         assert_eq!(shapes[&1][0].shape, Shape::scalar());
     }
 
-    // --- 9. ToTernary: dtype changes to Ternary ---
-    #[test]
-    fn test_to_ternary_dtype() {
-        let input = f32_mat(16, 32);
-        let mut g = Graph::new("test");
-        let inp = g.add_node(Op::Input { name: "x".into() }, vec![], vec![input.clone()]);
-        let tt_node = g.add_node(
-            Op::ToTernary,
-            vec![input.clone()],
-            vec![TensorType::ternary_matrix(16, 32)],
-        );
-        g.add_edge(inp, 0, tt_node, 0, input);
-        let shapes = infer_shapes(&g).unwrap();
-        let out = &shapes[&1][0];
-        assert_eq!(out.dtype, Dtype::Ternary);
-        assert_eq!(out.shape, Shape::matrix(16, 32));
-    }
 
     // --- 10. Concat along axis ---
     #[test]

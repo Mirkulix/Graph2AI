@@ -11,7 +11,7 @@
     "Programming Languages"
   ],
   "activationEvents": [
-    "onLanguage:qlang"
+    "*"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -45,17 +45,23 @@
         "title": "QLANG: Open REPL"
       },
       {
-        "command": "qlang.aiTrain",
-        "title": "QLANG: AI Quick Train"
-      },
-      {
         "command": "qlang.dashboard",
         "title": "QLANG: Open QO Dashboard"
       },
       {
         "command": "qlang.qlms.check",
-        "title": "QLANG: Check QLMS Connection",
+        "title": "QLMS: Check Connection",
         "icon": "$(shield)"
+      },
+      {
+        "command": "qlang.qlms.startServer",
+        "title": "QLMS: Start Local QO Backend",
+        "icon": "$(server)"
+      },
+      {
+        "command": "qlang.qlms.handover",
+        "title": "QLMS: Handover Graph to Agent",
+        "icon": "$(export)"
       }
     ],
     "keybindings": [

@@ -29,16 +29,10 @@ import AuthTokenPanel from './AuthTokenPanel'
 import NeoShell from './neo/NeoShell'
 import GoalsView from './GoalsView'
 import AgentsView from './AgentsView'
-import ConsciousnessView from './ConsciousnessView'
 import ProviderView from './ProviderView'
-import EvolutionView from './EvolutionView'
 import GraphsView from './GraphsView'
 import KnowledgeGraph3DView from './KnowledgeGraph3DView'
 import MessagesView from './MessagesView'
-import TrainingView from './TrainingView'
-import GpuTrainingView from './GpuTrainingView'
-import SpikingView from './SpikingView'
-import OrganismView from './OrganismView'
 import HistorieView from './HistorieView'
 
 type Tab =
@@ -54,16 +48,11 @@ type Tab =
   | 'agents'
   | 'goals'
   | 'provider'
-  | 'evolution'
   | 'graphs'
   | 'knowledge-3d'
   | 'messages'
-  | 'training'
-  | 'gpu-training'
-  | 'spiking'
-  | 'organism'
   | 'historie'
-  | 'consciousness'
+
 
 type NavKind = 'primary' | 'advanced'
 
@@ -92,12 +81,7 @@ const NAV: NavItem[] = [
   { id: 'graphs', label: 'QLANG-Editor', icon: HomeIcon, kind: 'advanced' },
   { id: 'messages', label: 'Messages', icon: HomeIcon, kind: 'advanced' },
   { id: 'provider', label: 'Provider', icon: HomeIcon, kind: 'advanced' },
-  { id: 'evolution', label: 'Evolution', icon: HomeIcon, kind: 'advanced' },
-  { id: 'training', label: 'Training', icon: HomeIcon, kind: 'advanced' },
-  { id: 'gpu-training', label: 'GPU Training', icon: HomeIcon, kind: 'advanced' },
-  { id: 'spiking', label: 'Spiking', icon: HomeIcon, kind: 'advanced' },
-  { id: 'organism', label: 'Organismus', icon: HomeIcon, kind: 'advanced' },
-  { id: 'consciousness', label: 'Bewusstsein', icon: HomeIcon, kind: 'advanced' },
+
   { id: 'knowledge-3d', label: 'Knowledge 3D', icon: HomeIcon, kind: 'advanced' },
   { id: 'historie', label: 'Historie', icon: HomeIcon, kind: 'advanced' },
 ]
@@ -442,22 +426,10 @@ function View({
           <GoalsView />
         </div>
       )
-    case 'consciousness':
-      return (
-        <div className="view">
-          <ConsciousnessView />
-        </div>
-      )
     case 'provider':
       return (
         <div className="view">
           <ProviderView />
-        </div>
-      )
-    case 'evolution':
-      return (
-        <div className="view">
-          <EvolutionView />
         </div>
       )
     case 'graphs':
@@ -476,30 +448,6 @@ function View({
       return (
         <div className="view">
           <MessagesView />
-        </div>
-      )
-    case 'training':
-      return (
-        <div className="view">
-          <TrainingView />
-        </div>
-      )
-    case 'gpu-training':
-      return (
-        <div className="view">
-          <GpuTrainingView />
-        </div>
-      )
-    case 'spiking':
-      return (
-        <div className="view">
-          <SpikingView />
-        </div>
-      )
-    case 'organism':
-      return (
-        <div className="view">
-          <OrganismView />
         </div>
       )
     case 'historie':

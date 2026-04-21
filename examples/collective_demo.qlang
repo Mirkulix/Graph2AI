@@ -1,0 +1,6 @@
+graph collective_demo {
+  input prompt: utf8
+  node researcher = ollama_chat:mistral(prompt)
+  node developer = ollama_chat:mistral(researcher)
+  output result = developer
+}

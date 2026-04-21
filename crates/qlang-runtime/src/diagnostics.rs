@@ -416,9 +416,6 @@ fn check_type_mismatches(graph: &Graph, collector: &mut DiagnosticCollector) {
                 | Op::Gelu
                 | Op::LayerNorm { .. }
                 | Op::Attention { .. }
-                | Op::Evolve { .. }
-                | Op::FisherMetric
-                | Op::Entropy
         )
     };
 

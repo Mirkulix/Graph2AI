@@ -80,6 +80,7 @@ pub async fn llm_reason(
     role: AgentRole,
     context: &str,
     task: &str,
+    preferred_tier: Option<qo_llm::Tier>,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     // Role-specific tool augmentation.
     let augmented_context = match role {
@@ -177,8 +178,10 @@ pub async fn llm_reason(
             format!("Kontext: {augmented_context}\n\nAufgabe: {task}"),
         ),
     ];
-    let preferred = qo_llm::LlmRouter::tier_from_hint(role.preferred_provider());
-    let (body, tier) = llm.chat_preferring(preferred, messages).await?;
+    
+    let route_tier = preferred_tier.or_else(|| qo_llm::LlmRouter::tier_from_hint(role.preferred_provider()));
+    
+    let (body, tier) = llm.chat_preferring(route_tier, messages).await?;
     tracing::info!(
         "agent {}: response from {:?} (preferred: {})",
         role.name(),
@@ -227,6 +230,7 @@ pub async fn agent_execute_with_tools(
     context: &str,
     task: &str,
     values: &qo_values::ValueScores,
+    preferred_tier: Option<qo_llm::Tier>,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     match role {
         AgentRole::Guardian => {
@@ -247,7 +251,7 @@ pub async fn agent_execute_with_tools(
             let task_owned = task.to_string();
             match tokio::task::spawn_blocking(move || execute_via_qlang(role, &ctx, &task_owned)).await {
                 Ok(Ok((response, _, _))) => Ok(response),
-                _ => llm_reason(llm, role, &enriched_context, task).await,
+                _ => llm_reason(llm, role, &enriched_context, task, preferred_tier).await,
             }
         }
         AgentRole::Developer => {
@@ -258,7 +262,7 @@ pub async fn agent_execute_with_tools(
             let task_owned = task.to_string();
             match tokio::task::spawn_blocking(move || execute_via_qlang(role, &ctx, &task_owned)).await {
                 Ok(Ok((response, _, _))) => Ok(response),
-                _ => llm_reason(llm, role, &enriched_context, task).await,
+                _ => llm_reason(llm, role, &enriched_context, task, preferred_tier).await,
             }
         }
         _ => {
@@ -267,7 +271,7 @@ pub async fn agent_execute_with_tools(
             let task_owned = task.to_string();
             match tokio::task::spawn_blocking(move || execute_via_qlang(role, &ctx, &task_owned)).await {
                 Ok(Ok((response, _, _))) => Ok(response),
-                _ => llm_reason(llm, role, context, task).await,
+                _ => llm_reason(llm, role, context, task, preferred_tier).await,
             }
         }
     }
