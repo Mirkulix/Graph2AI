@@ -11,7 +11,7 @@
     "Programming Languages"
   ],
   "activationEvents": [
-    "*"
+    "onStartupFinished"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -62,6 +62,16 @@
         "command": "qlang.qlms.handover",
         "title": "QLMS: Handover Graph to Agent",
         "icon": "$(export)"
+      },
+      {
+        "command": "qlang.dashboard",
+        "title": "QLANG: Open QO Dashboard",
+        "icon": "$(dashboard)"
+      },
+      {
+        "command": "qlang.qlms.showInbox",
+        "title": "QLMS: Show Inbox (replies addressed to this IDE)",
+        "icon": "$(inbox)"
       }
     ],
     "keybindings": [
@@ -104,6 +114,21 @@
           "type": "string",
           "default": "",
           "description": "Optional bearer token for the QO server. Falls back to the QO_AUTH_TOKEN environment variable when empty."
+        },
+        "qlang.qlms.seedHex": {
+          "type": "string",
+          "default": "",
+          "description": "64-char hex seed used to sign outbound QLMS handover frames. If empty, a workspace-local seed is generated on first use and stored in workspaceState. Falls back to the QO_SEED_HEX environment variable when empty."
+        },
+        "qlang.qlms.inbox.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Subscribe to /api/messages/stream and surface incoming QLMS messages addressed to this IDE as VS Code notifications with an 'Open in editor' action."
+        },
+        "qlang.qlms.inbox.identity": {
+          "type": "string",
+          "default": "vscode-assistant",
+          "description": "The agent name this IDE listens for on the message bus. Replies addressed to this name pop up as inbox notifications."
         }
       }
     }

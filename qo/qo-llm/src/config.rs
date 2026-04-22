@@ -69,12 +69,13 @@ pub fn provider_templates() -> Vec<ProviderTemplate> {
             provider_type: ProviderType::DeepSeek,
             base_url: "https://api.deepseek.com/v1",
             models: vec![
-                ModelOption { id: "deepseek-chat", name: "DeepSeek V3", cost_per_1k: 0.001, recommended: true },
-                ModelOption { id: "deepseek-reasoner", name: "DeepSeek R1", cost_per_1k: 0.004, recommended: false },
+                ModelOption { id: "deepseek-chat", name: "DeepSeek V3", cost_per_1k: 0.00027, recommended: true },
+                ModelOption { id: "deepseek-reasoner", name: "DeepSeek R1", cost_per_1k: 0.00055, recommended: false },
+                ModelOption { id: "deepseek-coder", name: "DeepSeek Coder", cost_per_1k: 0.00014, recommended: false },
             ],
             tier: 3,
             free: false,
-            description: "Günstigster Paid-Provider — $0.001/1K Tokens",
+            description: "Günstigster Paid-Provider — ab $0.00014/1K Tokens (coder)",
         },
         ProviderTemplate {
             id: "openrouter",

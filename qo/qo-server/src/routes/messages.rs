@@ -33,6 +33,13 @@ struct MessageEvent {
     intent: String,
     graph_name: String,
     timestamp: u64,
+    /// Excerpt of the message content (first 4 KB of graph.metadata.content).
+    /// Lets IDE inboxes show the actual reply without a separate fetch.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    content: String,
+    /// Convenience flag for IDE inboxes — true when this is an agent reply.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    is_reply: bool,
 }
 
 /// GET /api/messages/stats — Message bus statistics.
@@ -73,6 +80,12 @@ pub async fn bus_stream(
     let rx = state.message_bus.subscribe().await;
     let stream = ReceiverStream::new(rx).map(|msg| {
         let intent = format!("{:?}", msg.intent);
+        let is_reply = intent.starts_with("Result");
+        let content = msg.graph.metadata.get("content")
+            .map(|c| {
+                if c.len() > 4096 { format!("{}…", &c[..4096]) } else { c.clone() }
+            })
+            .unwrap_or_default();
         let ev = MessageEvent {
             id: msg.id,
             from: msg.from.name.clone(),
@@ -83,6 +96,8 @@ pub async fn bus_stream(
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
+            content,
+            is_reply,
         };
         let json = serde_json::to_string(&ev).unwrap_or_default();
         Ok(Event::default().data(json))

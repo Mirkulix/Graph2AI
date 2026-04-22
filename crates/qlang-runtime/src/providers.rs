@@ -174,6 +174,7 @@ impl ProviderRegistry {
         self.discover_perplexity();
         self.discover_bedrock();
         self.discover_xai();
+        self.discover_deepseek();
     }
 
     fn discover_ollama(&mut self) {
@@ -588,6 +589,61 @@ impl ProviderRegistry {
         }
     }
 
+    fn discover_deepseek(&mut self) {
+        let key = std::env::var("DEEPSEEK_API_KEY").ok()
+            .or_else(|| read_api_key_from_config("deepseek"));
+        if let Some(key) = key {
+            self.providers.push(Provider {
+                id: "deepseek".into(),
+                name: "DeepSeek".into(),
+                trust_level: TrustLevel::Trusted,
+                models: vec![
+                    ModelConfig {
+                        model_id: "deepseek-chat".into(),
+                        display_name: "DeepSeek V3 (chat)".into(),
+                        capabilities: vec![
+                            Capability::TextGeneration,
+                            Capability::CodeGeneration,
+                            Capability::Summarization,
+                        ],
+                        // ~$0.27 per 1M input tokens
+                        cost_per_million_tokens: 0.27,
+                        context_window: 64_000,
+                        quality_score: 0.88,
+                    },
+                    ModelConfig {
+                        model_id: "deepseek-reasoner".into(),
+                        display_name: "DeepSeek R1 (reasoner)".into(),
+                        capabilities: vec![
+                            Capability::TextGeneration,
+                            Capability::CodeGeneration,
+                            Capability::Summarization,
+                        ],
+                        // ~$0.55 per 1M input tokens
+                        cost_per_million_tokens: 0.55,
+                        context_window: 64_000,
+                        quality_score: 0.92,
+                    },
+                    ModelConfig {
+                        model_id: "deepseek-coder".into(),
+                        display_name: "DeepSeek Coder".into(),
+                        capabilities: vec![
+                            Capability::TextGeneration,
+                            Capability::CodeGeneration,
+                        ],
+                        // ~$0.14 per 1M input tokens
+                        cost_per_million_tokens: 0.14,
+                        context_window: 64_000,
+                        quality_score: 0.86,
+                    },
+                ],
+                base_url: "https://api.deepseek.com/v1".into(),
+                api_key: Some(key),
+                available: true,
+            });
+        }
+    }
+
     /// List all known models: (provider_id, model_id, display_name, cost)
     pub fn list_all_models(&self) -> Vec<(String, String, String, f64)> {
         let mut out = Vec::new();
@@ -747,6 +803,14 @@ impl ProviderRegistry {
                         .map_err(|e| format!("Groq error: {}", e))?
                 } else {
                     return Err("Groq API key not configured (set GROQ_API_KEY)".into());
+                }
+            }
+            "deepseek" => {
+                if let Some(client) = crate::deepseek_client::DeepSeekClient::from_env() {
+                    client.generate(&model_id, prompt)
+                        .map_err(|e| format!("DeepSeek error: {}", e))?
+                } else {
+                    return Err("DeepSeek API key not configured (set DEEPSEEK_API_KEY)".into());
                 }
             }
             _ => {

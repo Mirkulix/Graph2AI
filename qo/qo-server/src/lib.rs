@@ -182,12 +182,50 @@ pub async fn build_app(
         gossip_stats: peer_discovery::new_stats_handle(std::time::Duration::from_secs(10)),
     });
 
-    // Register all QO agents on the message bus.
-    // Mailboxes are kept alive in background tasks that drain messages —
-    // and each received message is also fanned out to any dashboard
-    // subscriber via `graph_events_tx` (Mission Control live stream).
+    // Register all QO agents on the message bus and wire each one to an LLM.
+    //
+    // Each agent runs its own background task that:
+    //   1. Drains its mailbox.
+    //   2. Extracts the user prompt (file content / chat text) from the message.
+    //   3. Calls the LLM router with a role-specific system prompt.
+    //   4. Builds a reply GraphMessage with the LLM response in graph.metadata.
+    //   5. Sends the reply back via the bus, addressed to the original sender.
+    //
+    // Dashboard fanout (graph_events_tx) is kept for the cockpit's edge animation.
     {
-        use qlang_agent::protocol::{AgentId, Capability};
+        use qlang_agent::protocol::{AgentId, Capability, MessageIntent};
+        use qlang_core::graph::Graph;
+        use std::collections::HashMap as StdHashMap;
+
+        fn system_prompt_for(role: &str) -> &'static str {
+            match role {
+                "ceo"        => "You are CEO, a coordinator agent. Decompose the user's request into clear steps, suggest which specialist should handle each step (developer, researcher, guardian, strategist, artisan), and give a one-paragraph executive summary.",
+                "developer"  => "You are Developer, a senior software engineer. Review code, suggest refactors, write functions, and explain trade-offs. Be precise. Use code blocks for any code you produce.",
+                "researcher" => "You are Researcher, a knowledge synthesizer. Find relevant information, cite sources when possible, summarize concisely, and flag uncertainty.",
+                "guardian"   => "You are Guardian, a security and safety reviewer. Find vulnerabilities, unsafe patterns, missing validation, and compliance gaps. Suggest concrete mitigations.",
+                "strategist" => "You are Strategist, a planning advisor. Lay out multi-step strategies, trade-offs, and second-order effects. Prefer numbered plans.",
+                "artisan"    => "You are Artisan, a creative implementer. Generate concrete artifacts (text, prose, examples, snippets) that match the user's intent.",
+                _ => "You are an AI assistant. Help the user with their request.",
+            }
+        }
+
+        fn extract_prompt(msg: &qlang_agent::protocol::GraphMessage) -> String {
+            // Primary: graph.metadata.content (IDE handover, cockpit composer)
+            if let Some(content) = msg.graph.metadata.get("content") {
+                if !content.is_empty() {
+                    let filename = msg.graph.metadata.get("filename").cloned().unwrap_or_default();
+                    let language = msg.graph.metadata.get("language").cloned().unwrap_or_default();
+                    if !filename.is_empty() {
+                        return format!("File: {}\nLanguage: {}\n\n---\n{}", filename, language, content);
+                    }
+                    return content.clone();
+                }
+            }
+            // Fallback: stringify the whole graph (last resort, won't be useful but keeps the agent talking)
+            serde_json::to_string_pretty(&msg.graph)
+                .unwrap_or_else(|_| "(empty graph)".to_string())
+        }
+
         let agent_names = ["ceo", "researcher", "developer", "guardian", "strategist", "artisan"];
         for name in &agent_names {
             let agent_id = AgentId {
@@ -197,16 +235,23 @@ pub async fn build_app(
             let mut mailbox = message_bus.register(agent_id).await;
             let agent_name = name.to_string();
             let events_tx = state.graph_events_tx.clone();
+            let llm = state.llm.clone();
+            let bus = message_bus.clone();
             tokio::spawn(async move {
                 loop {
                     match mailbox.recv().await {
                         Some(msg) => {
+                            // Ignore Result-intent messages so we don't reply to our own replies.
+                            if matches!(msg.intent, MessageIntent::Result { .. }) {
+                                continue;
+                            }
+
                             tracing::debug!(
-                                "Agent '{}' received QLMS message from '{}' (intent: {:?})",
+                                "Agent '{}' received QLMS from '{}' (intent: {:?})",
                                 agent_name, msg.from.name, msg.intent
                             );
-                            // Best-effort: a rough byte estimate is good enough for
-                            // the dashboard's edge-width animation.
+
+                            // Dashboard fanout (existing behavior).
                             let size_bytes = serde_json::to_vec(&msg.graph)
                                 .map(|v| v.len() as u32)
                                 .unwrap_or(0);
@@ -222,13 +267,92 @@ pub async fn build_app(
                                 &intent_label,
                                 size_bytes,
                             ));
+
+                            // ─── LLM call ─────────────────────────────────────
+                            let user_prompt = extract_prompt(&msg);
+                            let messages = vec![
+                                ("system".to_string(), system_prompt_for(&agent_name).to_string()),
+                                ("user".to_string(), user_prompt),
+                            ];
+
+                            // Prefer DeepSeek explicitly — auto-router never selects it.
+                            // Falls back to whatever tier is available if DeepSeek is offline.
+                            let reply_text = match llm
+                                .chat_preferring(Some(qo_llm::Tier::DeepSeek), messages)
+                                .await
+                            {
+                                Ok((text, used)) => {
+                                    tracing::debug!(?used, "agent '{}' got LLM reply", agent_name);
+                                    text
+                                }
+                                Err(e) => {
+                                    tracing::warn!("Agent '{}' LLM call failed: {}", agent_name, e);
+                                    format!("[agent '{}' error: {}]", agent_name, e)
+                                }
+                            };
+
+                            // ─── Build reply GraphMessage ─────────────────────
+                            let reply_id = (msg.id ^ 0x9E3779B97F4A7C15u64).wrapping_add(
+                                std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .map(|d| d.as_nanos() as u64)
+                                    .unwrap_or(0),
+                            );
+                            let mut reply_metadata = StdHashMap::new();
+                            reply_metadata.insert("source".to_string(), "agent".to_string());
+                            reply_metadata.insert("agent".to_string(), agent_name.clone());
+                            reply_metadata.insert("content".to_string(), reply_text.clone());
+                            reply_metadata.insert("in_reply_to_graph".to_string(), msg.graph.id.clone());
+
+                            let reply_graph = Graph {
+                                id: format!("reply-{}-{}", agent_name, reply_id),
+                                version: "1.0".to_string(),
+                                nodes: vec![],
+                                edges: vec![],
+                                constraints: vec![],
+                                metadata: reply_metadata,
+                            };
+
+                            let reply = qlang_agent::protocol::GraphMessage {
+                                id: reply_id,
+                                from: AgentId {
+                                    name: agent_name.clone(),
+                                    capabilities: vec![Capability::Execute],
+                                },
+                                to: msg.from.clone(),
+                                graph: reply_graph,
+                                inputs: StdHashMap::new(),
+                                intent: MessageIntent::Result { original_message_id: msg.id },
+                                in_reply_to: Some(msg.id),
+                                signature: None,
+                                signer_pubkey: None,
+                                graph_hash: None,
+                            };
+
+                            // Send reply. If the recipient has no mailbox (e.g., vscode-assistant),
+                            // bus.send() still emits to the SSE subscribers — the IDE inbox listens there.
+                            let _ = bus.send(reply.clone()).await;
+
+                            // Dashboard fanout for the reply edge too.
+                            let reply_size = serde_json::to_vec(&reply.graph)
+                                .map(|v| v.len() as u32)
+                                .unwrap_or(0);
+                            let _ = events_tx.send(routes::dashboard::GraphEvent::now(
+                                &agent_name,
+                                &reply.to.name,
+                                "Result",
+                                reply_size,
+                            ));
                         }
                         None => break, // Channel closed
                     }
                 }
             });
         }
-        tracing::info!("Message bus: {} agents registered with active mailboxes", agent_names.len());
+        tracing::info!(
+            "Message bus: {} agents registered with LLM-backed mailboxes",
+            agent_names.len()
+        );
     }
 
     let api_router = Router::new()
@@ -307,7 +431,8 @@ pub async fn build_app(
         .route("/api/neo/status", get(routes::neo::status))
         .route("/api/neo/agents", get(routes::neo::list_agents))
         .route("/api/neo/agents/{id}", get(routes::neo::get_agent))
-        .route("/supervisor", get(routes::supervisor::cockpit));
+        .route("/supervisor", get(routes::supervisor::cockpit))
+        .route("/supervisor/legacy", get(routes::supervisor::cockpit_legacy));
 
     let api_router = api_router
         .layer(middleware::from_fn(auth::auth_middleware))

@@ -36,6 +36,7 @@ pub mod openai_client;
 pub mod anthropic_client;
 pub mod gemini_client;
 pub mod groq_client;
+pub mod deepseek_client;
 pub mod orchestrator;
 pub mod tokenizer;
 pub mod web_server;

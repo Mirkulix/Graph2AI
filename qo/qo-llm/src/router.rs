@@ -1,5 +1,6 @@
 use crate::{
     cloud::{CloudClient, CloudMessage},
+    deepseek::{DeepSeekClient, DeepSeekMessage},
     groq::{GroqClient, GroqMessage},
     ollama::OllamaClient,
 };
@@ -14,6 +15,7 @@ pub enum Tier {
     Local,
     Groq,
     Cloud,
+    DeepSeek,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,15 +36,20 @@ pub struct CostTracker {
     pub cloud_requests: AtomicU64,
     pub cloud_tokens: AtomicU64,
     pub local_requests: AtomicU64,
+    pub deepseek_requests: AtomicU64,
+    pub deepseek_tokens: AtomicU64,
     pub total_latency_groq_ms: AtomicU64,
     pub total_latency_cloud_ms: AtomicU64,
+    pub total_latency_deepseek_ms: AtomicU64,
 }
 
 pub struct LlmRouter {
     groq: Option<GroqClient>,
     cloud: Option<CloudClient>,
     ollama: Option<OllamaClient>, // Tier 1 local inference
+    deepseek: Option<DeepSeekClient>,
     cloud_model: Option<String>,
+    deepseek_model: Option<String>,
     cost_tracker: Arc<CostTracker>,
 }
 
@@ -53,14 +60,40 @@ impl LlmRouter {
         ollama_config: Option<(String, String)>, // (base_url, model)
     ) -> Self {
         let cloud_model = cloud_config.as_ref().map(|(_, _, model)| model.clone());
+        // Auto-pick up DEEPSEEK_API_KEY from the environment so callers
+        // that haven't been updated to the builder API still get the
+        // new tier when the key is set.
+        let (deepseek, deepseek_model) = match std::env::var("DEEPSEEK_API_KEY").ok() {
+            Some(key) if !key.is_empty() => {
+                let model = std::env::var("DEEPSEEK_MODEL")
+                    .unwrap_or_else(|_| "deepseek-chat".to_string());
+                (
+                    Some(DeepSeekClient::with_model(key, model.clone())),
+                    Some(model),
+                )
+            }
+            _ => (None, None),
+        };
         Self {
             groq: groq_api_key.map(GroqClient::new),
             cloud: cloud_config
                 .map(|(api_key, base_url, model)| CloudClient::new(api_key, base_url, model)),
             ollama: ollama_config.map(|(url, model)| OllamaClient::new(url, model)),
+            deepseek,
             cloud_model,
+            deepseek_model,
             cost_tracker: Arc::new(CostTracker::default()),
         }
+    }
+
+    /// Builder-style override for the DeepSeek client (used by tests
+    /// and callers that want to inject an explicit key/model instead
+    /// of relying on `DEEPSEEK_API_KEY`).
+    pub fn with_deepseek(mut self, api_key: String, model: Option<String>) -> Self {
+        let model = model.unwrap_or_else(|| "deepseek-chat".to_string());
+        self.deepseek = Some(DeepSeekClient::with_model(api_key, model.clone()));
+        self.deepseek_model = Some(model);
+        self
     }
 
     /// Expose cost tracker (e.g. for sharing with server state).
@@ -140,6 +173,33 @@ impl LlmRouter {
             status: local_status,
         });
 
+        // DeepSeek — only listed when actually configured, so existing
+        // tests that expect exactly three providers still pass.
+        if let Some(ref ds) = self.deepseek {
+            let ds_requests = self.cost_tracker.deepseek_requests.load(Ordering::Relaxed);
+            let ds_tokens = self.cost_tracker.deepseek_tokens.load(Ordering::Relaxed);
+            let total_latency_ds = self
+                .cost_tracker
+                .total_latency_deepseek_ms
+                .load(Ordering::Relaxed);
+            let avg_latency_ds = if ds_requests > 0 {
+                total_latency_ds / ds_requests
+            } else {
+                0
+            };
+            // Conservative estimate: ~$0.00027/1K tokens for deepseek-chat.
+            let ds_cost = (ds_tokens as f64 / 1000.0) * 0.00027;
+            stats.push(ProviderStats {
+                name: "DeepSeek".to_string(),
+                model: ds.model().to_string(),
+                requests: ds_requests,
+                total_tokens_estimate: ds_tokens,
+                cost_usd: ds_cost,
+                avg_latency_ms: avg_latency_ds,
+                status: "active".to_string(),
+            });
+        }
+
         stats
     }
 
@@ -196,6 +256,7 @@ impl LlmRouter {
             Tier::Local => self.ollama.is_some(),
             Tier::Groq => self.groq.is_some(),
             Tier::Cloud => self.cloud.is_some(),
+            Tier::DeepSeek => self.deepseek.is_some(),
         }
     }
 
@@ -205,7 +266,8 @@ impl LlmRouter {
         match hint.trim().to_lowercase().as_str() {
             "ollama" | "local" => Some(Tier::Local),
             "groq" => Some(Tier::Groq),
-            "cloud" | "deepseek" | "anthropic" | "claude" | "openai" | "gemini" => {
+            "deepseek" => Some(Tier::DeepSeek),
+            "cloud" | "anthropic" | "claude" | "openai" | "gemini" => {
                 Some(Tier::Cloud)
             }
             _ => None,
@@ -296,6 +358,7 @@ impl LlmRouter {
                 self.cost_tracker.local_requests.fetch_add(1, Ordering::Relaxed);
                 Ok(response)
             }
+            Tier::DeepSeek => self.deepseek_chat(messages).await,
         }
     }
 
@@ -351,7 +414,34 @@ impl LlmRouter {
             Tier::Groq => {
                 self.groq_chat(messages).await
             }
+            Tier::DeepSeek => {
+                self.deepseek_chat(messages).await
+            }
         }
+    }
+
+    async fn deepseek_chat(
+        &self,
+        messages: Vec<(String, String)>,
+    ) -> Result<String, Box<dyn Error + Send + Sync>> {
+        let ds = self
+            .deepseek
+            .as_ref()
+            .ok_or("DeepSeek provider not configured (set DEEPSEEK_API_KEY)")?;
+        let msgs: Vec<DeepSeekMessage> = messages
+            .into_iter()
+            .map(|(role, content)| DeepSeekMessage { role, content })
+            .collect();
+        let start = Instant::now();
+        let result = ds.chat(msgs).await?;
+        let elapsed = start.elapsed().as_millis() as u64;
+        let tokens = (result.len() / 4) as u64;
+        self.cost_tracker.deepseek_requests.fetch_add(1, Ordering::Relaxed);
+        self.cost_tracker.deepseek_tokens.fetch_add(tokens, Ordering::Relaxed);
+        self.cost_tracker
+            .total_latency_deepseek_ms
+            .fetch_add(elapsed, Ordering::Relaxed);
+        Ok(result)
     }
 
     async fn groq_chat(

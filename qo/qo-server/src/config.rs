@@ -31,6 +31,7 @@ fn tier_name(tier: Tier) -> &'static str {
         Tier::Local => "local",
         Tier::Groq => "groq",
         Tier::Cloud => "cloud",
+        Tier::DeepSeek => "deepseek",
     }
 }
 
@@ -38,7 +39,8 @@ fn parse_tier(name: &str) -> Option<Tier> {
     match name.trim().to_ascii_lowercase().as_str() {
         "local" | "ollama" => Some(Tier::Local),
         "groq" => Some(Tier::Groq),
-        "cloud" | "deepseek" | "anthropic" | "claude" | "openai" | "gemini" => {
+        "deepseek" => Some(Tier::DeepSeek),
+        "cloud" | "anthropic" | "claude" | "openai" | "gemini" => {
             Some(Tier::Cloud)
         }
         _ => None,
