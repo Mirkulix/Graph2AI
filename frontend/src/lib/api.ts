@@ -96,6 +96,46 @@ export interface GraphDetail extends GraphSummary {
   raw?: unknown;
 }
 
+// ─── Consensus (multi-agent fan-out) ─────────────────────────────────
+
+export interface ConsensusRequest {
+  prompt: string;
+  agents: string[];
+  system_prompt?: string | null;
+  timeout_ms?: number;
+}
+
+export interface ConsensusReply {
+  agent: string;
+  content: string;
+  latency_ms: number;
+  ok: boolean;
+  error?: string | null;
+}
+
+export type ConsensusLabel =
+  | 'strong-agreement'
+  | 'majority-agrees'
+  | 'mixed-signals'
+  | 'diverse-opinions'
+  | string;
+
+export interface ConsensusSummary {
+  total_replies: number;
+  successful: number;
+  failed: number;
+  avg_latency_ms: number;
+  consensus_score: number;
+  consensus_label: ConsensusLabel;
+}
+
+export interface ConsensusResponse {
+  prompt: string;
+  agents_asked: string[];
+  replies: ConsensusReply[];
+  summary: ConsensusSummary;
+}
+
 async function jsonRequest<T>(method: string, path: string, body?: unknown): Promise<T> {
   const resp = await fetch(path, {
     method,
@@ -156,6 +196,15 @@ export const api = {
   chatHistory:     () => get<{ messages: Array<{ role: string; content: string; ts?: string }> }>('/api/chat/history'),
   chatSend:        (prompt: string) =>
                      post<{ reply?: string; graph?: unknown }>('/api/chat', { prompt }),
+
+  // Consensus — fan out one prompt to N agents and rank agreement
+  consensus:       (prompt: string, agents: string[], opts?: { systemPrompt?: string; timeoutMs?: number }) =>
+                     post<ConsensusResponse>('/api/consensus', {
+                       prompt,
+                       agents,
+                       system_prompt: opts?.systemPrompt ?? null,
+                       timeout_ms: opts?.timeoutMs,
+                     } satisfies ConsensusRequest),
 
   // Providers — /api/providers/configured returns the array; /api/providers wraps it
   providers:       () => get<ProviderConfig[]>('/api/providers/configured'),

@@ -415,6 +415,7 @@ pub async fn build_app(
         .route("/api/health", get(routes::health::health))
         .route("/api/chat", post(routes::chat::chat))
         .route("/api/chat/history", get(routes::chat::chat_history))
+        .route("/api/consensus", post(routes::consensus::consensus))
 
         .route("/api/history", get(routes::history::get_history))
         .route("/api/goals/{id}/graph", get(routes::goals::get_goal_graph))

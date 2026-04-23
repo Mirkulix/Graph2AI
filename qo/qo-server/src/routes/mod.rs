@@ -1,5 +1,6 @@
 pub mod agents;
 pub mod chat;
+pub mod consensus;
 
 pub mod goals;
 pub mod graphs;
