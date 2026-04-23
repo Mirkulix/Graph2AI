@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as os from 'os';
 import { randomBytes } from 'crypto';
 import { QlmsClient, QlmsConnectionReport } from './qlms-client';
 import { QlmsInbox, openAsJson, labelOf } from './inbox';
@@ -7,29 +8,36 @@ import { startLanguageServer, QlangLspHandle } from './lsp';
 const QLMS_CONFIG_SECTION = 'qlang.qlms';
 const QLANG_CONFIG_SECTION = 'qlang';
 const QLMS_STATUS_REFRESH_MS = 30_000;
+const PRESENCE_HEARTBEAT_MS = 25_000;
 const LOCAL_SEED_KEY = 'qlang.qlms.localSeedHex';
+const LOCAL_IDENTITY_KEY = 'qlang.qlms.identity';
 
 let lspHandle: QlangLspHandle | undefined;
 let inboxHandle: QlmsInbox | undefined;
+let presenceCleanup: (() => Promise<void>) | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('QLANG extension activated');
 
+    const identity = resolveIdentity(context);
+    console.log(`[qlang] bus identity: ${identity}`);
+
     registerRunCommands(context);
-    registerHandover(context);
+    registerHandover(context, identity);
     registerDashboard(context);
     registerStartServer(context);
     registerStatusBars(context);
     registerQlmsCheck(context);
     startLspIfEnabled(context);
-    startInboxIfEnabled(context);
+    startInboxIfEnabled(context, identity);
+    startPresence(context, identity);
 
     vscode.window.showInformationMessage(
-        'QLANG extension ready. Use Cmd+Shift+R to run; QLMS trust badge in the status bar.',
+        `QLANG extension ready as '${identity}'. Use Cmd+Shift+R to run; QLMS trust badge in the status bar.`,
     );
 }
 
-export function deactivate() {
+export async function deactivate() {
     try {
         inboxHandle?.dispose();
     } catch {
@@ -40,6 +48,222 @@ export function deactivate() {
     } catch {
         // ignore
     }
+    try {
+        if (presenceCleanup) {
+            await presenceCleanup();
+        }
+    } catch {
+        // ignore
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Identity
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolves this IDE instance's bus identity. Resolution order:
+ *   1. `qlang.qlms.inbox.identity` setting (user override)
+ *   2. Persisted globalState value (one stable identity per install)
+ *   3. Freshly generated `<ide>-<host>-<6-char-uuid>` (then persisted)
+ */
+export function resolveIdentity(context: vscode.ExtensionContext): string {
+    const cfg = vscode.workspace.getConfiguration(QLMS_CONFIG_SECTION);
+    const fromSetting = cfg.get<string>('inbox.identity', '').trim();
+    if (fromSetting) return fromSetting;
+
+    const stored = context.globalState.get<string>(LOCAL_IDENTITY_KEY);
+    if (stored && stored.length > 0) return stored;
+
+    const ide = sanitizeSlug((vscode.env.appName ?? 'code').toLowerCase()) || 'code';
+    const host = sanitizeSlug(os.hostname() || 'host').slice(0, 12) || 'host';
+    const uuid = randomBytes(3).toString('hex');
+    const identity = `${ide}-${host}-${uuid}`;
+    void context.globalState.update(LOCAL_IDENTITY_KEY, identity);
+    return identity;
+}
+
+function sanitizeSlug(input: string): string {
+    // Keep ide names like "visual studio code" -> "visual-studio-code", drop edge dashes.
+    return input
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+}
+
+// ---------------------------------------------------------------------------
+// Presence (register / heartbeat / deregister)
+// ---------------------------------------------------------------------------
+
+interface PresenceEntry {
+    identity: string;
+    ide_name?: string;
+    host?: string;
+    capabilities?: string[];
+    llm_provider?: string;
+    llm_model?: string;
+    registered_at?: string;
+    last_seen_at?: string;
+    expires_at?: string;
+}
+
+async function registerPresence(
+    baseUrl: string,
+    identity: string,
+    extras: {
+        ideName: string;
+        host: string;
+        capabilities: string[];
+        llmProvider?: string;
+        llmModel?: string;
+    },
+    authToken?: string,
+): Promise<void> {
+    const url = `${baseUrl.replace(/\/$/, '')}/api/presence/register`;
+    const body = {
+        identity,
+        ide_name: extras.ideName,
+        host: extras.host,
+        capabilities: extras.capabilities,
+        llm_provider: extras.llmProvider,
+        llm_model: extras.llmModel,
+    };
+    await presencePost(url, body, authToken);
+}
+
+async function heartbeatPresence(
+    baseUrl: string,
+    identity: string,
+    authToken?: string,
+): Promise<void> {
+    const url = `${baseUrl.replace(/\/$/, '')}/api/presence/heartbeat/${encodeURIComponent(identity)}`;
+    await presencePost(url, undefined, authToken);
+}
+
+async function deregisterPresence(
+    baseUrl: string,
+    identity: string,
+    authToken?: string,
+): Promise<void> {
+    const url = `${baseUrl.replace(/\/$/, '')}/api/presence/${encodeURIComponent(identity)}`;
+    const headers: Record<string, string> = {};
+    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+    const resp = await fetch(url, { method: 'DELETE', headers });
+    if (!resp.ok) {
+        throw new Error(`presence DELETE -> HTTP ${resp.status}`);
+    }
+}
+
+async function listPresence(
+    baseUrl: string,
+    authToken?: string,
+): Promise<PresenceEntry[]> {
+    const url = `${baseUrl.replace(/\/$/, '')}/api/presence`;
+    const headers: Record<string, string> = { Accept: 'application/json' };
+    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+    const resp = await fetch(url, { method: 'GET', headers });
+    if (!resp.ok) {
+        throw new Error(`presence GET -> HTTP ${resp.status}`);
+    }
+    const json = (await resp.json()) as PresenceEntry[];
+    return Array.isArray(json) ? json : [];
+}
+
+async function presencePost(
+    url: string,
+    body: unknown,
+    authToken?: string,
+): Promise<void> {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+    const resp = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    if (!resp.ok) {
+        throw new Error(`presence POST ${url} -> HTTP ${resp.status}`);
+    }
+}
+
+/** Fires off a single registration + recurring heartbeat; tolerates a missing endpoint. */
+function startPresence(context: vscode.ExtensionContext, identity: string): void {
+    const cfg = vscode.workspace.getConfiguration(QLMS_CONFIG_SECTION);
+    const baseUrl = cfg.get<string>('baseUrl', 'http://localhost:4646');
+    const authToken = cfg.get<string>('authToken') || undefined;
+    const autoRespondEnabled = cfg.get<boolean>('autoRespond.enabled', false);
+    const llmProvider = autoRespondEnabled
+        ? cfg.get<string>('autoRespond.providerType', 'deepseek')
+        : undefined;
+    const llmModel = autoRespondEnabled
+        ? cfg.get<string>('autoRespond.model', '')
+        : undefined;
+    const capabilities: string[] = ['execute'];
+    if (autoRespondEnabled) capabilities.push('auto-respond');
+
+    const ideName = vscode.env.appName ?? 'Code';
+    const host = os.hostname();
+
+    let presenceAvailable = true;
+
+    const doRegister = async () => {
+        try {
+            await registerPresence(
+                baseUrl,
+                identity,
+                { ideName, host, capabilities, llmProvider, llmModel },
+                authToken,
+            );
+        } catch (err) {
+            presenceAvailable = false;
+            console.warn(
+                `[qlang.presence] register failed (older qo without /api/presence?): ${
+                    err instanceof Error ? err.message : String(err)
+                }`,
+            );
+        }
+    };
+
+    void doRegister();
+
+    const handle = setInterval(async () => {
+        if (!presenceAvailable) return;
+        try {
+            await heartbeatPresence(baseUrl, identity, authToken);
+        } catch (err) {
+            // Heartbeat failed: try one re-register, then back off.
+            console.warn(
+                `[qlang.presence] heartbeat failed: ${
+                    err instanceof Error ? err.message : String(err)
+                }`,
+            );
+            try {
+                await registerPresence(
+                    baseUrl,
+                    identity,
+                    { ideName, host, capabilities, llmProvider, llmModel },
+                    authToken,
+                );
+            } catch {
+                presenceAvailable = false;
+            }
+        }
+    }, PRESENCE_HEARTBEAT_MS);
+
+    context.subscriptions.push({ dispose: () => clearInterval(handle) });
+
+    presenceCleanup = async () => {
+        clearInterval(handle);
+        if (!presenceAvailable) return;
+        try {
+            await deregisterPresence(baseUrl, identity, authToken);
+        } catch (err) {
+            console.warn(
+                `[qlang.presence] deregister failed: ${
+                    err instanceof Error ? err.message : String(err)
+                }`,
+            );
+        }
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -118,8 +342,12 @@ function registerStatusBars(context: vscode.ExtensionContext): void {
 // Handover (signed + delivered)
 // ---------------------------------------------------------------------------
 
+interface HandoverPick extends vscode.QuickPickItem {
+    target: string;
+}
+
 /** Registers `qlang.qlms.handover` — signs the active doc and dispatches it. */
-function registerHandover(context: vscode.ExtensionContext): void {
+function registerHandover(context: vscode.ExtensionContext, identity: string): void {
     context.subscriptions.push(
         vscode.commands.registerCommand('qlang.qlms.handover', async () => {
             const editor = vscode.window.activeTextEditor;
@@ -128,16 +356,13 @@ function registerHandover(context: vscode.ExtensionContext): void {
                 return;
             }
 
-            const agents = ['ceo', 'developer', 'researcher', 'guardian', 'strategist', 'artisan'];
-            const target = await vscode.window.showQuickPick(agents, {
-                placeHolder: 'Select target agent for handover',
-            });
-            if (!target) return;
-
             const cfg = vscode.workspace.getConfiguration(QLMS_CONFIG_SECTION);
             const baseUrl = cfg.get<string>('baseUrl', 'http://localhost:4646');
             const authToken = cfg.get<string>('authToken') || undefined;
-            const identity = cfg.get<string>('inbox.identity', 'vscode-assistant');
+
+            const target = await pickHandoverTarget(baseUrl, authToken, identity);
+            if (!target) return;
+
             const client = new QlmsClient({ baseUrl, authToken });
 
             try {
@@ -205,6 +430,62 @@ function registerHandover(context: vscode.ExtensionContext): void {
             }
         }),
     );
+}
+
+/** Builds a QuickPick of server agents + connected IDEs (excluding self) and returns the chosen target identity. */
+async function pickHandoverTarget(
+    baseUrl: string,
+    authToken: string | undefined,
+    selfIdentity: string,
+): Promise<string | undefined> {
+    const agents = ['ceo', 'developer', 'researcher', 'guardian', 'strategist', 'artisan'];
+    const items: HandoverPick[] = [];
+
+    items.push({
+        label: 'Server agents',
+        kind: vscode.QuickPickItemKind.Separator,
+        target: '',
+    });
+    for (const a of agents) {
+        items.push({ label: a, description: 'server agent', target: a });
+    }
+
+    let presence: PresenceEntry[] = [];
+    try {
+        presence = await listPresence(baseUrl, authToken);
+    } catch (err) {
+        console.warn(
+            `[qlang.handover] presence list failed: ${
+                err instanceof Error ? err.message : String(err)
+            }`,
+        );
+    }
+
+    const others = presence.filter((p) => p.identity && p.identity !== selfIdentity);
+    if (others.length > 0) {
+        items.push({
+            label: 'Connected IDEs',
+            kind: vscode.QuickPickItemKind.Separator,
+            target: '',
+        });
+        for (const p of others) {
+            const ide = p.ide_name ?? 'IDE';
+            const host = p.host ?? '?';
+            const caps = (p.capabilities ?? []).join(',');
+            const desc = `${ide} · ${host}${caps ? ` · ${caps}` : ''}`;
+            items.push({
+                label: p.identity,
+                description: desc,
+                target: p.identity,
+            });
+        }
+    }
+
+    const pick = await vscode.window.showQuickPick(items, {
+        placeHolder: 'Select target (server agent or connected IDE) for handover',
+    });
+    if (!pick || !pick.target) return undefined;
+    return pick.target;
 }
 
 /**
@@ -319,15 +600,15 @@ function startLspIfEnabled(context: vscode.ExtensionContext): void {
 // ---------------------------------------------------------------------------
 
 /** Subscribes to /api/messages/stream and registers `qlang.qlms.showInbox`. */
-function startInboxIfEnabled(context: vscode.ExtensionContext): void {
+function startInboxIfEnabled(context: vscode.ExtensionContext, identity: string): void {
     const cfg = vscode.workspace.getConfiguration(QLMS_CONFIG_SECTION);
     const enabled = cfg.get<boolean>('inbox.enabled', true);
-    const identity = cfg.get<string>('inbox.identity', 'vscode-assistant');
     const baseUrl = cfg.get<string>('baseUrl', 'http://localhost:4646');
     const authToken = cfg.get<string>('authToken') || undefined;
+    const seedHex = resolveSeedHex(context);
 
     if (enabled) {
-        inboxHandle = new QlmsInbox({ baseUrl, identity, authToken });
+        inboxHandle = new QlmsInbox({ baseUrl, identity, authToken, seedHex });
         inboxHandle.start();
         context.subscriptions.push({ dispose: () => inboxHandle?.dispose() });
     }

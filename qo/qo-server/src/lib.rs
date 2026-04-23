@@ -48,6 +48,11 @@ pub struct AppState {
     /// Peer-discovery gossip statistics. Populated by the background
     /// task (Task 4.2), read by `/api/federation/stats` (Task 6.4).
     pub gossip_stats: FederationStatsHandle,
+    /// IDE/agent presence registry. Ephemeral, in-memory only — a `qo`
+    /// restart wipes it so dead clients aren't resurrected from disk.
+    /// Mutated by `/api/presence/*` handlers; swept by a background
+    /// task that removes expired entries every 30s.
+    pub presence: Mutex<HashMap<String, routes::presence::PresenceEntry>>,
 }
 
 pub struct QoConfig {
@@ -202,7 +207,17 @@ pub async fn build_app(
         // so they can show a "catching up" indicator.
         graph_events_tx: broadcast::channel::<GraphEvent>(256).0,
         gossip_stats: peer_discovery::new_stats_handle(std::time::Duration::from_secs(10)),
+        presence: Mutex::new(HashMap::new()),
     });
+
+    // Spawn the presence sweeper — evicts expired IDE/agent entries
+    // every 30s. Runs for the life of the process.
+    {
+        let sweeper_state = state.clone();
+        tokio::spawn(async move {
+            routes::presence::sweeper_loop(sweeper_state).await;
+        });
+    }
 
     // Register all QO agents on the message bus and wire each one to an LLM.
     //
@@ -218,6 +233,18 @@ pub async fn build_app(
         use qlang_agent::protocol::{AgentId, Capability, MessageIntent};
         use qlang_core::graph::Graph;
         use std::collections::HashMap as StdHashMap;
+
+        /// Map an agent role to the DeepSeek model best suited for its job.
+        /// Used only when the DeepSeek tier is actually available; otherwise
+        /// `chat_with_model` falls back to auto-routing on other tiers and
+        /// the override is ignored.
+        fn deepseek_model_for(role: &str) -> &'static str {
+            match role {
+                "developer"  => "deepseek-coder",
+                "researcher" => "deepseek-reasoner",
+                _            => "deepseek-chat",
+            }
+        }
 
         fn system_prompt_for(role: &str) -> &'static str {
             match role {
@@ -298,9 +325,16 @@ pub async fn build_app(
                             ];
 
                             // Prefer DeepSeek explicitly — auto-router never selects it.
-                            // Falls back to whatever tier is available if DeepSeek is offline.
+                            // Per-agent model picks (developer→coder, researcher→reasoner,
+                            // others→chat). Falls back to whatever tier is available if
+                            // DeepSeek is offline.
+                            let model = deepseek_model_for(&agent_name).to_string();
                             let reply_text = match llm
-                                .chat_preferring(Some(qo_llm::Tier::DeepSeek), messages)
+                                .chat_with_model(
+                                    Some(qo_llm::Tier::DeepSeek),
+                                    Some(model),
+                                    messages,
+                                )
                                 .await
                             {
                                 Ok((text, used)) => {
@@ -447,6 +481,18 @@ pub async fn build_app(
         .route(
             "/api/workspace/file",
             get(routes::workspace::read_file).delete(routes::workspace::delete_file),
+        )
+        // Presence registry — connected IDEs/agents register, heartbeat,
+        // and discover each other for multi-IDE-mesh routing.
+        .route("/api/presence", get(routes::presence::list))
+        .route("/api/presence/register", post(routes::presence::register))
+        .route(
+            "/api/presence/heartbeat/{identity}",
+            post(routes::presence::heartbeat),
+        )
+        .route(
+            "/api/presence/{identity}",
+            delete(routes::presence::deregister),
         )
         .route("/api/neo/hardware", get(routes::neo::hardware))
         .route("/api/neo/memory", get(routes::neo::memory))

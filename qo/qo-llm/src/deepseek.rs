@@ -37,6 +37,13 @@ impl DeepSeekClient {
         &self.model
     }
 
+    /// Read back the API key — used by `LlmRouter::chat_with_model`
+    /// to spin up a per-call client with a different model name while
+    /// reusing the installed credentials.
+    pub fn api_key(&self) -> &str {
+        &self.api_key
+    }
+
     pub async fn chat(
         &self,
         messages: Vec<DeepSeekMessage>,

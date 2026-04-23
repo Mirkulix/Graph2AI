@@ -64,11 +64,6 @@
         "icon": "$(export)"
       },
       {
-        "command": "qlang.dashboard",
-        "title": "QLANG: Open QO Dashboard",
-        "icon": "$(dashboard)"
-      },
-      {
         "command": "qlang.qlms.showInbox",
         "title": "QLMS: Show Inbox (replies addressed to this IDE)",
         "icon": "$(inbox)"
@@ -127,8 +122,39 @@
         },
         "qlang.qlms.inbox.identity": {
           "type": "string",
-          "default": "vscode-assistant",
-          "description": "The agent name this IDE listens for on the message bus. Replies addressed to this name pop up as inbox notifications."
+          "default": "",
+          "description": "Override identity for this IDE on the bus. If empty, an auto-generated <ide>-<host>-<uuid> identity is used and stored persistently."
+        },
+        "qlang.qlms.autoRespond.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "When ON, incoming QLMS messages addressed to this IDE are automatically answered by a configured LLM provider."
+        },
+        "qlang.qlms.autoRespond.providerType": {
+          "type": "string",
+          "enum": ["deepseek", "openai", "anthropic", "ollama", "groq"],
+          "default": "deepseek",
+          "description": "Which LLM provider to use for auto-responses. The API key comes from the corresponding *.apiKey setting below."
+        },
+        "qlang.qlms.autoRespond.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API key for the auto-respond provider. Stored locally; never sent over the bus."
+        },
+        "qlang.qlms.autoRespond.baseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Optional base URL override for the auto-respond provider. Empty = provider default."
+        },
+        "qlang.qlms.autoRespond.model": {
+          "type": "string",
+          "default": "deepseek-chat",
+          "description": "Model id (e.g. deepseek-chat, deepseek-coder, gpt-4o-mini, claude-3-5-sonnet-latest)."
+        },
+        "qlang.qlms.autoRespond.systemPrompt": {
+          "type": "string",
+          "default": "",
+          "description": "Optional system prompt prepended to every auto-response. Empty = a generic helpful-assistant prompt."
         }
       }
     }

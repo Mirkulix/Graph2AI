@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Search, ArrowRight } from 'lucide-react';
-import { api, type AgentInfo, type BusMessage, nameOf, intentOf } from '../lib/api';
+import { Search, ArrowRight, Laptop } from 'lucide-react';
+import { api, type AgentInfo, type BusMessage, type PresenceEntry, nameOf, intentOf } from '../lib/api';
 
 interface Props {
   selectedAgent: string | null;
@@ -10,6 +10,7 @@ interface Props {
 
 export default function AgentsPane({ selectedAgent, onSelectAgent, liveTail }: Props) {
   const [agents, setAgents] = useState<AgentInfo[]>([]);
+  const [presence, setPresence] = useState<PresenceEntry[]>([]);
   const [filter, setFilter] = useState('');
 
   useEffect(() => {
@@ -18,6 +19,9 @@ export default function AgentsPane({ selectedAgent, onSelectAgent, liveTail }: P
       api.busAgents()
         .then(list => { if (alive) setAgents(list ?? []); })
         .catch(() => { if (alive) setAgents([]); });
+      api.presence()
+        .then(list => { if (alive) setPresence(list ?? []); })
+        .catch(() => { if (alive) setPresence([]); });
     };
     load();
     const t = setInterval(load, 5000);
@@ -29,6 +33,16 @@ export default function AgentsPane({ selectedAgent, onSelectAgent, liveTail }: P
     const f = filter.toLowerCase();
     return agents.filter(a => a.name.toLowerCase().includes(f) || (a.role ?? '').toLowerCase().includes(f));
   }, [agents, filter]);
+
+  const filteredPresence = useMemo(() => {
+    if (!filter.trim()) return presence;
+    const f = filter.toLowerCase();
+    return presence.filter(p =>
+      p.identity.toLowerCase().includes(f) ||
+      (p.ide_name ?? '').toLowerCase().includes(f) ||
+      (p.host ?? '').toLowerCase().includes(f),
+    );
+  }, [presence, filter]);
 
   return (
     <aside style={paneStyle}>
@@ -109,6 +123,71 @@ export default function AgentsPane({ selectedAgent, onSelectAgent, liveTail }: P
                     borderRadius: 8,
                   }}>
                     {a.mailbox_size}
+                  </span>
+                )}
+              </button>
+            );
+          })
+        )}
+
+        <div style={{ ...sectionHeaderStyle, marginTop: 16, borderTop: '1px solid var(--rule-faint)', paddingTop: 12 }}>
+          <Laptop size={10} strokeWidth={1.6} style={{ color: 'var(--ink-faint)', marginRight: 4 }} />
+          <span className="eyebrow">connected ides · {filteredPresence.length}</span>
+        </div>
+
+        {filteredPresence.length === 0 ? (
+          <div style={{ padding: '8px 16px', fontSize: 10, color: 'var(--ink-faint)', fontFamily: 'var(--font-mono)' }}>
+            No IDEs registered.
+          </div>
+        ) : (
+          filteredPresence.map(p => {
+            const active = selectedAgent === p.identity;
+            const autoRespond = p.capabilities?.includes('auto-respond') === true;
+            return (
+              <button
+                key={p.identity}
+                onClick={() => onSelectAgent(p.identity)}
+                style={{
+                  ...rowStyle,
+                  background: active ? 'var(--signal-soft)' : 'transparent',
+                  borderLeft: active ? '2px solid var(--signal)' : '2px solid transparent',
+                }}
+                title={`${p.identity}\n${p.ide_name ?? ''} · ${p.host ?? ''}\n${p.llm_provider ? `${p.llm_provider}/${p.llm_model ?? ''}` : 'no auto-respond'}`}
+              >
+                <div style={{
+                  width: 8, height: 8, borderRadius: 4,
+                  background: autoRespond ? 'var(--cta)' : 'var(--ink-muted)',
+                  boxShadow: autoRespond ? '0 0 8px var(--cta-glow)' : 'none',
+                  flexShrink: 0,
+                }} />
+                <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
+                  <div style={{
+                    fontSize: 12,
+                    color: active ? 'var(--ink-bright)' : 'var(--ink-primary)',
+                    fontWeight: 500,
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    fontFamily: 'var(--font-mono)',
+                  }}>
+                    {p.identity}
+                  </div>
+                  {(p.ide_name || p.host) && (
+                    <div style={{ fontSize: 10, color: 'var(--ink-faint)', fontFamily: 'var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {[p.ide_name, p.host].filter(Boolean).join(' · ')}
+                    </div>
+                  )}
+                </div>
+                {autoRespond && (
+                  <span style={{
+                    fontSize: 9,
+                    fontFamily: 'var(--font-mono)',
+                    color: 'var(--cta)',
+                    background: 'var(--cta-soft)',
+                    padding: '1px 6px',
+                    borderRadius: 8,
+                    letterSpacing: 0.04,
+                    textTransform: 'uppercase',
+                  }}>
+                    auto
                   </span>
                 )}
               </button>

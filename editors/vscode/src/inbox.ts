@@ -3,19 +3,28 @@
 // deps — uses Node 18+ native `fetch` with a streaming body reader.
 
 import * as vscode from 'vscode';
+import { QlmsClient } from './qlms-client';
+import { callLlm, ProviderType } from './llm';
+
+const QLMS_CONFIG_SECTION = 'qlang.qlms';
 
 export interface InboxOptions {
     baseUrl: string;
     identity: string;
     authToken?: string;
+    /** Signing seed used for auto-respond replies. Optional. */
+    seedHex?: string;
     /** Max entries kept in memory for the showInbox quick-pick. */
     capacity?: number;
 }
 
 interface InboxMessage {
+    id?: number;
     from?: unknown;
     to?: unknown;
     intent?: unknown;
+    content?: unknown;
+    is_reply?: unknown;
     graph?: unknown;
     [k: string]: unknown;
 }
@@ -122,6 +131,8 @@ export class QlmsInbox {
         if (!this.isAddressedToMe(msg)) return;
         this.record(msg);
         this.notify(msg);
+        // Auto-respond runs out-of-band so it does not block the SSE reader.
+        void this.maybeAutoRespond(msg);
     }
 
     private isAddressedToMe(msg: InboxMessage): boolean {
@@ -155,6 +166,90 @@ export class QlmsInbox {
                     openAsJson(msg);
                 }
             });
+    }
+
+    /**
+     * If auto-respond is enabled and this message is NOT itself a reply,
+     * call the configured LLM and ship the answer back as a Result frame.
+     */
+    private async maybeAutoRespond(msg: InboxMessage): Promise<void> {
+        const cfg = vscode.workspace.getConfiguration(QLMS_CONFIG_SECTION);
+        if (!cfg.get<boolean>('autoRespond.enabled', false)) return;
+        if (msg.is_reply === true) return;
+
+        const fromName = labelOf(msg.from);
+        if (!fromName) return;
+
+        const userContent = typeof msg.content === 'string' && msg.content.length > 0
+            ? msg.content
+            : JSON.stringify(msg).slice(0, 4096);
+
+        const providerType = (cfg.get<string>('autoRespond.providerType', 'deepseek') ?? 'deepseek') as ProviderType;
+        const apiKey = cfg.get<string>('autoRespond.apiKey', '') ?? '';
+        const model = cfg.get<string>('autoRespond.model', 'deepseek-chat') ?? 'deepseek-chat';
+        const baseUrlOverride = cfg.get<string>('autoRespond.baseUrl', '') ?? '';
+        const systemPrompt = cfg.get<string>('autoRespond.systemPrompt', '') ?? '';
+
+        let answer: string;
+        try {
+            answer = await callLlm({
+                providerType,
+                apiKey,
+                model,
+                baseUrl: baseUrlOverride || undefined,
+                systemPrompt: systemPrompt || undefined,
+                userContent,
+            });
+        } catch (err) {
+            void vscode.window.showWarningMessage(
+                `Auto-respond failed (${providerType}): ${err instanceof Error ? err.message : String(err)}`,
+            );
+            return;
+        }
+
+        try {
+            await this.sendReply(fromName, msg, answer);
+            void vscode.window.showInformationMessage(
+                `Auto-responded as ${this.opts.identity} → ${fromName}`,
+            );
+        } catch (err) {
+            void vscode.window.showWarningMessage(
+                `Auto-respond send failed: ${err instanceof Error ? err.message : String(err)}`,
+            );
+        }
+    }
+
+    private async sendReply(toName: string, original: InboxMessage, answer: string): Promise<void> {
+        const client = new QlmsClient({
+            baseUrl: this.opts.baseUrl,
+            authToken: this.opts.authToken,
+        });
+        const replyId = Math.floor(Math.random() * 1_000_000);
+        const originalId = typeof original.id === 'number' ? original.id : null;
+        const graph: Record<string, unknown> = {
+            id: `vscode-autorespond-${Date.now()}`,
+            version: '1.0',
+            nodes: [],
+            edges: [],
+            constraints: [],
+            metadata: {
+                source: 'vscode-extension-autorespond',
+                identity: this.opts.identity,
+                content: answer,
+            },
+        };
+        const reply = QlmsClient.createMessage({
+            id: replyId,
+            from: this.opts.identity,
+            to: toName,
+            graph,
+            intent: 'Result',
+        });
+        if (originalId !== null) {
+            (reply as unknown as { in_reply_to: number | null }).in_reply_to = originalId;
+        }
+        const built = await client.reply([reply], this.opts.seedHex);
+        await client.deliver(built.frame);
     }
 }
 

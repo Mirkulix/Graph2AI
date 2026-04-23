@@ -8,6 +8,7 @@ pub mod history;
 pub mod memory;
 pub mod messages;
 pub mod neo;
+pub mod presence;
 pub mod providers;
 
 pub mod supervisor;

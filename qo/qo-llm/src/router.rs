@@ -409,6 +409,118 @@ impl LlmRouter {
         Ok((body, prompt))
     }
 
+    /// Like [`chat_preferring`], but accepts an optional model name that
+    /// overrides the tier's default. When `model_override` is `None`, the
+    /// tier's installed default model is used (identical to
+    /// `chat_preferring`). When the tier or the model is unavailable,
+    /// falls back to auto-routing exactly like `chat_preferring`.
+    ///
+    /// The override is currently honored only for [`Tier::DeepSeek`] —
+    /// other tiers use their installed default model. This is enough
+    /// for per-agent role binding (developer→deepseek-coder,
+    /// researcher→deepseek-reasoner, others→deepseek-chat).
+    pub async fn chat_with_model(
+        &self,
+        preferred: Option<Tier>,
+        model_override: Option<String>,
+        messages: Vec<(String, String)>,
+    ) -> Result<(String, Tier), Box<dyn Error + Send + Sync>> {
+        if let Some(tier) = preferred {
+            if self.tier_available(tier).await {
+                tracing::debug!(?tier, ?model_override, "agent requested preferred tier with model override");
+                // Only DeepSeek currently supports per-call model overrides.
+                if tier == Tier::DeepSeek {
+                    if let Some(model) = model_override.as_ref() {
+                        match self
+                            .deepseek_chat_with_model(model.clone(), messages.clone())
+                            .await
+                        {
+                            Ok(body) => return Ok((body, tier)),
+                            Err(e) => {
+                                tracing::warn!(
+                                    ?tier,
+                                    model = %model,
+                                    error = %e,
+                                    "deepseek model override failed — falling back to auto routing"
+                                );
+                            }
+                        }
+                    } else {
+                        match self.chat_on_tier(tier, messages.clone()).await {
+                            Ok(body) => return Ok((body, tier)),
+                            Err(e) => {
+                                tracing::warn!(
+                                    ?tier,
+                                    error = %e,
+                                    "preferred tier failed — falling back to auto routing"
+                                );
+                            }
+                        }
+                    }
+                } else {
+                    // Other tiers ignore the override.
+                    match self.chat_on_tier(tier, messages.clone()).await {
+                        Ok(body) => return Ok((body, tier)),
+                        Err(e) => {
+                            tracing::warn!(
+                                ?tier,
+                                error = %e,
+                                "preferred tier failed — falling back to auto routing"
+                            );
+                        }
+                    }
+                }
+            } else {
+                tracing::warn!(
+                    ?tier,
+                    "preferred tier not configured — falling back to auto routing"
+                );
+            }
+        }
+        let prompt = {
+            let s = messages
+                .last()
+                .map(|(_, c)| c.as_str())
+                .unwrap_or_default();
+            self.select_tier(self.score_complexity(s))
+        };
+        let body = self.chat(messages).await?;
+        Ok((body, prompt))
+    }
+
+    /// One-shot DeepSeek call against an arbitrary model name, reusing
+    /// the api_key from the currently-installed `DeepSeekClient`.
+    async fn deepseek_chat_with_model(
+        &self,
+        model: String,
+        messages: Vec<(String, String)>,
+    ) -> Result<String, Box<dyn Error + Send + Sync>> {
+        // Pull the api_key out of the installed client, then drop the
+        // read guard before doing the network call.
+        let api_key = {
+            let guard = self.deepseek.read().await;
+            let ds = guard
+                .as_ref()
+                .ok_or("DeepSeek provider not configured (set DEEPSEEK_API_KEY)")?;
+            ds.api_key().to_string()
+        };
+        let client = DeepSeekClient::with_model(api_key, model);
+        let msgs: Vec<DeepSeekMessage> = messages
+            .into_iter()
+            .map(|(role, content)| DeepSeekMessage { role, content })
+            .collect();
+        let start = Instant::now();
+        let result = client.chat(msgs).await?;
+        let elapsed = start.elapsed().as_millis() as u64;
+        let tokens = (result.len() / 4) as u64;
+        self.cost_tracker.deepseek_requests.fetch_add(1, Ordering::Relaxed);
+        self.cost_tracker.deepseek_tokens.fetch_add(tokens, Ordering::Relaxed);
+        self.cost_tracker
+            .total_latency_deepseek_ms
+            .fetch_add(elapsed, Ordering::Relaxed);
+        Ok(result)
+    }
+
     /// Force a specific tier. Does NOT fall back — caller is expected
     /// to check `tier_available` first (via [`chat_preferring`] which
     /// does fall back).

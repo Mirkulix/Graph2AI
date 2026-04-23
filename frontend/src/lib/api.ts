@@ -67,6 +67,18 @@ export interface ProviderConfig {
   source?: string;                           // 'env' or 'config'
 }
 
+export interface PresenceEntry {
+  identity: string;
+  ide_name?: string;
+  host?: string;
+  capabilities?: string[];
+  llm_provider?: string;
+  llm_model?: string;
+  registered_at?: string;
+  last_seen_at?: string;
+  expires_at?: string;
+}
+
 export interface GraphSummary {
   id: string;
   name?: string;
@@ -169,6 +181,9 @@ export const api = {
   // Werte (5 values)
   values:          () => get<Record<string, number>>('/api/values'),
   valuesPost:      (patch: Record<string, number>) => post<Record<string, number>>('/api/values', patch),
+
+  // Presence (online IDE clients)
+  presence:        () => get<PresenceEntry[]>('/api/presence'),
 
   // Hardware (Neo legacy — useful endpoint)
   hardware:        () => get<{ cpu?: { model?: string; cores?: number; load?: number }; memory?: { total_mb?: number; used_mb?: number }; gpu?: Array<{ name?: string; temp_c?: number; util?: number; mem_mb?: number }> }>('/api/neo/hardware'),
