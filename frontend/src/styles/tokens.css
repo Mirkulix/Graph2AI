@@ -1,0 +1,460 @@
+/* ==========================================================================
+   OrbitQO Cockpit — SWISS MODERNISM 2.0 (light theme)
+   Source: ui-ux-pro-max design system
+   Palette: monochrome + single blue accent.
+   Type: Inter at multiple weights. Mathematical spacing.
+   BUILD: 2026-04-22 SWISS-V1
+   ========================================================================== */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  /* ─── Surfaces (light, near-white with subtle layering) ────────────── */
+  --bg:           #FAFAFA;     /* zinc-50 — page bg */
+  --bg-1:         #FFFFFF;     /* pure white — panel */
+  --bg-2:         #F4F4F5;     /* zinc-100 — sunken */
+  --bg-3:         #E4E4E7;     /* zinc-200 — raised divider */
+  --bg-hover:     #F4F4F5;
+  --bg-overlay:   rgba(24, 24, 27, 0.55);
+
+  /* ─── Text (pure black at top, clear ramp down) ───────────────────── */
+  --fg:           #09090B;     /* zinc-950 — primary */
+  --fg-2:         #18181B;     /* zinc-900 */
+  --fg-muted:     #52525B;     /* zinc-600 — secondary */
+  --fg-faint:     #71717A;     /* zinc-500 — tertiary */
+  --fg-ghost:     #A1A1AA;     /* zinc-400 — disabled */
+
+  /* ─── Lines (high-contrast for grid clarity) ──────────────────────── */
+  --line:         #E4E4E7;     /* zinc-200 */
+  --line-strong:  #D4D4D8;     /* zinc-300 */
+  --line-bright:  #A1A1AA;     /* zinc-400 */
+
+  /* ─── CTA / Action — single blue accent (zinc-blue) ────────────────── */
+  --cta:          #2563EB;     /* blue-600 */
+  --cta-bright:   #1D4ED8;     /* blue-700 — hover */
+  --cta-soft:     rgba(37, 99, 235, 0.10);
+  --cta-glow:     rgba(37, 99, 235, 0.20);
+
+  --link:         var(--cta);
+  --link-bright:  var(--cta-bright);
+  --link-soft:    var(--cta-soft);
+  --link-glow:    var(--cta-glow);
+
+  /* ─── Semantic states ─────────────────────────────────────────────── */
+  --ok:           #16A34A;     /* green-600 */
+  --ok-soft:      rgba(22, 163, 74, 0.10);
+  --warn:         #CA8A04;     /* yellow-600 */
+  --warn-soft:    rgba(202, 138, 4, 0.10);
+  --danger:       #DC2626;     /* red-600 */
+  --danger-soft:  rgba(220, 38, 38, 0.10);
+  --info:         var(--cta);
+  --info-soft:    var(--cta-soft);
+
+  /* ─── Type — Inter only, weight is the only variation ─────────────── */
+  --font:         'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono:    'JetBrains Mono', ui-monospace, monospace;
+
+  /* Type scale — Swiss mathematical (1.25 ratio) */
+  --t-xs:   11px;
+  --t-sm:   12px;
+  --t-md:   13px;
+  --t-base: 14px;
+  --t-lg:   17px;
+  --t-xl:   21px;
+  --t-2xl:  26px;
+  --t-3xl:  33px;
+  --t-display: 48px;
+
+  /* ─── Spacing (8px base, mathematical) ─────────────────────────────── */
+  --s-1: 4px;   --s-2: 8px;   --s-3: 12px;  --s-4: 16px;
+  --s-5: 24px;  --s-6: 32px;  --s-8: 48px;  --s-10: 64px;
+  --s-12: 96px; --s-16: 128px;
+
+  /* ─── Geometry — Swiss = mostly square, minimal radius ─────────────── */
+  --r-2: 2px;  --r-3: 3px;  --r-4: 4px;  --r-5: 6px;  --r-6: 8px;
+  --r-full: 999px;
+
+  /* ─── Layout ──────────────────────────────────────────────────────── */
+  --topbar-h:    56px;
+  --pane-left:   272px;
+  --pane-right:  340px;
+
+  /* ─── Motion ──────────────────────────────────────────────────────── */
+  --ease:        cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-out:    cubic-bezier(0.16, 1, 0.3, 1);
+  --t-fast:      150ms;
+  --t-base-d:    220ms;
+  --t-slow:      320ms;
+
+  /* ─── Shadows — Swiss = barely there ──────────────────────────────── */
+  --shadow-sm: 0 1px 2px rgba(9, 9, 11, 0.04);
+  --shadow-md: 0 2px 8px rgba(9, 9, 11, 0.06), 0 1px 2px rgba(9, 9, 11, 0.04);
+  --shadow-lg: 0 12px 32px rgba(9, 9, 11, 0.10), 0 2px 6px rgba(9, 9, 11, 0.04);
+
+  color-scheme: light;
+}
+
+/* ─── Reset + base ─────────────────────────────────────────────────── */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body, #root {
+  margin: 0; padding: 0; height: 100%; width: 100%;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+body {
+  font-family: var(--font);
+  font-size: var(--t-base);
+  line-height: 1.55;
+  font-weight: 400;
+  letter-spacing: -0.005em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+a { color: var(--cta); text-decoration: none; transition: color var(--t-fast) var(--ease); }
+a:hover { color: var(--cta-bright); text-decoration: underline; text-underline-offset: 2px; }
+
+button {
+  font-family: inherit; font-size: inherit; background: none; border: none;
+  color: inherit; cursor: pointer; padding: 0;
+}
+button:focus-visible {
+  outline: 2px solid var(--cta);
+  outline-offset: 2px;
+}
+button:disabled { cursor: not-allowed; }
+
+input, textarea, select {
+  font-family: inherit; font-size: inherit; background: none; border: none;
+  color: inherit; outline: none;
+}
+input:focus-visible, textarea:focus-visible, select:focus-visible {
+  outline: 2px solid var(--cta);
+  outline-offset: -1px;
+}
+
+::selection { background: var(--cta-glow); color: var(--fg); }
+
+/* ─── Reduced motion ────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ─── Scrollbars — minimal ─────────────────────────────────────────── */
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--bg-3);
+  border: 2px solid var(--bg);
+  border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--line-bright); }
+
+/* ─── Utility classes ──────────────────────────────────────────────── */
+
+.eyebrow {
+  font-family: var(--font);
+  font-size: var(--t-xs);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--fg-faint);
+  text-transform: uppercase;
+}
+
+.mono { font-family: var(--font-mono); }
+
+.kbd {
+  display: inline-flex; align-items: center; padding: 1px 6px;
+  font-family: var(--font-mono); font-size: var(--t-xs);
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--r-2);
+  color: var(--fg-muted);
+}
+
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 14px;
+  font-family: var(--font);
+  font-size: var(--t-md);
+  font-weight: 500;
+  background: var(--bg-1);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-3);
+  color: var(--fg);
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease),
+              border-color var(--t-fast) var(--ease),
+              color var(--t-fast) var(--ease);
+}
+.btn:hover { background: var(--bg-2); border-color: var(--line-bright); }
+.btn:disabled { opacity: 0.4; }
+
+.btn-primary {
+  background: var(--cta);
+  border-color: var(--cta);
+  color: white;
+  font-weight: 600;
+}
+.btn-primary:hover {
+  background: var(--cta-bright);
+  border-color: var(--cta-bright);
+  color: white;
+}
+
+.btn-link {
+  background: transparent;
+  border-color: transparent;
+  color: var(--cta);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.btn-link:hover { background: var(--cta-soft); text-decoration: none; }
+
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--fg-muted);
+}
+.btn-ghost:hover { background: var(--bg-2); color: var(--fg); }
+
+.input {
+  width: 100%;
+  padding: 8px 12px;
+  font-family: var(--font);
+  font-size: var(--t-md);
+  background: var(--bg-1);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-3);
+  color: var(--fg);
+  transition: border-color var(--t-fast) var(--ease),
+              box-shadow var(--t-fast) var(--ease);
+}
+.input:hover { border-color: var(--line-bright); }
+.input:focus {
+  border-color: var(--cta);
+  box-shadow: 0 0 0 3px var(--cta-soft);
+}
+.input::placeholder { color: var(--fg-ghost); }
+
+.chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px;
+  font-family: var(--font);
+  font-size: var(--t-xs);
+  font-weight: 500;
+  border-radius: var(--r-full);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  color: var(--fg-muted);
+}
+.chip-mono   { font-family: var(--font-mono); }
+.chip-ok     { background: var(--ok-soft);     color: var(--ok);       border-color: transparent; }
+.chip-warn   { background: var(--warn-soft);   color: var(--warn);     border-color: transparent; }
+.chip-danger { background: var(--danger-soft); color: var(--danger);   border-color: transparent; }
+.chip-cta    { background: var(--cta-soft);    color: var(--cta);      border-color: transparent; }
+
+.dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  display: inline-block;
+  background: var(--fg-faint);
+  flex-shrink: 0;
+}
+.dot-ok       { background: var(--ok); }
+.dot-warn     { background: var(--warn); }
+.dot-danger   { background: var(--danger); }
+.dot-cta      { background: var(--cta); }
+
+.surface { background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--r-4); }
+.surface-2 { background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--r-4); }
+
+.card-interactive {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-4);
+  cursor: pointer;
+  transition: background var(--t-base-d) var(--ease),
+              border-color var(--t-base-d) var(--ease),
+              box-shadow var(--t-base-d) var(--ease);
+}
+.card-interactive:hover {
+  background: var(--bg-2);
+  border-color: var(--line-bright);
+  box-shadow: var(--shadow-md);
+}
+
+/* ─── Live pulse — top edge ─────────────────────────────────────────── */
+
+.live-pulse {
+  position: fixed; top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--cta), transparent);
+  background-size: 50% 100%;
+  background-position: -50% 0;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 50;
+}
+.live-pulse--beat { animation: pulse-sweep 1100ms var(--ease-out); }
+@keyframes pulse-sweep {
+  0%   { opacity: 0;   background-position: -50% 0; }
+  20%  { opacity: 0.9; }
+  100% { opacity: 0;   background-position: 150% 0; }
+}
+
+/* ─── Build stamp — visible badge so user can verify version ──────── */
+
+.build-stamp {
+  position: fixed;
+  bottom: 12px;
+  right: 12px;
+  z-index: 100;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 4px 8px;
+  background: var(--bg-1);
+  color: var(--fg-muted);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-2);
+  box-shadow: var(--shadow-sm);
+  pointer-events: none;
+  user-select: none;
+}
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.fade-up { animation: fade-up 220ms var(--ease-out) both; }
+
+/* ==========================================================================
+   COMPAT — old token names map to LIGHT swiss palette
+   (legacy components reference these — they auto-invert without rewrite)
+   ========================================================================== */
+
+:root {
+  /* surfaces — invert for light theme */
+  --bg-void:      var(--bg);        /* page background */
+  --bg-deep:      var(--bg);
+  --bg-panel:     var(--bg-1);      /* white panels */
+  --bg-raised:    var(--bg-2);
+  --bg-elevated:  var(--bg-3);
+
+  /* text — invert: bright = darkest in light theme */
+  --ink-bright:   var(--fg);        /* #09090B */
+  --ink-primary:  var(--fg-2);
+  --ink-muted:    var(--fg-muted);
+  --ink-faint:    var(--fg-faint);
+  --ink-ghost:    var(--fg-ghost);
+
+  /* lines — same role */
+  --rule-faint:   var(--line);
+  --rule-default: var(--line-strong);
+  --rule-strong:  var(--line-strong);
+  --rule-bright:  var(--line-bright);
+
+  /* accent → blue */
+  --accent:         var(--cta);
+  --accent-bright:  var(--cta-bright);
+  --accent-soft:    var(--cta-soft);
+  --accent-glow:    var(--cta-glow);
+
+  --signal:         var(--cta);
+  --signal-bright:  var(--cta-bright);
+  --signal-soft:    var(--cta-soft);
+  --signal-glow:    var(--cta-glow);
+  --process:        var(--cta);
+  --process-bright: var(--cta-bright);
+  --process-soft:   var(--cta-soft);
+
+  --verified:       var(--ok);
+  --verified-bright:var(--ok);
+  --verified-soft:  var(--ok-soft);
+  --verified-glow:  var(--ok-soft);
+
+  --alert:          var(--danger);
+  --alert-bright:   var(--danger);
+  --alert-soft:     var(--danger-soft);
+
+  --caution:        var(--warn);
+  --caution-soft:   var(--warn-soft);
+
+  --font-display:   var(--font);
+  --font-ui:        var(--font);
+  --font-body:      var(--font);
+
+  --pane-left-w:    var(--pane-left);
+  --pane-right-w:   var(--pane-right);
+  --pulse-h:        2px;
+
+  --shadow-pop:     var(--shadow-md);
+  --shadow-deep:    var(--shadow-lg);
+}
+
+.shield-mark {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 7px;
+  font-family: var(--font);
+  font-size: var(--t-xs);
+  font-weight: 500;
+  background: var(--ok-soft);
+  color: var(--ok);
+  border-radius: var(--r-full);
+}
+.shield-mark--unsigned { background: var(--warn-soft); color: var(--warn); }
+.shield-mark--invalid  { background: var(--danger-soft); color: var(--danger); }
+
+.hash-chip {
+  display: inline-block; padding: 1px 6px;
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  color: var(--fg-muted);
+}
+
+.surface-button {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 12px;
+  font-family: var(--font);
+  font-size: var(--t-md);
+  background: var(--bg-1);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-3);
+  color: var(--fg);
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease);
+}
+.surface-button:hover { background: var(--bg-2); border-color: var(--line-bright); }
+.surface-button--primary {
+  background: var(--cta);
+  border-color: var(--cta);
+  color: white;
+  font-weight: 600;
+}
+.surface-button--primary:hover {
+  background: var(--cta-bright);
+  border-color: var(--cta-bright);
+}
+
+.headline-serif {
+  font-family: var(--font);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--fg);
+}

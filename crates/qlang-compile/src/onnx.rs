@@ -636,30 +636,15 @@ fn op_to_onnx(op: &Op) -> Option<(String, HashMap<String, OnnxAttribute>)> {
         Op::Constant => "Constant",
         // Residual mapped as Add (it's x + f(x))
         Op::Residual => "Add",
-        // Ops that have no standard ONNX equivalent get a prefixed domain.
-        Op::Superpose
-        | Op::Evolve { .. }
-        | Op::Measure
-        | Op::Entangle
-        | Op::Collapse
-        | Op::Entropy
-        | Op::ToTernary
-        | Op::ToLowRank { .. }
-        | Op::ToSparse { .. }
-        | Op::FisherMetric
-        | Op::Project { .. }
-        | Op::Attention { .. }
+        // Standard deterministic ops mapping...
+        Op::Attention { .. }
         | Op::Embedding { .. }
         | Op::Cond
         | Op::Scan { .. }
         | Op::SubGraph { .. }
         | Op::OllamaGenerate { .. }
         | Op::OllamaChat { .. }
-        | Op::ClassMean { .. }
-        | Op::Ternarize { .. }
-        | Op::TernaryMatVec
-        | Op::ArgMax
-        | Op::EnsembleVote => {
+        | Op::ArgMax => {
             return Some((format!("com.qlang.{op}"), op_to_qlang_attrs(op)));
         }
         // Input/Output are not emitted as ONNX nodes.
@@ -672,16 +657,6 @@ fn op_to_onnx(op: &Op) -> Option<(String, HashMap<String, OnnxAttribute>)> {
 fn op_to_qlang_attrs(op: &Op) -> HashMap<String, OnnxAttribute> {
     let mut attrs = HashMap::new();
     match op {
-        Op::Evolve { gamma, dt } => {
-            attrs.insert("gamma".to_string(), OnnxAttribute::Float(*gamma));
-            attrs.insert("dt".to_string(), OnnxAttribute::Float(*dt));
-        }
-        Op::ToLowRank { rank } => {
-            attrs.insert("rank".to_string(), OnnxAttribute::Int(*rank as i64));
-        }
-        Op::ToSparse { sparsity } => {
-            attrs.insert("sparsity".to_string(), OnnxAttribute::Float(*sparsity));
-        }
         Op::Softmax { axis } => {
             attrs.insert("axis".to_string(), OnnxAttribute::Int(*axis as i64));
         }
@@ -792,41 +767,7 @@ fn qlang_custom_op(
     node_name: &str,
 ) -> Result<Op, ConversionError> {
     // The tag is the Display representation of the Op.
-    // We match on known prefixes.
-    if tag.starts_with("superpose") {
-        return Ok(Op::Superpose);
-    }
-    if tag.starts_with("evolve") {
-        let gamma = get_float_attr(attrs, "gamma", node_name)?;
-        let dt = get_float_attr(attrs, "dt", node_name)?;
-        return Ok(Op::Evolve { gamma, dt });
-    }
-    if tag.starts_with("measure") {
-        return Ok(Op::Measure);
-    }
-    if tag.starts_with("entangle") {
-        return Ok(Op::Entangle);
-    }
-    if tag.starts_with("collapse") {
-        return Ok(Op::Collapse);
-    }
-    if tag.starts_with("entropy") {
-        return Ok(Op::Entropy);
-    }
-    if tag.starts_with("to_ternary") {
-        return Ok(Op::ToTernary);
-    }
-    if tag.starts_with("to_lowrank") {
-        let rank = get_int_attr(attrs, "rank", node_name)? as usize;
-        return Ok(Op::ToLowRank { rank });
-    }
-    if tag.starts_with("to_sparse") {
-        let sparsity = get_float_attr(attrs, "sparsity", node_name)?;
-        return Ok(Op::ToSparse { sparsity });
-    }
-    if tag.starts_with("fisher_metric") {
-        return Ok(Op::FisherMetric);
-    }
+    // We match on known basic control/heavy ops.
     if tag.starts_with("attention") {
         let n_heads = get_int_attr(attrs, "n_heads", node_name)? as usize;
         let d_model = get_int_attr(attrs, "d_model", node_name)? as usize;

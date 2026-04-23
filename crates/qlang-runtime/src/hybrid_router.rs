@@ -712,10 +712,8 @@ fn build_decision_graph(graph_id: &str, input_name: &str, output_name: &str, wid
     let tensor = TensorType::f32_vector(width);
     let mut graph = Graph::new(graph_id);
     let input = graph.add_node(Op::Input { name: input_name.into() }, vec![], vec![tensor.clone()]);
-    let choose = graph.add_node(Op::Measure, vec![tensor.clone()], vec![tensor.clone()]);
     let output = graph.add_node(Op::Output { name: output_name.into() }, vec![tensor.clone()], vec![]);
-    graph.add_edge(input, 0, choose, 0, tensor.clone());
-    graph.add_edge(choose, 0, output, 0, tensor);
+    graph.add_edge(input, 0, output, 0, tensor);
     graph
 }
 

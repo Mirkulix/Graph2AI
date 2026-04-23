@@ -139,7 +139,6 @@ fn estimate_flops(op: &Op, input_types: &[qlang_core::tensor::TensorType], outpu
         }
         Op::Relu | Op::Sigmoid | Op::Tanh | Op::Gelu => output_elems * 4,
         Op::Softmax { .. } => output_elems * 5,
-        Op::ToTernary => output_elems * 2,
         Op::LayerNorm { .. } => output_elems * 5,
         Op::Attention { .. } => output_elems * 10, // rough estimate
         _ => output_elems,

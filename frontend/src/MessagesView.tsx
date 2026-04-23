@@ -68,26 +68,12 @@ function StatCard({ label, value, color }: { label: string; value: number | stri
   )
 }
 
-interface ProofResult {
-  success: boolean
-  description: string
-  similarity: number
-  total_us: number
-  total_bytes_transferred: number
-  messages_sent: number
-  steps: { step: number; agent: string; action: string; duration_us: number; data_bytes: number; detail: string }[]
-}
-
 export default function MessagesView() {
   const [stats, setStats] = useState<BusStats | null>(null)
   const [agents, setAgents] = useState<string[]>([])
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [messages, setMessages] = useState<MessageEvent[]>([])
   const [streaming, setStreaming] = useState(false)
-  const [proof, setProof] = useState<ProofResult | null>(null)
-  const [proofRunning, setProofRunning] = useState(false)
-  const [textA, setTextA] = useState('Rust ist eine Systemprogrammiersprache')
-  const [textB, setTextB] = useState('Python ist eine Skriptsprache')
   const [viewMode, setViewMode] = useState<'list' | 'canvas'>('canvas')
   const bottomRef = useRef<HTMLDivElement | null>(null)
   const esRef = useRef<EventSource | null>(null)
@@ -163,88 +149,6 @@ export default function MessagesView() {
         <StatCard label="Zugestellt" value={stats?.delivered ?? 0} color="var(--accent-success)" />
         <StatCard label="Fehlgeschlagen" value={stats?.failed ?? 0} color="var(--accent-danger)" />
         <StatCard label="Konversationen" value={stats?.active_conversations ?? 0} color="var(--accent-info)" />
-      </div>
-
-      {/* Proof trigger */}
-      <div className="card" style={{ marginBottom: '20px', padding: '16px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-          <Activity size={16} />
-          <h3 className="heading" style={{ margin: 0, fontSize: '13px' }}>Tensor-Austausch Proof</h3>
-        </div>
-        <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
-          <input
-            type="text"
-            value={textA}
-            onChange={e => setTextA(e.target.value)}
-            placeholder="Text A (Researcher)"
-            style={{
-              flex: 1, minWidth: '200px', padding: '8px 12px', borderRadius: '8px',
-              border: '1px solid var(--border)', background: 'var(--bg-primary)',
-              color: 'var(--text-primary)', fontSize: '13px',
-            }}
-          />
-          <input
-            type="text"
-            value={textB}
-            onChange={e => setTextB(e.target.value)}
-            placeholder="Text B (Developer)"
-            style={{
-              flex: 1, minWidth: '200px', padding: '8px 12px', borderRadius: '8px',
-              border: '1px solid var(--border)', background: 'var(--bg-primary)',
-              color: 'var(--text-primary)', fontSize: '13px',
-            }}
-          />
-          <button
-            className="btn btn-primary"
-            disabled={proofRunning}
-            onClick={async () => {
-              setProofRunning(true)
-              setProof(null)
-              try {
-                const res = await fetch('/api/proof/tensor-exchange', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ text_a: textA, text_b: textB }),
-                })
-                const data = await res.json()
-                setProof(data)
-              } catch (e) {
-                setProof({ success: false, description: String(e), similarity: 0, total_us: 0, total_bytes_transferred: 0, messages_sent: 0, steps: [] })
-              }
-              setProofRunning(false)
-            }}
-            style={{ whiteSpace: 'nowrap' }}
-          >
-            {proofRunning ? 'Laeuft...' : 'Tensor-Proof starten'}
-          </button>
-        </div>
-        {proof && (
-          <div style={{ fontSize: '12px', lineHeight: 1.8 }}>
-            <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginBottom: '8px' }}>
-              <span style={{ fontWeight: 700, color: proof.success ? 'var(--accent-success)' : 'var(--accent-danger)' }}>
-                {proof.success ? 'Erfolgreich' : 'Fehlgeschlagen'}
-              </span>
-              <span>Similarity: <strong style={{ fontFamily: 'var(--font-mono)', color: 'var(--accent-primary)' }}>{proof.similarity.toFixed(4)}</strong></span>
-              <span>{(proof.total_us / 1000).toFixed(1)}ms</span>
-              <span>{proof.total_bytes_transferred} Bytes</span>
-              <span>{proof.messages_sent} QLMS Messages</span>
-              <span style={{ color: 'var(--accent-success)', fontWeight: 600 }}>0 LLM Calls</span>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-              {proof.steps.map(s => (
-                <div key={s.step} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <span className="mono" style={{ color: 'var(--text-muted)', width: '18px', textAlign: 'right' }}>{s.step}.</span>
-                  <span style={{ color: agentColor[s.agent] ?? 'var(--accent-primary)', fontWeight: 600, width: '80px' }}>{s.agent}</span>
-                  <span className="badge" style={{ fontSize: '10px', padding: '1px 6px' }}>{s.action}</span>
-                  <span className="mono" style={{ color: 'var(--text-muted)', fontSize: '11px' }}>
-                    {s.duration_us > 1000 ? `${(s.duration_us / 1000).toFixed(1)}ms` : `${s.duration_us}us`}
-                  </span>
-                  <span style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.detail}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Agents on bus */}

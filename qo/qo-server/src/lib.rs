@@ -1,7 +1,8 @@
 pub mod auth;
+pub mod config;
 pub mod peer_discovery;
 pub mod routes;
-
+pub mod tools;
 use axum::{
     middleware,
     routing::{delete, get, post, put},
@@ -9,8 +10,7 @@ use axum::{
 };
 use qlang_agent::bus::MessageBus;
 use qo_agents::{AgentRegistry, AgentRole};
-use qo_consciousness::{ConsciousnessState, ConsciousnessStream};
-use qo_evolution::{Pattern, PatternDetector, Proposal, ProposalEngine, QuantumState};
+
 use qo_llm::LlmRouter;
 use qo_memory::{GraphStore, MemoryContext, ObsidianBridge, Store};
 use qo_values::ValueScores;
@@ -28,30 +28,15 @@ pub struct AppState {
     pub llm: Arc<LlmRouter>,
     pub store: Store,
     pub graph_store: GraphStore,
-    pub consciousness: Mutex<ConsciousnessState>,
-    pub stream: ConsciousnessStream,
-    pub obsidian: ObsidianBridge,
-    pub agents: Mutex<AgentRegistry>,
-    pub patterns: Mutex<PatternDetector>,
-    pub proposals: Mutex<ProposalEngine>,
-    pub quantum: Mutex<QuantumState>,
+    pub llm_routing: config::LlmRoutingConfig,
+
     pub configured_providers: Mutex<Vec<qo_llm::ProviderConfig>>,
     pub memory: Mutex<MemoryContext>,
     /// QLANG Message Bus — routes GraphMessages between AI agents.
     pub message_bus: Arc<MessageBus>,
-    /// GPU training state — tracks running training job for SSE streaming.
-    pub gpu_training: Arc<routes::gpu_training::GpuTrainingState>,
-    /// Evolution daemon (legacy stub — simulated fitness drift).
-    /// Still kept for backwards compatibility with any CLI/tests that pin
-    /// the old behavior via `use_real_daemon=false`.
-    pub evolution_daemon: Arc<
-        Mutex<Option<Arc<qlang_runtime::evolution::daemon::EvolutionDaemon>>>,
-    >,
-    /// REAL evolution daemon — trains ternary MNIST specialists. Default
-    /// backend for `/api/evolution/*` endpoints.
-    pub real_evolution_daemon: Arc<
-        Mutex<Option<Arc<qlang_runtime::evolution::real_daemon::RealEvolutionDaemon>>>,
-    >,
+
+    pub obsidian: ObsidianBridge,
+    pub agents: Mutex<AgentRegistry>,
     pub supervisor_daemon: Mutex<routes::supervisor::SupervisorDaemonState>,
     pub live_supervisor_sessions: Mutex<HashMap<u64, Arc<routes::supervisor::LiveSessionHandle>>>,
     // --- Dashboard prerequisites (PRD Epic 6) ---
@@ -64,6 +49,11 @@ pub struct AppState {
     /// Peer-discovery gossip statistics. Populated by the background
     /// task (Task 4.2), read by `/api/federation/stats` (Task 6.4).
     pub gossip_stats: FederationStatsHandle,
+    /// IDE/agent presence registry. Ephemeral, in-memory only — a `qo`
+    /// restart wipes it so dead clients aren't resurrected from disk.
+    /// Mutated by `/api/presence/*` handlers; swept by a background
+    /// task that removes expired entries every 30s.
+    pub presence: Mutex<HashMap<String, routes::presence::PresenceEntry>>,
 }
 
 pub struct QoConfig {
@@ -80,6 +70,7 @@ pub struct QoConfig {
     pub static_dir: Option<std::path::PathBuf>,
     /// Optional API token for bearer auth (reads QO_AUTH_TOKEN from env if None)
     pub auth_token: Option<String>,
+    pub llm_routing: config::LlmRoutingConfig,
 }
 
 impl Default for QoConfig {
@@ -94,6 +85,7 @@ impl Default for QoConfig {
             obsidian_vault: std::path::PathBuf::from("vault"),
             static_dir: None,
             auth_token: None,
+            llm_routing: config::LlmRoutingConfig::default(),
         }
     }
 }
@@ -113,19 +105,9 @@ pub async fn build_app(
     };
     let llm = Arc::new(LlmRouter::new(config.groq_api_key, config.cloud_config, ollama_config));
     let obsidian = ObsidianBridge::new(config.obsidian_vault);
-    let stream = ConsciousnessStream::new(64);
-    let consciousness = Mutex::new(ConsciousnessState::default());
 
     // Load persisted data BEFORE creating AppState (no async runtime yet)
     let mut agents_reg = AgentRegistry::new();
-    let mut pattern_det = PatternDetector::new();
-    let mut proposal_eng = ProposalEngine::new();
-    let mut quantum_st = QuantumState::new(vec![
-        "Direkte Ausführung".into(),
-        "Dekomposition + Delegation".into(),
-        "Recherche zuerst".into(),
-        "Kreative Lösung".into(),
-    ]);
 
     // Restore goals
     if let Ok(goals) = store.list_goals() {
@@ -158,33 +140,8 @@ pub async fn build_app(
         }
     }
 
-    // Restore patterns
-    if let Ok(data) = store.list_patterns() {
-        for (_, json) in data {
-            if let Ok(p) = serde_json::from_str::<Pattern>(&json) {
-                pattern_det.restore_pattern(p);
-            }
-        }
-    }
-
-    // Restore proposals
-    if let Ok(data) = store.list_proposals() {
-        for (_, json) in data {
-            if let Ok(p) = serde_json::from_str::<Proposal>(&json) {
-                proposal_eng.restore_proposal(p);
-            }
-        }
-    }
-
-    // Restore quantum state
-    if let Ok(Some(json)) = store.load_quantum_state() {
-        if let Ok(qs) = serde_json::from_str::<QuantumState>(&json) {
-            quantum_st = qs;
-        }
-    }
-
     // Load persisted embeddings into vector store for long-term memory
-    let mut memory_ctx = MemoryContext::new(384); // all-MiniLM-L6-v2 via candle: 384 dimensions
+    let mut memory_ctx = MemoryContext::new(384);
     memory_ctx.load_from_store(&store);
     tracing::info!("Loaded {} memories from vector store", memory_ctx.count());
 
@@ -204,11 +161,30 @@ pub async fn build_app(
         configured_providers.len()
     );
 
-    tracing::info!("Restored: {} goals, {} patterns, {} proposals, gen {}",
+    // Inject persisted providers into the live LlmRouter so a UI-added
+    // key (e.g. DeepSeek) survives a restart of `qo --offline` even
+    // when no DEEPSEEK_API_KEY env var is set.
+    for cfg in &configured_providers {
+        if let Err(e) = llm
+            .install_provider(
+                cfg.provider_type_str(),
+                cfg.api_key.clone(),
+                cfg.base_url.clone(),
+                Some(cfg.model.clone()),
+            )
+            .await
+        {
+            tracing::warn!(
+                "startup: provider {} (type {}) not hot-reloaded: {}",
+                cfg.id,
+                cfg.provider_type_str(),
+                e
+            );
+        }
+    }
+
+    tracing::info!("Restored: {} goals",
         agents_reg.list_goals().len(),
-        pattern_det.all_patterns().len(),
-        proposal_eng.all().len(),
-        quantum_st.generation,
     );
 
     // Initialize the QLANG Message Bus for AI-to-AI communication
@@ -218,19 +194,12 @@ pub async fn build_app(
         llm,
         store,
         graph_store,
-        consciousness,
-        stream,
+        llm_routing: config.llm_routing,
         obsidian,
         agents: Mutex::new(agents_reg),
-        patterns: Mutex::new(pattern_det),
-        proposals: Mutex::new(proposal_eng),
-        quantum: Mutex::new(quantum_st),
         configured_providers: Mutex::new(configured_providers),
         memory: Mutex::new(memory_ctx),
         message_bus: message_bus.clone(),
-        gpu_training: Arc::new(routes::gpu_training::GpuTrainingState::default()),
-        evolution_daemon: Arc::new(Mutex::new(None)),
-        real_evolution_daemon: Arc::new(Mutex::new(None)),
         supervisor_daemon: Mutex::new(routes::supervisor::SupervisorDaemonState::default()),
         live_supervisor_sessions: Mutex::new(HashMap::new()),
         values: Mutex::new(ValueScores::default()),
@@ -239,14 +208,74 @@ pub async fn build_app(
         // so they can show a "catching up" indicator.
         graph_events_tx: broadcast::channel::<GraphEvent>(256).0,
         gossip_stats: peer_discovery::new_stats_handle(std::time::Duration::from_secs(10)),
+        presence: Mutex::new(HashMap::new()),
     });
 
-    // Register all QO agents on the message bus.
-    // Mailboxes are kept alive in background tasks that drain messages —
-    // and each received message is also fanned out to any dashboard
-    // subscriber via `graph_events_tx` (Mission Control live stream).
+    // Spawn the presence sweeper — evicts expired IDE/agent entries
+    // every 30s. Runs for the life of the process.
     {
-        use qlang_agent::protocol::{AgentId, Capability};
+        let sweeper_state = state.clone();
+        tokio::spawn(async move {
+            routes::presence::sweeper_loop(sweeper_state).await;
+        });
+    }
+
+    // Register all QO agents on the message bus and wire each one to an LLM.
+    //
+    // Each agent runs its own background task that:
+    //   1. Drains its mailbox.
+    //   2. Extracts the user prompt (file content / chat text) from the message.
+    //   3. Calls the LLM router with a role-specific system prompt.
+    //   4. Builds a reply GraphMessage with the LLM response in graph.metadata.
+    //   5. Sends the reply back via the bus, addressed to the original sender.
+    //
+    // Dashboard fanout (graph_events_tx) is kept for the cockpit's edge animation.
+    {
+        use qlang_agent::protocol::{AgentId, Capability, MessageIntent};
+        use qlang_core::graph::Graph;
+        use std::collections::HashMap as StdHashMap;
+
+        /// Map an agent role to the DeepSeek model best suited for its job.
+        /// Used only when the DeepSeek tier is actually available; otherwise
+        /// `chat_with_model` falls back to auto-routing on other tiers and
+        /// the override is ignored.
+        fn deepseek_model_for(role: &str) -> &'static str {
+            match role {
+                "developer"  => "deepseek-coder",
+                "researcher" => "deepseek-reasoner",
+                _            => "deepseek-chat",
+            }
+        }
+
+        fn system_prompt_for(role: &str) -> &'static str {
+            match role {
+                "ceo"        => "You are CEO, a coordinator agent. Decompose the user's request into clear steps, suggest which specialist should handle each step (developer, researcher, guardian, strategist, artisan), and give a one-paragraph executive summary.",
+                "developer"  => "You are Developer, a senior software engineer. Review code, suggest refactors, write functions, and explain trade-offs. Be precise. Use code blocks for any code you produce.",
+                "researcher" => "You are Researcher, a knowledge synthesizer. Find relevant information, cite sources when possible, summarize concisely, and flag uncertainty.",
+                "guardian"   => "You are Guardian, a security and safety reviewer. Find vulnerabilities, unsafe patterns, missing validation, and compliance gaps. Suggest concrete mitigations.",
+                "strategist" => "You are Strategist, a planning advisor. Lay out multi-step strategies, trade-offs, and second-order effects. Prefer numbered plans.",
+                "artisan"    => "You are Artisan, a creative implementer. Generate concrete artifacts (text, prose, examples, snippets) that match the user's intent.",
+                _ => "You are an AI assistant. Help the user with their request.",
+            }
+        }
+
+        fn extract_prompt(msg: &qlang_agent::protocol::GraphMessage) -> String {
+            // Primary: graph.metadata.content (IDE handover, cockpit composer)
+            if let Some(content) = msg.graph.metadata.get("content") {
+                if !content.is_empty() {
+                    let filename = msg.graph.metadata.get("filename").cloned().unwrap_or_default();
+                    let language = msg.graph.metadata.get("language").cloned().unwrap_or_default();
+                    if !filename.is_empty() {
+                        return format!("File: {}\nLanguage: {}\n\n---\n{}", filename, language, content);
+                    }
+                    return content.clone();
+                }
+            }
+            // Fallback: stringify the whole graph (last resort, won't be useful but keeps the agent talking)
+            serde_json::to_string_pretty(&msg.graph)
+                .unwrap_or_else(|_| "(empty graph)".to_string())
+        }
+
         let agent_names = ["ceo", "researcher", "developer", "guardian", "strategist", "artisan"];
         for name in &agent_names {
             let agent_id = AgentId {
@@ -256,16 +285,23 @@ pub async fn build_app(
             let mut mailbox = message_bus.register(agent_id).await;
             let agent_name = name.to_string();
             let events_tx = state.graph_events_tx.clone();
+            let llm = state.llm.clone();
+            let bus = message_bus.clone();
             tokio::spawn(async move {
                 loop {
                     match mailbox.recv().await {
                         Some(msg) => {
+                            // Ignore Result-intent messages so we don't reply to our own replies.
+                            if matches!(msg.intent, MessageIntent::Result { .. }) {
+                                continue;
+                            }
+
                             tracing::debug!(
-                                "Agent '{}' received QLMS message from '{}' (intent: {:?})",
+                                "Agent '{}' received QLMS from '{}' (intent: {:?})",
                                 agent_name, msg.from.name, msg.intent
                             );
-                            // Best-effort: a rough byte estimate is good enough for
-                            // the dashboard's edge-width animation.
+
+                            // Dashboard fanout (existing behavior).
                             let size_bytes = serde_json::to_vec(&msg.graph)
                                 .map(|v| v.len() as u32)
                                 .unwrap_or(0);
@@ -281,40 +317,336 @@ pub async fn build_app(
                                 &intent_label,
                                 size_bytes,
                             ));
+
+                            // ─── LLM call (with MCP-style tool loop) ─────────
+                            //
+                            // For selected agents (developer, researcher) the
+                            // system prompt advertises a small set of tools.
+                            // After each LLM reply we scan for `<tool .../>`
+                            // markers; if any are present, we execute them,
+                            // append the results as a new user turn, and call
+                            // the LLM again. Capped at 3 iterations so a
+                            // misbehaving model can't loop forever.
+                            let user_prompt = extract_prompt(&msg);
+                            let tools_block = match agent_name.as_str() {
+                                "developer" | "researcher" => {
+                                    format!("\n\n{}", crate::tools::available_tools_help())
+                                }
+                                _ => String::new(),
+                            };
+                            let system =
+                                format!("{}{}", system_prompt_for(&agent_name), tools_block);
+                            let mut messages: Vec<(String, String)> = vec![
+                                ("system".to_string(), system),
+                                ("user".to_string(), user_prompt),
+                            ];
+
+                            // Per-agent model picks (developer→coder,
+                            // researcher→reasoner, others→chat). Prefer
+                            // DeepSeek explicitly — auto-router never picks it.
+                            let model = deepseek_model_for(&agent_name).to_string();
+                            const MAX_ITERATIONS: usize = 3;
+                            let mut reply_text = String::new();
+                            let mut tools_used: Vec<String> = Vec::new();
+
+                            for _iter in 0..MAX_ITERATIONS {
+                                let response = match llm
+                                    .chat_with_model(
+                                        Some(qo_llm::Tier::DeepSeek),
+                                        Some(model.clone()),
+                                        messages.clone(),
+                                    )
+                                    .await
+                                {
+                                    Ok((text, used)) => {
+                                        tracing::debug!(?used, "agent '{}' got LLM reply", agent_name);
+                                        text
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "Agent '{}' LLM call failed: {}",
+                                            agent_name,
+                                            e
+                                        );
+                                        reply_text = format!("[agent '{}' error: {}]", agent_name, e);
+                                        break;
+                                    }
+                                };
+
+                                let tool_calls = crate::tools::parse_tool_calls(&response);
+                                if tool_calls.is_empty() {
+                                    // No tool calls — this IS the final answer.
+                                    reply_text = response;
+                                    break;
+                                }
+
+                                // Execute every tool call in order, building
+                                // up a single user-turn message that the LLM
+                                // sees on the next round.
+                                let mut tool_results_text = String::new();
+                                for call in tool_calls.iter().cloned() {
+                                    let tool_name = call.name.clone();
+                                    let result = crate::tools::execute_tool(call).await;
+                                    tool_results_text.push_str(&format!(
+                                        "<tool_result name=\"{}\" ok=\"{}\">\n{}\n</tool_result>\n",
+                                        tool_name,
+                                        result.ok,
+                                        if result.ok {
+                                            result.output.as_str()
+                                        } else {
+                                            result.error.as_deref().unwrap_or("?")
+                                        }
+                                    ));
+                                    tools_used.push(tool_name);
+                                }
+
+                                messages.push(("assistant".to_string(), response));
+                                messages.push((
+                                    "user".to_string(),
+                                    format!(
+                                        "Tool results:\n{}\n\nNow give your final answer.",
+                                        tool_results_text
+                                    ),
+                                ));
+                            }
+
+                            // If we exited the loop with reply_text still empty
+                            // (i.e. hit MAX_ITERATIONS while still emitting
+                            // tool calls), fall back to a graceful note so the
+                            // bus delivery path always has something to send.
+                            if reply_text.is_empty() {
+                                reply_text = format!(
+                                    "[agent '{}' reached the {}-iteration tool loop cap]",
+                                    agent_name, MAX_ITERATIONS
+                                );
+                            }
+
+                            // ─── Pipeline-chain forwarding ────────────────────
+                            // If the incoming graph carries a `chain` metadata key
+                            // (comma-separated list of next agent names), forward
+                            // this agent's reply as a fresh Execute to the first
+                            // name in the chain instead of replying to the sender.
+                            // The original sender is preserved via `pipeline_origin`
+                            // so the LAST agent in the chain can route the final
+                            // Result back to the true initiator.
+                            let chain_str = msg
+                                .graph
+                                .metadata
+                                .get("chain")
+                                .cloned()
+                                .unwrap_or_default();
+                            let chain: Vec<String> = chain_str
+                                .split(',')
+                                .map(|s| s.trim().to_string())
+                                .filter(|s| !s.is_empty())
+                                .collect();
+
+                            if !chain.is_empty() {
+                                let next_target = chain[0].clone();
+                                let remaining: Vec<String> = chain[1..].to_vec();
+                                let next_chain_str = remaining.join(",");
+
+                                let original_sender = msg
+                                    .graph
+                                    .metadata
+                                    .get("pipeline_origin")
+                                    .cloned()
+                                    .unwrap_or_else(|| msg.from.name.clone());
+
+                                let mut forward_metadata = StdHashMap::new();
+                                forward_metadata
+                                    .insert("source".to_string(), "pipeline-forward".to_string());
+                                forward_metadata
+                                    .insert("agent".to_string(), agent_name.clone());
+                                forward_metadata
+                                    .insert("content".to_string(), reply_text.clone());
+                                forward_metadata
+                                    .insert("chain".to_string(), next_chain_str);
+                                forward_metadata.insert(
+                                    "pipeline_origin".to_string(),
+                                    original_sender.clone(),
+                                );
+                                forward_metadata.insert(
+                                    "pipeline_step".to_string(),
+                                    format!(
+                                        "{}",
+                                        msg.graph
+                                            .metadata
+                                            .get("pipeline_step")
+                                            .and_then(|s| s.parse::<u32>().ok())
+                                            .unwrap_or(0)
+                                            + 1
+                                    ),
+                                );
+
+                                let forward_id = (msg.id ^ 0x6A09E667F3BCC908u64).wrapping_add(
+                                    std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .map(|d| d.as_nanos() as u64)
+                                        .unwrap_or(0),
+                                );
+
+                                let forward_graph = Graph {
+                                    id: format!(
+                                        "pipeline-{}-{}-{}",
+                                        agent_name, next_target, forward_id
+                                    ),
+                                    version: "1.0".to_string(),
+                                    nodes: vec![],
+                                    edges: vec![],
+                                    constraints: vec![],
+                                    metadata: forward_metadata,
+                                };
+
+                                let forward_msg = qlang_agent::protocol::GraphMessage {
+                                    id: forward_id,
+                                    from: AgentId {
+                                        name: agent_name.clone(),
+                                        capabilities: vec![Capability::Execute],
+                                    },
+                                    to: AgentId {
+                                        name: next_target.clone(),
+                                        capabilities: vec![Capability::Execute],
+                                    },
+                                    graph: forward_graph,
+                                    inputs: StdHashMap::new(),
+                                    intent: MessageIntent::Execute,
+                                    in_reply_to: Some(msg.id),
+                                    signature: None,
+                                    signer_pubkey: None,
+                                    graph_hash: None,
+                                };
+
+                                let _ = bus.send(forward_msg.clone()).await;
+
+                                // Dashboard fanout for the pipeline edge.
+                                let forward_size = serde_json::to_vec(&forward_msg.graph)
+                                    .map(|v| v.len() as u32)
+                                    .unwrap_or(0);
+                                let _ = events_tx.send(routes::dashboard::GraphEvent::now(
+                                    &agent_name,
+                                    &next_target,
+                                    "PipelineForward",
+                                    forward_size,
+                                ));
+
+                                // Skip the regular Result-reply: the LAST agent
+                                // in the chain produces the final Result and
+                                // routes it to pipeline_origin. Replying here
+                                // would double-deliver to the sender.
+                                continue;
+                            }
+
+                            // ─── Build reply GraphMessage ─────────────────────
+                            let reply_id = (msg.id ^ 0x9E3779B97F4A7C15u64).wrapping_add(
+                                std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .map(|d| d.as_nanos() as u64)
+                                    .unwrap_or(0),
+                            );
+                            let mut reply_metadata = StdHashMap::new();
+                            reply_metadata.insert("source".to_string(), "agent".to_string());
+                            reply_metadata.insert("agent".to_string(), agent_name.clone());
+                            reply_metadata.insert("content".to_string(), reply_text.clone());
+                            reply_metadata.insert("in_reply_to_graph".to_string(), msg.graph.id.clone());
+
+                            // Surface tool usage so the cockpit can render a
+                            // "tools used" badge next to the agent reply.
+                            if !tools_used.is_empty() {
+                                reply_metadata
+                                    .insert("tools_used".to_string(), tools_used.join(","));
+                            }
+
+                            // Pipeline summary for the cockpit/IDE: copy origin
+                            // and step counter through, and tag this final agent
+                            // so the receiver can render the chain history.
+                            if let Some(origin) = msg.graph.metadata.get("pipeline_origin") {
+                                reply_metadata
+                                    .insert("pipeline_origin".to_string(), origin.clone());
+                            }
+                            if let Some(step) = msg.graph.metadata.get("pipeline_step") {
+                                reply_metadata
+                                    .insert("pipeline_step".to_string(), step.clone());
+                            }
+                            if msg.graph.metadata.contains_key("pipeline_origin") {
+                                reply_metadata.insert(
+                                    "pipeline_chain_completed".to_string(),
+                                    agent_name.clone(),
+                                );
+                            }
+
+                            let reply_graph = Graph {
+                                id: format!("reply-{}-{}", agent_name, reply_id),
+                                version: "1.0".to_string(),
+                                nodes: vec![],
+                                edges: vec![],
+                                constraints: vec![],
+                                metadata: reply_metadata,
+                            };
+
+                            // If we are the LAST agent in a pipeline, route the
+                            // Result back to the true original sender (carried in
+                            // pipeline_origin) instead of the immediate `from`
+                            // (which would be the previous pipeline agent).
+                            let reply_to = if let Some(origin) =
+                                msg.graph.metadata.get("pipeline_origin")
+                            {
+                                AgentId {
+                                    name: origin.clone(),
+                                    capabilities: vec![Capability::Execute],
+                                }
+                            } else {
+                                msg.from.clone()
+                            };
+
+                            let reply = qlang_agent::protocol::GraphMessage {
+                                id: reply_id,
+                                from: AgentId {
+                                    name: agent_name.clone(),
+                                    capabilities: vec![Capability::Execute],
+                                },
+                                to: reply_to,
+                                graph: reply_graph,
+                                inputs: StdHashMap::new(),
+                                intent: MessageIntent::Result { original_message_id: msg.id },
+                                in_reply_to: Some(msg.id),
+                                signature: None,
+                                signer_pubkey: None,
+                                graph_hash: None,
+                            };
+
+                            // Send reply. If the recipient has no mailbox (e.g., vscode-assistant),
+                            // bus.send() still emits to the SSE subscribers — the IDE inbox listens there.
+                            let _ = bus.send(reply.clone()).await;
+
+                            // Dashboard fanout for the reply edge too.
+                            let reply_size = serde_json::to_vec(&reply.graph)
+                                .map(|v| v.len() as u32)
+                                .unwrap_or(0);
+                            let _ = events_tx.send(routes::dashboard::GraphEvent::now(
+                                &agent_name,
+                                &reply.to.name,
+                                "Result",
+                                reply_size,
+                            ));
                         }
                         None => break, // Channel closed
                     }
                 }
             });
         }
-        tracing::info!("Message bus: {} agents registered with active mailboxes", agent_names.len());
+        tracing::info!(
+            "Message bus: {} agents registered with LLM-backed mailboxes",
+            agent_names.len()
+        );
     }
 
     let api_router = Router::new()
         .route("/api/health", get(routes::health::health))
         .route("/api/chat", post(routes::chat::chat))
         .route("/api/chat/history", get(routes::chat::chat_history))
-        .route(
-            "/api/consciousness/stream",
-            get(routes::consciousness::stream),
-        )
-        .route(
-            "/api/consciousness/state",
-            get(routes::consciousness::current_state),
-        )
-        .route("/api/agents", get(routes::agents::list_agents))
-        .route("/api/agents/models", get(routes::agents::list_agent_models))
-        .route("/api/agents/{role}", get(routes::agents::get_agent))
-        .route("/api/goals", get(routes::goals::list_goals))
-        .route("/api/goals", post(routes::goals::create_goal))
-        .route("/api/goals/{id}", get(routes::goals::get_goal))
-        .route("/api/goals/{id}/continue", post(routes::goals::continue_goal))
-        .route("/api/evolution/state", get(routes::evolution::quantum_state))
-        .route("/api/evolution/patterns", get(routes::evolution::list_patterns))
-        .route("/api/evolution/proposals", get(routes::evolution::list_proposals))
-        .route("/api/evolution/proposals/{id}/approve", post(routes::evolution::approve_proposal))
-        .route("/api/evolution/proposals/{id}/reject", post(routes::evolution::reject_proposal))
-        .route("/api/evolution/analyze", post(routes::evolution::analyze))
+        .route("/api/consensus", post(routes::consensus::consensus))
+
         .route("/api/history", get(routes::history::get_history))
         .route("/api/goals/{id}/graph", get(routes::goals::get_goal_graph))
         .route("/api/graphs", get(routes::graphs::list_graphs).post(routes::graphs::store_graph))
@@ -329,8 +661,6 @@ pub async fn build_app(
         .route("/api/providers/{id}/toggle", put(routes::providers::toggle_provider))
         .route("/api/providers/{id}/edit", put(routes::providers::update_provider))
         .route("/api/providers/{id}", delete(routes::providers::delete_provider))
-        .route("/api/simulation/run", post(routes::simulation::run_simulation))
-        .route("/api/simulation/strategies", get(routes::simulation::list_strategies))
         .route("/api/memory/stats", get(routes::memory::memory_stats))
         .route("/api/memory/search", get(routes::memory::memory_search))
         .route("/api/messages/stats", get(routes::messages::bus_stats))
@@ -356,27 +686,6 @@ pub async fn build_app(
         .route("/api/supervisor/daemon/status", get(routes::supervisor::daemon_status))
         .route("/api/supervisor/daemon/start", post(routes::supervisor::daemon_start))
         .route("/api/supervisor/daemon/stop", post(routes::supervisor::daemon_stop))
-        .route("/api/proof/tensor-exchange", post(routes::proof::tensor_exchange))
-        .route("/api/organism/chat", post(routes::organism::chat))
-        .route("/api/organism/evolve", post(routes::organism::evolve))
-        .route("/api/organism/status", get(routes::organism::status))
-        .route("/api/organism/load-model", post(routes::organism::load_model))
-        .route("/api/training/qlang", post(routes::training::train_qlang))
-        .route("/api/training/monitor", get(routes::train_monitor::monitor))
-        .route("/api/training/gpu", post(routes::gpu_training::start_gpu_training))
-        .route("/api/training/gpu/status", get(routes::gpu_training::gpu_training_status))
-        .route("/api/training/gpu/stop", post(routes::gpu_training::stop_gpu_training))
-        .route("/api/training/gpu/stream", get(routes::gpu_training::gpu_training_stream))
-        .route("/api/spiking/run", post(routes::spiking::run_spiking))
-        .route("/api/spiking/train", post(routes::spiking::train_spiking))
-        .route("/api/spiking/status", get(routes::spiking::spiking_status))
-        .route("/api/demo/mnist-igqk", post(routes::demo::start_mnist_igqk_demo))
-        .route("/api/qlms/send-model", post(routes::qlms_demo::send_model))
-        .route("/api/qlms/receive", post(routes::qlms_demo::receive_model))
-        .route("/api/qlms/demo-log", get(routes::qlms_demo::demo_log))
-        .route("/api/qlms/federation/gossip", post(routes::qlms_federation::gossip))
-        .route("/api/qlms/federation/weights", get(routes::qlms_federation::get_weights))
-        .route("/api/qlms/federation/eval", get(routes::qlms_federation::eval_local))
         // MCP ↔ QLMS bridge (spec §15.2 / PRD Task 2.2)
         .route("/qlms/v1.1/deliver", post(routes::mcp_qlms::deliver))
         .route("/qlms/v1.1/reply", post(routes::mcp_qlms::reply))
@@ -404,19 +713,27 @@ pub async fn build_app(
             "/api/workspace/file",
             get(routes::workspace::read_file).delete(routes::workspace::delete_file),
         )
-        .route("/api/evolution/start", post(routes::evolution_daemon::start))
-        .route("/api/evolution/stop", post(routes::evolution_daemon::stop))
-        .route("/api/evolution/status", get(routes::evolution_daemon::status))
-        .route("/api/evolution/history", get(routes::evolution_daemon::history))
-        .route("/api/evolution/specialists", get(routes::evolution_daemon::specialists))
-        .route("/api/evolution/lineage/{id}", get(routes::evolution_daemon::lineage))
-        .route("/api/evolution/stream", get(routes::evolution_daemon::stream))
+        // Presence registry — connected IDEs/agents register, heartbeat,
+        // and discover each other for multi-IDE-mesh routing.
+        .route("/api/presence", get(routes::presence::list))
+        .route("/api/presence/register", post(routes::presence::register))
+        .route(
+            "/api/presence/heartbeat/{identity}",
+            post(routes::presence::heartbeat),
+        )
+        .route(
+            "/api/presence/{identity}",
+            delete(routes::presence::deregister),
+        )
         .route("/api/neo/hardware", get(routes::neo::hardware))
         .route("/api/neo/memory", get(routes::neo::memory))
         .route("/api/neo/status", get(routes::neo::status))
         .route("/api/neo/agents", get(routes::neo::list_agents))
         .route("/api/neo/agents/{id}", get(routes::neo::get_agent))
         .route("/supervisor", get(routes::supervisor::cockpit))
+        .route("/supervisor/legacy", get(routes::supervisor::cockpit_legacy));
+
+    let api_router = api_router
         .layer(middleware::from_fn(auth::auth_middleware))
         .with_state(state.clone());
 

@@ -1,3 +1,9 @@
+> Status: planned
+> Sync: AAIF-Submission-Checkliste (Linux Foundation Agentic Interop Forum).
+> Was als `[x]` markiert ist, hat Code-Evidence; offene Punkte sind
+> ausdruecklich als Gap dokumentiert. Status der zitierten Reference-Impls
+> immer gegen `QLANG-STATUS.md` und `spec/QLMS_PROTOCOL_v1_1.md` pruefen.
+
 # QLMS v1.1 — Linux Foundation AAIF Submission Checklist
 
 **Spec under review:** `spec/QLMS_PROTOCOL_v1_1.md`

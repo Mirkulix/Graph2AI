@@ -16,8 +16,20 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::AppState;
 
-const NEO_TRANSCRIPT_ROOT: &str =
-    "/home/mirkulix/.claude/projects/-home-mirkulix-AI-neoqlang-qlang";
+/// Directory that holds Claude Code subagent transcripts.  Override with the
+/// `NEO_TRANSCRIPT_ROOT` env var; defaults to `$HOME/.claude/projects/<cwd>`.
+fn neo_transcript_root() -> PathBuf {
+    if let Ok(explicit) = std::env::var("NEO_TRANSCRIPT_ROOT") {
+        return PathBuf::from(explicit);
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    // Claude Code slugifies the project path by replacing `/` with `-`.
+    let cwd_slug = std::env::current_dir()
+        .ok()
+        .and_then(|p| p.to_str().map(|s| s.replace('/', "-")))
+        .unwrap_or_default();
+    PathBuf::from(format!("{home}/.claude/projects/{cwd_slug}"))
+}
 
 #[derive(Serialize, Default)]
 pub struct GpuInfo {
@@ -181,19 +193,9 @@ pub async fn memory(State(state): State<Arc<AppState>>) -> Json<MemoryListRespon
         count
     };
 
-    // ── Organism shared memory
-    let organism_count = {
-        let org = crate::routes::organism::organism_snapshot().await;
-        for item in org.items.iter().rev().take(20) {
-            let preview = if item.len() > 120 { format!("{}…", &item[..120]) } else { item.clone() };
-            entries.push(MemEntry {
-                source: "organism".into(),
-                key: item.clone(),
-                preview,
-            });
-        }
-        org.items.len()
-    };
+
+    let organism_count: usize = 0;
+
 
     Json(MemoryListResponse {
         hdc_count,
@@ -218,16 +220,19 @@ pub struct StatusSnapshot {
 /// GET /api/neo/status — aggregated snapshot for the Neo top strip.
 pub async fn status(State(state): State<Arc<AppState>>) -> Json<StatusSnapshot> {
     let hdc = { state.memory.lock().await.count() };
-    let org = crate::routes::organism::organism_snapshot().await;
     let hw = hardware().await.0;
+
+
+    let (organism_generation, organism_interactions, organism_memory_items, specialists) =
+        (0u32, 0usize, 0usize, 0usize);
 
     Json(StatusSnapshot {
         server: "online",
         hdc_memory: hdc,
-        organism_generation: org.generation,
-        organism_interactions: org.interactions,
-        organism_memory_items: org.items.len(),
-        specialists: org.specialists,
+        organism_generation,
+        organism_interactions,
+        organism_memory_items,
+        specialists,
         gpu_count: hw.gpus.len(),
         gpu_temps: hw.gpus.iter().map(|g| g.temp).collect(),
         gpu_utils: hw.gpus.iter().map(|g| g.util).collect(),
@@ -398,7 +403,8 @@ fn parse_agent_summary(jsonl: &Path, session_id: &str) -> Option<AgentSummary> {
 
 fn scan_all_agents() -> Vec<AgentSummary> {
     let mut out = Vec::new();
-    let root = Path::new(NEO_TRANSCRIPT_ROOT);
+    let root = neo_transcript_root();
+    let root = root.as_path();
     let sessions = match std::fs::read_dir(root) {
         Ok(r) => r,
         Err(_) => return out,
@@ -434,7 +440,8 @@ pub async fn list_agents() -> Json<Vec<AgentSummary>> {
 }
 
 fn find_agent_jsonl(agent_id: &str) -> Option<(PathBuf, String)> {
-    let root = Path::new(NEO_TRANSCRIPT_ROOT);
+    let root = neo_transcript_root();
+    let root = root.as_path();
     for session in std::fs::read_dir(root).ok()?.flatten() {
         let sp = session.path();
         if !sp.is_dir() {

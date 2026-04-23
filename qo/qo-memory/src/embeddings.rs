@@ -7,25 +7,10 @@
 
 /// Embed text using the candle Rust model (384 dim, real semantics).
 /// Thread-safe, model is loaded once and cached.
-pub fn embed_text(text: &str, _dimensions: usize) -> Vec<f32> {
-    let text_owned = text.to_string();
-    // Spawn a thread because candle model loading may conflict with tokio runtime
-    let handle = std::thread::spawn(move || {
-        match qo_embed::embed(&text_owned) {
-            Ok(vec) => Some(vec),
-            Err(e) => {
-                tracing::warn!("Candle embedding failed: {e}");
-                None
-            }
-        }
-    });
-    match handle.join() {
-        Ok(Some(vec)) => vec,
-        _ => {
-            tracing::warn!("Embedding failed, using hash fallback");
-            embed_hash_fallback(text, 384)
-        }
-    }
+/// Embed text using a deterministic hash-based pseudo-embedding.
+/// NO semantic understanding, but zero external dependencies and fast.
+pub fn embed_text(text: &str, dimensions: usize) -> Vec<f32> {
+    embed_hash_fallback(text, dimensions)
 }
 
 /// Hash-based fallback — NO semantic understanding, only exact matches work.

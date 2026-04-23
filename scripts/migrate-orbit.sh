@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-ORBIT_DB="/home/mirkulix/Orbit/backend/orbit.db"
+ORBIT_DB="${ORBIT_DB:-./orbit.db}"
 EXPORT_DIR="data/orbit-import"
 
 echo "=== QO Orbit Migration ==="

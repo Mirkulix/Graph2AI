@@ -4,7 +4,7 @@ use axum::{
 };
 use qlang_agent::protocol::{self, AgentId, Capability, MessageIntent};
 use qo_agents::{ExecutionGraph, Goal};
-use qo_evolution::SystemStats;
+
 use qo_memory::graph_builders;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -69,13 +69,7 @@ pub async fn create_goal(
     }
 
     // Emit activity: goal created
-    state.stream.publish_activity(
-        format!("Neues Ziel erstellt: {}", req.description),
-        None,
-        "info",
-    );
-
-    // Spawn background task to execute the goal
+// Spawn background task to execute the goal
     let state_clone = state.clone();
     let description = req.description.clone();
     tokio::spawn(async move {
@@ -97,14 +91,7 @@ pub async fn execute_goal_background(
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64;
-
-    state.stream.publish_activity(
-        "CEO analysiert Ziel...",
-        Some("CEO".to_string()),
-        "progress",
-    );
-
-    // Send QLMS message: CEO starts goal decomposition via MessageBus
+// Send QLMS message: CEO starts goal decomposition via MessageBus
     {
         let bus = &state.message_bus;
         let ceo_graph = qo_agents::executor::build_ceo_decompose_graph("goal_start");
@@ -131,39 +118,23 @@ pub async fn execute_goal_background(
     // First, do the decomposition phase — pass quantum state for strategy steering.
     let decompose_result = {
         let mut registry = state.agents.lock().await;
-        let quantum = state.quantum.lock().await;
-        registry.execute_goal_decompose(goal_id, &*state.llm, Some(&*quantum)).await
+        let ceo_tier = state.llm_routing.get_tier(&qo_agents::AgentRole::Ceo);
+        registry.execute_goal_decompose(goal_id, &*state.llm, Some(ceo_tier)).await
     };
 
-    let chosen_strategy = match decompose_result {
-        Err(e) => {
-            state.stream.publish_activity(
-                format!("CEO ✗ Fehler bei Dekomposition: {}", e),
-                Some("CEO".to_string()),
-                "error",
-            );
-            return;
+    let _chosen_strategy = match decompose_result {
+        Err(_e) => {
+return;
         }
-        Ok((subtask_count, strategy)) => {
-            state.stream.publish_activity(
-                format!("CEO hat {} Teilaufgaben erstellt [Strategie: {}]", subtask_count, strategy),
-                Some("CEO".to_string()),
-                "success",
-            );
-            strategy
+        Ok((_subtask_count, strategy)) => {
+strategy
         }
     };
 
     // Execute all subtasks in parallel — releases the lock before spawning
-    state.stream.publish_activity(
-        "Agenten arbeiten parallel an Teilaufgaben...".to_string(),
-        None,
-        "progress",
-    );
-
-    let parallel_outcomes = {
+let parallel_outcomes = {
         let mut registry = state.agents.lock().await;
-        registry.execute_goal_subtasks_parallel(goal_id, state.llm.clone()).await
+        registry.execute_goal_subtasks_parallel(goal_id, state.llm.clone(), None).await
     };
 
     // Multi-round retry — failed subtasks get up to MAX_RETRIES more
@@ -183,22 +154,14 @@ pub async fn execute_goal_background(
             break;
         }
         round += 1;
-        state.stream.publish_activity(
-            format!(
-                "CEO startet Runde {round} — {} Aufgabe(n) werden wiederholt",
-                failed_indices.len()
-            ),
-            Some("CEO".to_string()),
-            "progress",
-        );
-        for &idx in &failed_indices {
+for &idx in &failed_indices {
             let retry_start = std::time::Instant::now();
             let retry_result = {
                 let mut registry = state.agents.lock().await;
-                registry.execute_goal_subtask(goal_id, idx, &*state.llm).await
+                registry.execute_goal_subtask(goal_id, idx, &*state.llm, None).await
             };
             let duration_ms = retry_start.elapsed().as_millis() as u64;
-            let (agent_name, task_desc) = {
+            let (_agent_name, task_desc) = {
                 let registry = state.agents.lock().await;
                 match registry.get_goal(goal_id).and_then(|g| g.subtasks.get(idx)) {
                     Some(st) => (
@@ -213,16 +176,7 @@ pub async fn execute_goal_background(
                 entry.3 = ok;
                 entry.4 = duration_ms;
             }
-            state.stream.publish_activity(
-                if ok {
-                    format!("{} \u{2713} Runde {round} erfolgreich", agent_name)
-                } else {
-                    format!("{} \u{2717} Runde {round} fehlgeschlagen", agent_name)
-                },
-                Some(agent_name),
-                if ok { "success" } else { "warning" },
-            );
-            let _ = task_desc;
+let _ = task_desc;
         }
     }
     let parallel_outcomes = latest_outcomes;
@@ -255,12 +209,7 @@ pub async fn execute_goal_background(
                                 a.content.len(),
                                 agent_name
                             );
-                            state.stream.publish_activity(
-                                format!("{} schreibt Datei: {}", agent_name, a.path),
-                                Some(agent_name),
-                                "success",
-                            );
-                            let _ = abs;
+let _ = abs;
                         }
                         Err(e) => {
                             tracing::warn!(
@@ -278,18 +227,8 @@ pub async fn execute_goal_background(
     let mut subtask_results: Vec<(String, String, bool, u64)> = Vec::new();
     for (_, agent_name, task_desc, succeeded, duration_ms) in &parallel_outcomes {
         if *succeeded {
-            state.stream.publish_activity(
-                format!("{} \u{2713} Aufgabe erledigt", agent_name),
-                Some(agent_name.clone()),
-                "success",
-            );
-        } else {
-            state.stream.publish_activity(
-                format!("{} \u{2717} Teilaufgabe fehlgeschlagen", agent_name),
-                Some(agent_name.clone()),
-                "error",
-            );
-        }
+} else {
+}
         // Send QLMS result message: Agent → CEO via MessageBus
         {
             let result_graph = qo_agents::executor::build_agent_task_graph(&agent_name.to_lowercase());
@@ -315,15 +254,12 @@ pub async fn execute_goal_background(
     }
 
     // CEO summary
-    state.stream.publish_activity(
-        "CEO fasst Ergebnisse zusammen...",
-        Some("CEO".to_string()),
-        "progress",
-    );
-
-    let summary_result = {
+let summary_result = {
         let mut registry = state.agents.lock().await;
-        registry.execute_goal_summarize(goal_id, &*state.llm).await
+        let ceo_tier = state.llm_routing.get_tier(&qo_agents::AgentRole::Ceo);
+        registry
+            .execute_goal_summarize(goal_id, &*state.llm, Some(ceo_tier))
+            .await
     };
 
     match summary_result {
@@ -333,12 +269,7 @@ pub async fn execute_goal_background(
             } else {
                 summary.clone()
             };
-            state.stream.publish_activity(
-                format!("Ziel abgeschlossen: {}", short),
-                Some("CEO".to_string()),
-                "success",
-            );
-            if let Err(e) = state.store.log_action("goal_completed", &description, &short) {
+if let Err(e) = state.store.log_action("goal_completed", &description, &short) {
                 tracing::warn!("failed to log goal_completed action: {e}");
             }
             // Remember goal and result in long-term memory
@@ -351,12 +282,7 @@ pub async fn execute_goal_background(
             }
         }
         Err(e) => {
-            state.stream.publish_activity(
-                format!("CEO ✗ Fehler bei Zusammenfassung: {}", e),
-                Some("CEO".to_string()),
-                "error",
-            );
-            tracing::warn!("Goal {} summary failed: {}", goal_id, e);
+tracing::warn!("Goal {} summary failed: {}", goal_id, e);
             if let Err(log_err) = state.store.log_action("goal_failed", &description, &e.to_string()) {
                 tracing::warn!("failed to log goal_failed action: {log_err}");
             }
@@ -369,60 +295,7 @@ pub async fn execute_goal_background(
         registry.finalize_goal(goal_id);
     }
 
-    // Evolve quantum state based on goal outcome
-    {
-        let goal_succeeded = {
-            let registry = state.agents.lock().await;
-            registry.get_goal(goal_id)
-                .map(|g| g.subtasks.iter().all(|st| st.status == qo_agents::GoalStatus::Completed))
-                .unwrap_or(false)
-        };
-        let strategy_idx = qo_agents::executor::strategy_index(&chosen_strategy);
-        let mut quantum = state.quantum.lock().await;
-        quantum.evolve(strategy_idx, goal_succeeded, 0.1);
-        tracing::info!(
-            "Quantum evolved: strategy='{}' idx={} success={} gen={}",
-            chosen_strategy, strategy_idx, goal_succeeded, quantum.generation
-        );
-        // Persist updated quantum state
-        if let Ok(json) = serde_json::to_string(&*quantum) {
-            if let Err(e) = state.store.save_quantum_state(&json) {
-                tracing::warn!("failed to persist quantum state: {e}");
-            }
-        }
-    }
 
-    // Mini-evolution: pattern analysis after goal completion
-    {
-        let (stats, _cs_energy) = {
-            let agents = state.agents.lock().await;
-            let cs = state.consciousness.lock().await;
-            let agent_list = agents.list_agents();
-            let active = agent_list.iter().filter(|a| a.status == qo_agents::AgentStatus::Active).count() as u8;
-            let idle = agent_list.iter().filter(|a| a.status == qo_agents::AgentStatus::Idle).count() as u8;
-            let completed: u32 = agent_list.iter().map(|a| a.tasks_completed).sum();
-            let failed: u32 = agent_list.iter().map(|a| a.tasks_failed).sum();
-            (SystemStats {
-                total_tasks: completed + failed,
-                tasks_completed: completed,
-                tasks_failed: failed,
-                agents_active: active,
-                agents_idle: idle,
-                avg_energy: cs.energy,
-                completed_streak: 0,
-            }, cs.energy)
-        };
-        let new_patterns = {
-            let mut patterns = state.patterns.lock().await;
-            patterns.analyze(&stats)
-                .iter()
-                .map(|p| p.name.clone())
-                .collect::<Vec<_>>()
-        };
-        if !new_patterns.is_empty() {
-            tracing::info!("Post-goal mini-evolution: {} new patterns", new_patterns.len());
-        }
-    }
 
     // Persist finalized goal and updated agent stats
     {
@@ -493,14 +366,7 @@ pub async fn execute_goal_background(
             tracing::warn!("failed to store goal QLBG binary: {e}");
         }
     }
-
-    state.stream.publish_activity(
-        format!("Ziel #{} vollständig abgeschlossen", goal_id),
-        None,
-        "info",
-    );
-
-    // Publish updated description for activity
+// Publish updated description for activity
     let _ = description;
 }
 
@@ -544,18 +410,12 @@ pub async fn continue_goal(
     }
 
     // Short snippet for the activity stream so the timeline stays readable.
-    let snippet = if req.follow_up.len() > 80 {
+    let _snippet = if req.follow_up.len() > 80 {
         format!("{}...", &req.follow_up[..80])
     } else {
         req.follow_up.clone()
     };
-    state.stream.publish_activity(
-        format!("Ziel #{} wird fortgesetzt — neue Anweisung: {}", goal_id, snippet),
-        Some("CEO".to_string()),
-        "progress",
-    );
-
-    // Spawn the continuation so the HTTP response doesn't block on the LLM.
+// Spawn the continuation so the HTTP response doesn't block on the LLM.
     let state_clone = state.clone();
     let follow = req.follow_up.clone();
     tokio::spawn(async move {
@@ -591,3 +451,4 @@ pub async fn get_goal_graph(
     })?;
     Ok(Json(graph))
 }
+

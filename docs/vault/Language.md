@@ -1,3 +1,9 @@
+> Status: stable
+> Sync: Graph-Sprache + Ops sind in `qlang-core` und `qlang-runtime`
+> implementiert; siehe `spec/QLANG_SPEC.md` fuer die normative Referenz.
+> Die VM-/Scripting-Schicht laeuft, Tooling-Befehle siehe `QLANG-STATUS.md`
+> (CLI-Sektion).
+
 # Language
 
 QLANG hat zwei Schichten: die **Graph-Sprache** (primaer, fuer AI Agents) und die **VM-Sprache** (Scripting, fuer Menschen).

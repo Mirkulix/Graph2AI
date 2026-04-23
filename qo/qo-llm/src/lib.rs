@@ -1,5 +1,6 @@
 pub mod cloud;
 pub mod config;
+pub mod deepseek;
 pub mod groq;
 pub mod ollama;
 pub mod router;

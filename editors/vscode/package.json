@@ -11,7 +11,7 @@
     "Programming Languages"
   ],
   "activationEvents": [
-    "onLanguage:qlang"
+    "onStartupFinished"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -45,17 +45,28 @@
         "title": "QLANG: Open REPL"
       },
       {
-        "command": "qlang.aiTrain",
-        "title": "QLANG: AI Quick Train"
-      },
-      {
         "command": "qlang.dashboard",
         "title": "QLANG: Open QO Dashboard"
       },
       {
         "command": "qlang.qlms.check",
-        "title": "QLANG: Check QLMS Connection",
+        "title": "QLMS: Check Connection",
         "icon": "$(shield)"
+      },
+      {
+        "command": "qlang.qlms.startServer",
+        "title": "QLMS: Start Local QO Backend",
+        "icon": "$(server)"
+      },
+      {
+        "command": "qlang.qlms.handover",
+        "title": "QLMS: Handover Graph to Agent",
+        "icon": "$(export)"
+      },
+      {
+        "command": "qlang.qlms.showInbox",
+        "title": "QLMS: Show Inbox (replies addressed to this IDE)",
+        "icon": "$(inbox)"
       }
     ],
     "keybindings": [
@@ -98,6 +109,77 @@
           "type": "string",
           "default": "",
           "description": "Optional bearer token for the QO server. Falls back to the QO_AUTH_TOKEN environment variable when empty."
+        },
+        "qlang.qlms.seedHex": {
+          "type": "string",
+          "default": "",
+          "description": "64-char hex seed used to sign outbound QLMS handover frames. If empty, a workspace-local seed is generated on first use and stored in workspaceState. Falls back to the QO_SEED_HEX environment variable when empty."
+        },
+        "qlang.qlms.inbox.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Subscribe to /api/messages/stream and surface incoming QLMS messages addressed to this IDE as VS Code notifications with an 'Open in editor' action."
+        },
+        "qlang.qlms.inbox.identity": {
+          "type": "string",
+          "default": "",
+          "description": "Override identity for this IDE on the bus. If empty, an auto-generated <ide>-<host>-<uuid> identity is used and stored persistently."
+        },
+        "qlang.qlms.autoRespond.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "When ON, incoming QLMS messages addressed to this IDE are automatically answered by a configured LLM provider."
+        },
+        "qlang.qlms.autoRespond.providerType": {
+          "type": "string",
+          "enum": ["deepseek", "openai", "anthropic", "ollama", "groq"],
+          "default": "deepseek",
+          "description": "Which LLM provider to use for auto-responses. The API key comes from the corresponding *.apiKey setting below."
+        },
+        "qlang.qlms.autoRespond.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API key for the auto-respond provider. Stored locally; never sent over the bus."
+        },
+        "qlang.qlms.autoRespond.baseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Optional base URL override for the auto-respond provider. Empty = provider default."
+        },
+        "qlang.qlms.autoRespond.model": {
+          "type": "string",
+          "default": "deepseek-chat",
+          "description": "Model id (e.g. deepseek-chat, deepseek-coder, gpt-4o-mini, claude-3-5-sonnet-latest)."
+        },
+        "qlang.qlms.autoRespond.systemPrompt": {
+          "type": "string",
+          "default": "",
+          "description": "Optional system prompt prepended to every auto-response. Empty = a generic helpful-assistant prompt."
+        },
+        "qlang.qlms.triggers.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable automatic QLMS handovers from VS Code events (file save, change, open) based on .qlang/routing.json. OFF by default — opt-in feature."
+        },
+        "qlang.qlms.triggers.debounceMs": {
+          "type": "number",
+          "default": 2000,
+          "description": "Debounce window in milliseconds for on_change triggers. Lower = more responsive but more API calls."
+        },
+        "qlang.qlms.triggers.maxConcurrent": {
+          "type": "number",
+          "default": 3,
+          "description": "Maximum concurrent auto-triggered dispatches. Excess events are dropped silently."
+        },
+        "qlang.qlms.triggers.maxPerHour": {
+          "type": "number",
+          "default": 60,
+          "description": "Hard cap on auto-triggered dispatches per rolling hour. Excess fires are silently dropped after a one-time warning notification."
+        },
+        "qlang.qlms.triggers.warnOnQuota": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a notification once when the hourly quota is hit (auto-trigger then silent until window resets)."
         }
       }
     }

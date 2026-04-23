@@ -1,3 +1,8 @@
+> Status: stable
+> Sync: 3-Tier-Execution (LLVM JIT / Bytecode VM / Interpreter) ist in
+> `qlang-compile` und `qlang-runtime` implementiert. LLVM-JIT ist optional
+> (`--no-default-features` baut ohne LLVM, siehe `docs/BUILD.md`).
+
 # Execution
 
 QLANG hat ein 3-Tier Ausfuehrungs-System. Je nach Code-Typ wird automatisch die schnellste verfuegbare Engine gewaehlt.

@@ -1,5 +1,6 @@
 use crate::{
     cloud::{CloudClient, CloudMessage},
+    deepseek::{DeepSeekClient, DeepSeekMessage},
     groq::{GroqClient, GroqMessage},
     ollama::OllamaClient,
 };
@@ -8,12 +9,14 @@ use std::error::Error;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
+use tokio::sync::RwLock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tier {
     Local,
     Groq,
     Cloud,
+    DeepSeek,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,15 +37,27 @@ pub struct CostTracker {
     pub cloud_requests: AtomicU64,
     pub cloud_tokens: AtomicU64,
     pub local_requests: AtomicU64,
+    pub deepseek_requests: AtomicU64,
+    pub deepseek_tokens: AtomicU64,
     pub total_latency_groq_ms: AtomicU64,
     pub total_latency_cloud_ms: AtomicU64,
+    pub total_latency_deepseek_ms: AtomicU64,
 }
 
+/// LlmRouter holds the per-tier clients behind `RwLock`s so that
+/// the UI / providers route can hot-reload them without a restart.
+///
+/// Reads are async (`.read().await`) — every chat path goes through
+/// these locks once at the top of a request, then releases the guard
+/// after cloning out the small client struct or borrowing it for the
+/// duration of the call.
 pub struct LlmRouter {
-    groq: Option<GroqClient>,
-    cloud: Option<CloudClient>,
-    ollama: Option<OllamaClient>, // Tier 1 local inference
-    cloud_model: Option<String>,
+    groq: RwLock<Option<GroqClient>>,
+    cloud: RwLock<Option<CloudClient>>,
+    ollama: RwLock<Option<OllamaClient>>, // Tier 1 local inference
+    deepseek: RwLock<Option<DeepSeekClient>>,
+    cloud_model: RwLock<Option<String>>,
+    deepseek_model: RwLock<Option<String>>,
     cost_tracker: Arc<CostTracker>,
 }
 
@@ -53,13 +68,119 @@ impl LlmRouter {
         ollama_config: Option<(String, String)>, // (base_url, model)
     ) -> Self {
         let cloud_model = cloud_config.as_ref().map(|(_, _, model)| model.clone());
+        // Auto-pick up DEEPSEEK_API_KEY from the environment so callers
+        // that haven't been updated to the builder API still get the
+        // new tier when the key is set.
+        let (deepseek, deepseek_model) = match std::env::var("DEEPSEEK_API_KEY").ok() {
+            Some(key) if !key.is_empty() => {
+                let model = std::env::var("DEEPSEEK_MODEL")
+                    .unwrap_or_else(|_| "deepseek-chat".to_string());
+                (
+                    Some(DeepSeekClient::with_model(key, model.clone())),
+                    Some(model),
+                )
+            }
+            _ => (None, None),
+        };
         Self {
-            groq: groq_api_key.map(GroqClient::new),
-            cloud: cloud_config
-                .map(|(api_key, base_url, model)| CloudClient::new(api_key, base_url, model)),
-            ollama: ollama_config.map(|(url, model)| OllamaClient::new(url, model)),
-            cloud_model,
+            groq: RwLock::new(groq_api_key.map(GroqClient::new)),
+            cloud: RwLock::new(cloud_config
+                .map(|(api_key, base_url, model)| CloudClient::new(api_key, base_url, model))),
+            ollama: RwLock::new(ollama_config.map(|(url, model)| OllamaClient::new(url, model))),
+            deepseek: RwLock::new(deepseek),
+            cloud_model: RwLock::new(cloud_model),
+            deepseek_model: RwLock::new(deepseek_model),
             cost_tracker: Arc::new(CostTracker::default()),
+        }
+    }
+
+    /// Builder-style override for the DeepSeek client (used by tests
+    /// and callers that want to inject an explicit key/model instead
+    /// of relying on `DEEPSEEK_API_KEY`).
+    pub fn with_deepseek(self, api_key: String, model: Option<String>) -> Self {
+        let model = model.unwrap_or_else(|| "deepseek-chat".to_string());
+        // Synchronous overwrite of the lock contents — `with_deepseek`
+        // is a non-async builder so we use `try_write` which always
+        // succeeds on a freshly-constructed router (no other holders).
+        if let Ok(mut g) = self.deepseek.try_write() {
+            *g = Some(DeepSeekClient::with_model(api_key, model.clone()));
+        }
+        if let Ok(mut g) = self.deepseek_model.try_write() {
+            *g = Some(model);
+        }
+        self
+    }
+
+    /// Hot-install or replace a provider client in the running router.
+    ///
+    /// Called by `/api/providers/add`, `/edit`, `/toggle` so a freshly
+    /// configured key takes effect without restarting `qo`.
+    ///
+    /// `provider_type` is matched case-insensitively against
+    /// `ProviderType` variants ("groq", "deepseek", "openai",
+    /// "anthropic", "ollama", …). Provider types we do not yet wire
+    /// for hot-reload return `Err` so the caller can log it.
+    pub async fn install_provider(
+        &self,
+        provider_type: &str,
+        api_key: String,
+        base_url: Option<String>,
+        model: Option<String>,
+    ) -> Result<(), String> {
+        match provider_type.to_lowercase().as_str() {
+            "deepseek" => {
+                let model = model.unwrap_or_else(|| "deepseek-chat".to_string());
+                *self.deepseek.write().await =
+                    Some(DeepSeekClient::with_model(api_key, model.clone()));
+                *self.deepseek_model.write().await = Some(model);
+                Ok(())
+            }
+            "groq" => {
+                *self.groq.write().await = Some(GroqClient::new(api_key));
+                Ok(())
+            }
+            // Treat OpenAI-compatible providers as the generic "cloud"
+            // tier. Anthropic / OpenRouter / Gemini / Mistral / Custom
+            // all use the same OpenAI-shaped chat-completions API.
+            "openai" | "anthropic" | "openrouter" | "gemini" | "mistral" | "custom" => {
+                let url = base_url.unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+                let model = model.unwrap_or_else(|| "gpt-4o-mini".to_string());
+                *self.cloud.write().await =
+                    Some(CloudClient::new(api_key, url, model.clone()));
+                *self.cloud_model.write().await = Some(model);
+                Ok(())
+            }
+            "ollama" => {
+                let url = base_url.unwrap_or_else(|| "http://localhost:11434".to_string());
+                let model = model.unwrap_or_else(|| "llama3.2:3b".to_string());
+                *self.ollama.write().await = Some(OllamaClient::new(url, model));
+                Ok(())
+            }
+            other => Err(format!(
+                "provider type '{}' not yet wired for hot-reload",
+                other
+            )),
+        }
+    }
+
+    /// Remove a provider from the live router (called on DELETE).
+    pub async fn remove_provider(&self, provider_type: &str) {
+        match provider_type.to_lowercase().as_str() {
+            "deepseek" => {
+                *self.deepseek.write().await = None;
+                *self.deepseek_model.write().await = None;
+            }
+            "groq" => {
+                *self.groq.write().await = None;
+            }
+            "openai" | "anthropic" | "openrouter" | "gemini" | "mistral" | "custom" => {
+                *self.cloud.write().await = None;
+                *self.cloud_model.write().await = None;
+            }
+            "ollama" => {
+                *self.ollama.write().await = None;
+            }
+            _ => {}
         }
     }
 
@@ -69,7 +190,9 @@ impl LlmRouter {
     }
 
     /// Returns stats for each configured provider.
-    pub fn provider_stats(&self) -> Vec<ProviderStats> {
+    ///
+    /// Now async because the per-tier clients live behind `RwLock`s.
+    pub async fn provider_stats(&self) -> Vec<ProviderStats> {
         let mut stats = Vec::new();
 
         // Groq
@@ -81,7 +204,7 @@ impl LlmRouter {
         } else {
             0
         };
-        let groq_status = if self.groq.is_some() { "active" } else { "inactive" }.to_string();
+        let groq_status = if self.groq.read().await.is_some() { "active" } else { "inactive" }.to_string();
         stats.push(ProviderStats {
             name: "Groq".to_string(),
             model: "llama-3.3-70b-versatile".to_string(),
@@ -103,8 +226,8 @@ impl LlmRouter {
         };
         // Estimate cost at $0.01/1K tokens average
         let cloud_cost = (cloud_tokens as f64 / 1000.0) * 0.01;
-        let cloud_status = if self.cloud.is_some() { "active" } else { "inactive" }.to_string();
-        let cloud_model = self.cloud_model.clone().unwrap_or_default();
+        let cloud_status = if self.cloud.read().await.is_some() { "active" } else { "inactive" }.to_string();
+        let cloud_model = self.cloud_model.read().await.clone().unwrap_or_default();
         stats.push(ProviderStats {
             name: "Cloud".to_string(),
             model: cloud_model,
@@ -117,7 +240,7 @@ impl LlmRouter {
 
         // Local — Ollama or IGQK future
         let local_requests = self.cost_tracker.local_requests.load(Ordering::Relaxed);
-        let (local_name, local_model, local_status) = if let Some(ref ollama) = self.ollama {
+        let (local_name, local_model, local_status) = if let Some(ref ollama) = *self.ollama.read().await {
             (
                 "Ollama (local)".to_string(),
                 ollama.model.clone(),
@@ -139,6 +262,33 @@ impl LlmRouter {
             avg_latency_ms: 0,
             status: local_status,
         });
+
+        // DeepSeek — only listed when actually configured, so existing
+        // tests that expect exactly three providers still pass.
+        if let Some(ref ds) = *self.deepseek.read().await {
+            let ds_requests = self.cost_tracker.deepseek_requests.load(Ordering::Relaxed);
+            let ds_tokens = self.cost_tracker.deepseek_tokens.load(Ordering::Relaxed);
+            let total_latency_ds = self
+                .cost_tracker
+                .total_latency_deepseek_ms
+                .load(Ordering::Relaxed);
+            let avg_latency_ds = if ds_requests > 0 {
+                total_latency_ds / ds_requests
+            } else {
+                0
+            };
+            // Conservative estimate: ~$0.00027/1K tokens for deepseek-chat.
+            let ds_cost = (ds_tokens as f64 / 1000.0) * 0.00027;
+            stats.push(ProviderStats {
+                name: "DeepSeek".to_string(),
+                model: ds.model().to_string(),
+                requests: ds_requests,
+                total_tokens_estimate: ds_tokens,
+                cost_usd: ds_cost,
+                avg_latency_ms: avg_latency_ds,
+                status: "active".to_string(),
+            });
+        }
 
         stats
     }
@@ -191,11 +341,12 @@ impl LlmRouter {
     /// configured client). Used by per-agent model-binding so a
     /// preferred-tier that is offline falls back to auto routing
     /// instead of erroring.
-    pub fn tier_available(&self, tier: Tier) -> bool {
+    pub async fn tier_available(&self, tier: Tier) -> bool {
         match tier {
-            Tier::Local => self.ollama.is_some(),
-            Tier::Groq => self.groq.is_some(),
-            Tier::Cloud => self.cloud.is_some(),
+            Tier::Local => self.ollama.read().await.is_some(),
+            Tier::Groq => self.groq.read().await.is_some(),
+            Tier::Cloud => self.cloud.read().await.is_some(),
+            Tier::DeepSeek => self.deepseek.read().await.is_some(),
         }
     }
 
@@ -205,7 +356,8 @@ impl LlmRouter {
         match hint.trim().to_lowercase().as_str() {
             "ollama" | "local" => Some(Tier::Local),
             "groq" => Some(Tier::Groq),
-            "cloud" | "deepseek" | "anthropic" | "claude" | "openai" | "gemini" => {
+            "deepseek" => Some(Tier::DeepSeek),
+            "cloud" | "anthropic" | "claude" | "openai" | "gemini" => {
                 Some(Tier::Cloud)
             }
             _ => None,
@@ -222,7 +374,7 @@ impl LlmRouter {
         messages: Vec<(String, String)>,
     ) -> Result<(String, Tier), Box<dyn Error + Send + Sync>> {
         if let Some(tier) = preferred {
-            if self.tier_available(tier) {
+            if self.tier_available(tier).await {
                 tracing::debug!(?tier, "agent requested preferred tier");
                 match self.chat_on_tier(tier, messages.clone()).await {
                     Ok(body) => return Ok((body, tier)),
@@ -257,6 +409,118 @@ impl LlmRouter {
         Ok((body, prompt))
     }
 
+    /// Like [`chat_preferring`], but accepts an optional model name that
+    /// overrides the tier's default. When `model_override` is `None`, the
+    /// tier's installed default model is used (identical to
+    /// `chat_preferring`). When the tier or the model is unavailable,
+    /// falls back to auto-routing exactly like `chat_preferring`.
+    ///
+    /// The override is currently honored only for [`Tier::DeepSeek`] —
+    /// other tiers use their installed default model. This is enough
+    /// for per-agent role binding (developer→deepseek-coder,
+    /// researcher→deepseek-reasoner, others→deepseek-chat).
+    pub async fn chat_with_model(
+        &self,
+        preferred: Option<Tier>,
+        model_override: Option<String>,
+        messages: Vec<(String, String)>,
+    ) -> Result<(String, Tier), Box<dyn Error + Send + Sync>> {
+        if let Some(tier) = preferred {
+            if self.tier_available(tier).await {
+                tracing::debug!(?tier, ?model_override, "agent requested preferred tier with model override");
+                // Only DeepSeek currently supports per-call model overrides.
+                if tier == Tier::DeepSeek {
+                    if let Some(model) = model_override.as_ref() {
+                        match self
+                            .deepseek_chat_with_model(model.clone(), messages.clone())
+                            .await
+                        {
+                            Ok(body) => return Ok((body, tier)),
+                            Err(e) => {
+                                tracing::warn!(
+                                    ?tier,
+                                    model = %model,
+                                    error = %e,
+                                    "deepseek model override failed — falling back to auto routing"
+                                );
+                            }
+                        }
+                    } else {
+                        match self.chat_on_tier(tier, messages.clone()).await {
+                            Ok(body) => return Ok((body, tier)),
+                            Err(e) => {
+                                tracing::warn!(
+                                    ?tier,
+                                    error = %e,
+                                    "preferred tier failed — falling back to auto routing"
+                                );
+                            }
+                        }
+                    }
+                } else {
+                    // Other tiers ignore the override.
+                    match self.chat_on_tier(tier, messages.clone()).await {
+                        Ok(body) => return Ok((body, tier)),
+                        Err(e) => {
+                            tracing::warn!(
+                                ?tier,
+                                error = %e,
+                                "preferred tier failed — falling back to auto routing"
+                            );
+                        }
+                    }
+                }
+            } else {
+                tracing::warn!(
+                    ?tier,
+                    "preferred tier not configured — falling back to auto routing"
+                );
+            }
+        }
+        let prompt = {
+            let s = messages
+                .last()
+                .map(|(_, c)| c.as_str())
+                .unwrap_or_default();
+            self.select_tier(self.score_complexity(s))
+        };
+        let body = self.chat(messages).await?;
+        Ok((body, prompt))
+    }
+
+    /// One-shot DeepSeek call against an arbitrary model name, reusing
+    /// the api_key from the currently-installed `DeepSeekClient`.
+    async fn deepseek_chat_with_model(
+        &self,
+        model: String,
+        messages: Vec<(String, String)>,
+    ) -> Result<String, Box<dyn Error + Send + Sync>> {
+        // Pull the api_key out of the installed client, then drop the
+        // read guard before doing the network call.
+        let api_key = {
+            let guard = self.deepseek.read().await;
+            let ds = guard
+                .as_ref()
+                .ok_or("DeepSeek provider not configured (set DEEPSEEK_API_KEY)")?;
+            ds.api_key().to_string()
+        };
+        let client = DeepSeekClient::with_model(api_key, model);
+        let msgs: Vec<DeepSeekMessage> = messages
+            .into_iter()
+            .map(|(role, content)| DeepSeekMessage { role, content })
+            .collect();
+        let start = Instant::now();
+        let result = client.chat(msgs).await?;
+        let elapsed = start.elapsed().as_millis() as u64;
+        let tokens = (result.len() / 4) as u64;
+        self.cost_tracker.deepseek_requests.fetch_add(1, Ordering::Relaxed);
+        self.cost_tracker.deepseek_tokens.fetch_add(tokens, Ordering::Relaxed);
+        self.cost_tracker
+            .total_latency_deepseek_ms
+            .fetch_add(elapsed, Ordering::Relaxed);
+        Ok(result)
+    }
+
     /// Force a specific tier. Does NOT fall back — caller is expected
     /// to check `tier_available` first (via [`chat_preferring`] which
     /// does fall back).
@@ -267,8 +531,8 @@ impl LlmRouter {
     ) -> Result<String, Box<dyn Error + Send + Sync>> {
         match tier {
             Tier::Cloud => {
-                let cloud = self
-                    .cloud
+                let guard = self.cloud.read().await;
+                let cloud = guard
                     .as_ref()
                     .ok_or("Cloud provider not configured")?;
                 let msgs: Vec<CloudMessage> = messages
@@ -288,14 +552,15 @@ impl LlmRouter {
             }
             Tier::Groq => self.groq_chat(messages).await,
             Tier::Local => {
-                let ollama = self
-                    .ollama
+                let guard = self.ollama.read().await;
+                let ollama = guard
                     .as_ref()
                     .ok_or("Local (Ollama) provider not configured")?;
                 let response = ollama.chat(messages).await?;
                 self.cost_tracker.local_requests.fetch_add(1, Ordering::Relaxed);
                 Ok(response)
             }
+            Tier::DeepSeek => self.deepseek_chat(messages).await,
         }
     }
 
@@ -316,32 +581,39 @@ impl LlmRouter {
 
         match tier {
             Tier::Cloud => {
-                if let Some(cloud) = &self.cloud {
-                    let msgs: Vec<CloudMessage> = messages
-                        .into_iter()
-                        .map(|(role, content)| CloudMessage { role, content })
-                        .collect();
-                    let start = Instant::now();
-                    let result = cloud.chat(msgs).await?;
-                    let elapsed = start.elapsed().as_millis() as u64;
-                    let tokens = (result.len() / 4) as u64;
-                    self.cost_tracker.cloud_requests.fetch_add(1, Ordering::Relaxed);
-                    self.cost_tracker.cloud_tokens.fetch_add(tokens, Ordering::Relaxed);
-                    self.cost_tracker.total_latency_cloud_ms.fetch_add(elapsed, Ordering::Relaxed);
-                    return Ok(result);
+                {
+                    let guard = self.cloud.read().await;
+                    if let Some(cloud) = guard.as_ref() {
+                        let msgs: Vec<CloudMessage> = messages
+                            .into_iter()
+                            .map(|(role, content)| CloudMessage { role, content })
+                            .collect();
+                        let start = Instant::now();
+                        let result = cloud.chat(msgs).await?;
+                        let elapsed = start.elapsed().as_millis() as u64;
+                        let tokens = (result.len() / 4) as u64;
+                        self.cost_tracker.cloud_requests.fetch_add(1, Ordering::Relaxed);
+                        self.cost_tracker.cloud_tokens.fetch_add(tokens, Ordering::Relaxed);
+                        self.cost_tracker.total_latency_cloud_ms.fetch_add(elapsed, Ordering::Relaxed);
+                        return Ok(result);
+                    }
                 }
-                // fall through to Groq
+                // fall through to Groq — `messages` was not moved because the
+                // Cloud branch above only ran inside the `if let Some(...)`.
                 self.groq_chat(messages).await
             }
             Tier::Local => {
-                if let Some(ref ollama) = self.ollama {
-                    match ollama.chat(messages.clone()).await {
-                        Ok(response) => {
-                            self.cost_tracker.local_requests.fetch_add(1, Ordering::Relaxed);
-                            return Ok(response);
-                        }
-                        Err(e) => {
-                            tracing::warn!("Ollama failed, falling back to Groq: {e}");
+                {
+                    let guard = self.ollama.read().await;
+                    if let Some(ref ollama) = *guard {
+                        match ollama.chat(messages.clone()).await {
+                            Ok(response) => {
+                                self.cost_tracker.local_requests.fetch_add(1, Ordering::Relaxed);
+                                return Ok(response);
+                            }
+                            Err(e) => {
+                                tracing::warn!("Ollama failed, falling back to Groq: {e}");
+                            }
                         }
                     }
                 }
@@ -351,14 +623,42 @@ impl LlmRouter {
             Tier::Groq => {
                 self.groq_chat(messages).await
             }
+            Tier::DeepSeek => {
+                self.deepseek_chat(messages).await
+            }
         }
+    }
+
+    async fn deepseek_chat(
+        &self,
+        messages: Vec<(String, String)>,
+    ) -> Result<String, Box<dyn Error + Send + Sync>> {
+        let guard = self.deepseek.read().await;
+        let ds = guard
+            .as_ref()
+            .ok_or("DeepSeek provider not configured (set DEEPSEEK_API_KEY)")?;
+        let msgs: Vec<DeepSeekMessage> = messages
+            .into_iter()
+            .map(|(role, content)| DeepSeekMessage { role, content })
+            .collect();
+        let start = Instant::now();
+        let result = ds.chat(msgs).await?;
+        let elapsed = start.elapsed().as_millis() as u64;
+        let tokens = (result.len() / 4) as u64;
+        self.cost_tracker.deepseek_requests.fetch_add(1, Ordering::Relaxed);
+        self.cost_tracker.deepseek_tokens.fetch_add(tokens, Ordering::Relaxed);
+        self.cost_tracker
+            .total_latency_deepseek_ms
+            .fetch_add(elapsed, Ordering::Relaxed);
+        Ok(result)
     }
 
     async fn groq_chat(
         &self,
         messages: Vec<(String, String)>,
     ) -> Result<String, Box<dyn Error + Send + Sync>> {
-        if let Some(groq) = &self.groq {
+        let guard = self.groq.read().await;
+        if let Some(groq) = guard.as_ref() {
             let msgs: Vec<GroqMessage> = messages
                 .into_iter()
                 .map(|(role, content)| GroqMessage { role, content })
@@ -459,10 +759,10 @@ mod tests {
         assert_eq!(tier, Tier::Cloud);
     }
 
-    #[test]
-    fn provider_stats_returns_three_providers() {
+    #[tokio::test]
+    async fn provider_stats_returns_three_providers() {
         let r = router();
-        let stats = r.provider_stats();
+        let stats = r.provider_stats().await;
         assert_eq!(stats.len(), 3);
         assert_eq!(stats[0].name, "Groq");
         assert_eq!(stats[1].name, "Cloud");
@@ -470,16 +770,16 @@ mod tests {
         assert_eq!(stats[2].name, "QO-LLM (IGQK)");
     }
 
-    #[test]
-    fn tier_local_with_ollama_configured() {
+    #[tokio::test]
+    async fn tier_local_with_ollama_configured() {
         let router = LlmRouter::new(
             None,
             None,
             Some(("http://localhost:11434".into(), "orbit-companion-ft-q4".into())),
         );
-        assert!(router.ollama.is_some());
+        assert!(router.ollama.read().await.is_some());
         // provider_stats should show Ollama as active
-        let stats = router.provider_stats();
+        let stats = router.provider_stats().await;
         assert_eq!(stats[2].name, "Ollama (local)");
         assert_eq!(stats[2].model, "orbit-companion-ft-q4");
         assert_eq!(stats[2].status, "active");
@@ -491,10 +791,10 @@ mod tests {
         assert_eq!(r.total_cost(), 0.0);
     }
 
-    #[test]
-    fn groq_status_inactive_when_no_key() {
+    #[tokio::test]
+    async fn groq_status_inactive_when_no_key() {
         let r = router();
-        let stats = r.provider_stats();
+        let stats = r.provider_stats().await;
         assert_eq!(stats[0].status, "inactive");
     }
 
@@ -578,5 +878,28 @@ mod tests {
         assert_eq!(providers[2].tier, 3);
         // Disabled openrouter must not appear
         assert!(!providers.iter().any(|p| p.name == "openrouter"));
+    }
+
+    #[tokio::test]
+    async fn install_provider_adds_deepseek_at_runtime() {
+        let r = router();
+        assert!(!r.tier_available(Tier::DeepSeek).await);
+        r.install_provider("deepseek", "test-key".to_string(), None, Some("deepseek-chat".to_string()))
+            .await
+            .unwrap();
+        assert!(r.tier_available(Tier::DeepSeek).await);
+        // remove_provider clears it again
+        r.remove_provider("deepseek").await;
+        assert!(!r.tier_available(Tier::DeepSeek).await);
+    }
+
+    #[tokio::test]
+    async fn install_provider_unknown_type_errors() {
+        let r = router();
+        let err = r
+            .install_provider("magic-cloud", "key".to_string(), None, None)
+            .await
+            .unwrap_err();
+        assert!(err.contains("not yet wired"));
     }
 }

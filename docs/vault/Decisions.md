@@ -1,3 +1,8 @@
+> Status: stable
+> Sync: Design-Entscheidungen sind weiterhin gueltig. Code-Realitaet siehe
+> `QLANG-STATUS.md`; hier dokumentiert: das *Warum*, nicht der aktuelle
+> Implementations-Stand.
+
 # Decisions
 
 Key architectural and design decisions made in the QLANG project, with rationale.

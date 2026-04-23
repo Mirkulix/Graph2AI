@@ -1,3 +1,8 @@
+> Status: stable
+> Sync: SHA-256, HMAC-SHA-256 und Merkle-Bauminfrastruktur sind in
+> `qlang-core::crypto` produktiv. Constant-time Vergleich (per `subtle`) ist
+> per Projekt-Regel verpflichtend — siehe `CLAUDE.md` Security-Rules.
+
 # Crypto
 
 Alle Kryptographie in QLANG ist in reinem Rust implementiert -- keine externen Crates. Siehe [[Decisions]] fuer das Warum.

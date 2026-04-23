@@ -234,47 +234,6 @@ fn emit_vector_ops<'ctx>(
                 builder.build_select(cmp, current, zero_vec, "vr").unwrap().into_vector_value()
             }
 
-            Op::ToTernary => {
-                // Build splat constants using the vector type
-                let f32_t = context.f32_type();
-                let pos_thresh = vec_type.const_zero(); // will be replaced
-                let _ = pos_thresh;
-
-                // Use splat: create scalar then broadcast
-                let p3 = f32_t.const_float(0.3);
-                let n3 = f32_t.const_float(-0.3);
-                let one_c = f32_t.const_float(1.0);
-                let neg1_c = f32_t.const_float(-1.0);
-                let zero_c = f32_t.const_float(0.0);
-
-                // Build splat vectors by inserting same value N times
-                let mut pos_v = vec_type.get_undef();
-                let mut neg_v = vec_type.get_undef();
-                let mut one_v = vec_type.get_undef();
-                let mut neg1_v = vec_type.get_undef();
-                let mut zero_v = vec_type.get_undef();
-
-                let i32_type = context.i32_type();
-                for i in 0..vec_len as u64 {
-                    let idx = i32_type.const_int(i, false);
-                    pos_v = builder.build_insert_element(pos_v, p3, idx, "").unwrap();
-                    neg_v = builder.build_insert_element(neg_v, n3, idx, "").unwrap();
-                    one_v = builder.build_insert_element(one_v, one_c, idx, "").unwrap();
-                    neg1_v = builder.build_insert_element(neg1_v, neg1_c, idx, "").unwrap();
-                    zero_v = builder.build_insert_element(zero_v, zero_c, idx, "").unwrap();
-                }
-
-                let is_pos = builder
-                    .build_float_compare(inkwell::FloatPredicate::OGT, current, pos_v, "vip")
-                    .unwrap();
-                let is_neg = builder
-                    .build_float_compare(inkwell::FloatPredicate::OLT, current, neg_v, "vin")
-                    .unwrap();
-
-                let neg_or_zero = builder.build_select(is_neg, neg1_v, zero_v, "vnz").unwrap().into_vector_value();
-                builder.build_select(is_pos, one_v, neg_or_zero, "vt").unwrap().into_vector_value()
-            }
-
             other => {
                 return Err(CodegenError::UnsupportedOp(format!("SIMD: {other}")));
             }

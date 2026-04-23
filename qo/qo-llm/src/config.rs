@@ -26,6 +26,38 @@ pub enum ProviderType {
     Custom,
 }
 
+impl ProviderType {
+    /// Lower-case wire string used by `LlmRouter::install_provider` to
+    /// route to the right tier. Keep in sync with the match in
+    /// `router::LlmRouter::install_provider`.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ProviderType::Groq => "groq",
+            ProviderType::OpenAI => "openai",
+            ProviderType::Anthropic => "anthropic",
+            ProviderType::DeepSeek => "deepseek",
+            ProviderType::Gemini => "gemini",
+            ProviderType::Ollama => "ollama",
+            ProviderType::OpenRouter => "openrouter",
+            ProviderType::Mistral => "mistral",
+            ProviderType::Custom => "custom",
+        }
+    }
+}
+
+impl ProviderTemplate {
+    /// Convenience accessor used by routes that hot-reload providers.
+    pub fn provider_type_str(&self) -> &'static str {
+        self.provider_type.as_str()
+    }
+}
+
+impl ProviderConfig {
+    pub fn provider_type_str(&self) -> &'static str {
+        self.provider_type.as_str()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderTemplate {
     pub id: &'static str,
@@ -69,12 +101,13 @@ pub fn provider_templates() -> Vec<ProviderTemplate> {
             provider_type: ProviderType::DeepSeek,
             base_url: "https://api.deepseek.com/v1",
             models: vec![
-                ModelOption { id: "deepseek-chat", name: "DeepSeek V3", cost_per_1k: 0.001, recommended: true },
-                ModelOption { id: "deepseek-reasoner", name: "DeepSeek R1", cost_per_1k: 0.004, recommended: false },
+                ModelOption { id: "deepseek-chat", name: "DeepSeek V3", cost_per_1k: 0.00027, recommended: true },
+                ModelOption { id: "deepseek-reasoner", name: "DeepSeek R1", cost_per_1k: 0.00055, recommended: false },
+                ModelOption { id: "deepseek-coder", name: "DeepSeek Coder", cost_per_1k: 0.00014, recommended: false },
             ],
             tier: 3,
             free: false,
-            description: "Günstigster Paid-Provider — $0.001/1K Tokens",
+            description: "Günstigster Paid-Provider — ab $0.00014/1K Tokens (coder)",
         },
         ProviderTemplate {
             id: "openrouter",

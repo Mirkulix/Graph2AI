@@ -8,8 +8,6 @@ description = "QO hybrid agent runtime — graph-structured agents with LLM reas
 qo-llm = { path = "../qo-llm" }
 qo-memory = { path = "../qo-memory" }
 qo-values = { path = "../qo-values" }
-qo-simulation = { path = "../qo-simulation" }
-qo-evolution = { path = "../qo-evolution" }
 qlang-core = { workspace = true }
 qlang-runtime = { workspace = true }
 qlang-agent = { workspace = true }

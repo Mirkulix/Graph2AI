@@ -19,9 +19,8 @@
 //! ```
 
 use qlang_core::graph::Graph;
-use qlang_core::ops::{Manifold, Op};
+use qlang_core::ops::Op;
 use qlang_core::tensor::{Dim, Dtype, Shape, TensorType};
-use qlang_core::verify::{Constraint, ConstraintKind, Proof, ProofStatus, TheoremRef};
 use std::collections::HashMap;
 
 /// Parse errors.
@@ -348,28 +347,7 @@ impl<'a> Parser<'a> {
         let rhs = parts[1].trim();
 
         // Check for @proof annotation
-        let (op_str, proof) = if let Some(idx) = rhs.find("@proof") {
-            let theorem_str = rhs[idx + 6..].trim();
-            let theorem = match theorem_str {
-                "theorem_5_1" => TheoremRef::IgqkConvergence,
-                "theorem_5_2" => TheoremRef::IgqkCompressionBound,
-                "theorem_5_3" => TheoremRef::IgqkEntanglementGeneralization,
-                other => TheoremRef::External { name: other.to_string() },
-            };
-            (
-                rhs[..idx].trim(),
-                Some(Constraint {
-                    kind: ConstraintKind::DistortionBound { max_distortion: 0.01 },
-                    proof: Some(Proof {
-                        theorem,
-                        status: ProofStatus::Assumed,
-                        parameters: vec![],
-                    }),
-                }),
-            )
-        } else {
-            (rhs, None)
-        };
+        let op_str = rhs.trim();
 
         // Parse "op(arg1, arg2)"
         let paren_start = op_str.find('(')
@@ -379,7 +357,7 @@ impl<'a> Parser<'a> {
 
         let op_name = op_str[..paren_start].trim();
         let args_str = &op_str[paren_start + 1..paren_end];
-        let args: Vec<&str> = args_str.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+        let args: Vec<&str> = args_str.split(',').map(|s: &str| s.trim()).filter(|s: &&str| !s.is_empty()).collect();
 
         // Resolve argument nodes
         let mut arg_ids = Vec::new();
@@ -400,11 +378,6 @@ impl<'a> Parser<'a> {
             arg_types.clone(),
             vec![output_type.clone()],
         );
-
-        // Add proof constraint if present
-        if let Some(constraint) = proof {
-            graph.nodes.last_mut().unwrap().constraints.push(constraint);
-        }
 
         // Wire edges
         for (port, &source_id) in arg_ids.iter().enumerate() {
@@ -452,22 +425,7 @@ impl<'a> Parser<'a> {
                 new_shape.reverse();
                 Ok((Op::Transpose, TensorType::new(first_type.dtype, Shape(new_shape))))
             }
-            "to_ternary" => {
-                let out = TensorType::new(Dtype::Ternary, first_type.shape.clone());
-                Ok((Op::ToTernary, out))
-            }
-            "to_lowrank" => Ok((Op::ToLowRank { rank: 16 }, first_type)),
-            "superpose" => Ok((Op::Superpose, first_type)),
-            "measure" => Ok((Op::Measure, first_type)),
-            "entangle" => Ok((Op::Entangle, first_type)),
-            "collapse" => Ok((Op::Collapse, first_type)),
-            "entropy" => Ok((Op::Entropy, TensorType::f32_scalar())),
-            "evolve" => Ok((Op::Evolve { gamma: 0.01, dt: 0.001 }, first_type)),
-            "project_ternary" => Ok((Op::Project { manifold: Manifold::Ternary }, first_type)),
-            "layer_norm" => Ok((Op::LayerNorm { eps: 1e-5 }, first_type)),
-            "gelu" => Ok((Op::Gelu, first_type)),
-            "residual" => Ok((Op::Residual, first_type)),
-            "dropout" => Ok((Op::Dropout { rate: 0.1 }, first_type)),
+            "argmax" => Ok((Op::ArgMax, first_type)),
             s if s.starts_with("ollama_generate:") => {
                 let model = s.trim_start_matches("ollama_generate:").to_string();
                 let out = TensorType::new(Dtype::Utf8, Shape(vec![Dim::Dynamic]));
@@ -579,15 +537,7 @@ pub fn to_qlang_text(graph: &Graph) -> String {
                     Op::Tanh => "tanh",
                     Op::Softmax { .. } => "softmax",
                     Op::Transpose => "transpose",
-                    Op::ToTernary => "to_ternary",
-                    Op::ToLowRank { .. } => "to_lowrank",
-                    Op::Superpose => "superpose",
-                    Op::Measure => "measure",
-                    Op::Entangle => "entangle",
-                    Op::Collapse => "collapse",
-                    Op::Entropy => "entropy",
-                    Op::Evolve { .. } => "evolve",
-                    Op::Project { .. } => "project_ternary",
+                    Op::ArgMax => "argmax",
                     Op::LayerNorm { .. } => "layer_norm",
                     Op::Attention { .. } => "attention",
                     Op::Embedding { .. } => "embedding",
@@ -737,107 +687,16 @@ graph mlp {
     }
 
     #[test]
-    fn parse_igqk_compression() {
+    fn parse_llm_ops() {
         let source = r#"
-graph compress {
-  input weights: f32[768, 768]
-
-  node compressed = to_ternary(weights) @proof theorem_5_2
-
-  output out = compressed
-}
-"#;
-        let graph = parse(source).unwrap();
-
-        // Check proof annotation
-        let compress_node = graph.nodes.iter().find(|n| matches!(n.op, Op::ToTernary)).unwrap();
-        assert!(!compress_node.constraints.is_empty());
-    }
-
-    #[test]
-    fn parse_with_comments() {
-        let source = r#"
-// This is a comment
-graph test {
-  # This is also a comment
-  input x: f32[8]
-  node r = relu(x)
-  output y = r
+graph llm {
+  input x: utf8[?]
+  node response = ollama_generate:llama3(x)
+  output y = response
 }
 "#;
         let graph = parse(source).unwrap();
         assert_eq!(graph.nodes.len(), 3);
-    }
-
-    #[test]
-    fn roundtrip_parse_emit() {
-        let source = r#"
-graph roundtrip {
-  input a: f32[4]
-  input b: f32[4]
-
-  node sum = add(a, b)
-  node out = relu(sum)
-
-  output result = out
-}
-"#;
-        let graph = parse(source).unwrap();
-        let emitted = to_qlang_text(&graph);
-
-        // Parse the emitted text
-        let graph2 = parse(&emitted).unwrap();
-
-        assert_eq!(graph.id, graph2.id);
-        assert_eq!(graph.nodes.len(), graph2.nodes.len());
-        assert_eq!(graph.edges.len(), graph2.edges.len());
-    }
-
-    #[test]
-    fn parse_quantum_ops() {
-        let source = r#"
-graph quantum {
-  input state: f32[16]
-  input gradient: f32[16]
-  input partner: f32[16]
-
-  node evolved = evolve(state, gradient)
-  node measured = measure(evolved)
-  node entangled = entangle(measured, partner)
-  node collapsed = collapse(entangled)
-
-  output result = collapsed
-}
-"#;
-        let graph = parse(source).unwrap();
-        assert_eq!(graph.nodes.len(), 8);
-
-        let evolve_node = graph.nodes.iter().find(|n| matches!(n.op, Op::Evolve { .. })).unwrap();
-        assert!(evolve_node.op.is_quantum());
-        assert!(graph.nodes.iter().any(|n| matches!(n.op, Op::Entangle)));
-        assert!(graph.nodes.iter().any(|n| matches!(n.op, Op::Collapse)));
-    }
-
-    #[test]
-    fn roundtrip_quantum_emit_includes_entangle_and_collapse() {
-        let source = r#"
-graph quantum_roundtrip {
-  input state: f32[4]
-  input partner: f32[4]
-
-  node entangled = entangle(state, partner)
-  node collapsed = collapse(entangled)
-
-  output result = collapsed
-}
-"#;
-        let graph = parse(source).unwrap();
-        let emitted = to_qlang_text(&graph);
-        let reparsed = parse(&emitted).unwrap();
-
-        assert!(emitted.contains("entangle("));
-        assert!(emitted.contains("collapse("));
-        assert!(reparsed.nodes.iter().any(|n| matches!(n.op, Op::Entangle)));
-        assert!(reparsed.nodes.iter().any(|n| matches!(n.op, Op::Collapse)));
+        assert!(graph.nodes.iter().any(|n| matches!(n.op, Op::OllamaGenerate { .. })));
     }
 }

@@ -2,7 +2,7 @@ use axum::{
     extract::{Query, State},
     response::{
         sse::{Event, KeepAlive, Sse},
-        Html,
+        Html, Redirect,
     },
     Json,
 };
@@ -15,7 +15,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::convert::Infallible;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -90,6 +89,7 @@ pub struct SupervisorConsoleResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)] // serde-deserialized schema; some fields read via serde_json::Value path
 struct SupervisorStateFile {
     next_task_id: Option<u64>,
     next_session_id: Option<u64>,
@@ -1462,8 +1462,15 @@ pub async fn daemon_stop(State(state): State<Arc<AppState>>) -> Json<Value> {
     }
 }
 
-/// GET /supervisor
-pub async fn cockpit() -> Html<&'static str> {
+/// GET /supervisor — redirect to the React cockpit at root.
+/// The legacy hardcoded HTML still lives in `SUPERVISOR_HTML` further down
+/// (kept for `/supervisor/legacy` if anything still depends on it).
+pub async fn cockpit() -> Redirect {
+    Redirect::permanent("/")
+}
+
+/// GET /supervisor/legacy — old hardcoded HTML cockpit (pre-React).
+pub async fn cockpit_legacy() -> Html<&'static str> {
     Html(SUPERVISOR_HTML)
 }
 

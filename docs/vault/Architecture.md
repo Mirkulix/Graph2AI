@@ -1,3 +1,8 @@
+> Status: stable
+> Sync: Crate-Layout entspricht weitgehend dem aktuellen Workspace; einige hier
+> aufgefuehrte Module (Hebbian, Diffusion, Swarm) sind heute experimentell und
+> nur unter `--features experimental-ml` aktiv (siehe `QLANG-STATUS.md`).
+
 # Architecture
 
 QLANG ist ein Rust-Workspace mit 6 Crates. Programme sind gerichtete azyklische Graphen (DAGs), kein Text. Der Graph ist die Quelle der Wahrheit.

@@ -21,7 +21,7 @@ use std::collections::HashMap;
 
 use crate::crypto::sha256;
 use crate::graph::{Edge, Graph, Node};
-use crate::ops::{Manifold, Op};
+use crate::ops::Op;
 use crate::tensor::{Dim, Dtype, Shape, TensorType};
 
 /// Magic bytes identifying a QLANG binary graph: "QLBG"
@@ -75,17 +75,6 @@ const OP_RELU: u8 = 16;
 const OP_SIGMOID: u8 = 17;
 const OP_TANH: u8 = 18;
 const OP_SOFTMAX: u8 = 19;
-const OP_SUPERPOSE: u8 = 20;
-const OP_EVOLVE: u8 = 21;
-const OP_MEASURE: u8 = 22;
-const OP_ENTANGLE: u8 = 23;
-const OP_COLLAPSE: u8 = 24;
-const OP_ENTROPY: u8 = 25;
-const OP_TO_TERNARY: u8 = 26;
-const OP_TO_LOW_RANK: u8 = 27;
-const OP_TO_SPARSE: u8 = 28;
-const OP_FISHER_METRIC: u8 = 29;
-const OP_PROJECT: u8 = 30;
 const OP_LAYER_NORM: u8 = 31;
 const OP_ATTENTION: u8 = 32;
 const OP_EMBEDDING: u8 = 33;
@@ -99,11 +88,7 @@ const OP_SCAN: u8 = 40;
 const OP_SUB_GRAPH: u8 = 41;
 const OP_EXP: u8 = 42;
 const OP_LOG: u8 = 43;
-const OP_CLASS_MEAN: u8 = 44;
-const OP_TERNARIZE: u8 = 45;
-const OP_TERNARY_MATVEC: u8 = 46;
 const OP_ARGMAX: u8 = 47;
-const OP_ENSEMBLE_VOTE: u8 = 48;
 
 // Dtype tags (reuse the same encoding from tensor.rs wire format)
 const DTYPE_F16: u8 = 0;
@@ -117,11 +102,6 @@ const DTYPE_BOOL: u8 = 7;
 const DTYPE_TERNARY: u8 = 8;
 const DTYPE_UTF8: u8 = 9;
 
-// Manifold tags
-const MANIFOLD_TERNARY: u8 = 0;
-const MANIFOLD_LOW_RANK: u8 = 1;
-const MANIFOLD_SPARSE: u8 = 2;
-const MANIFOLD_CUSTOM: u8 = 3;
 
 // -----------------------------------------------------------------------
 // Serialization
@@ -331,30 +311,17 @@ fn write_op(buf: &mut Vec<u8>, op: &Op) {
             buf.push(OP_SOFTMAX);
             buf.extend_from_slice(&(*axis as u32).to_le_bytes());
         }
-        Op::Superpose => buf.push(OP_SUPERPOSE),
-        Op::Evolve { gamma, dt } => {
-            buf.push(OP_EVOLVE);
-            buf.extend_from_slice(&gamma.to_le_bytes());
-            buf.extend_from_slice(&dt.to_le_bytes());
+        Op::Cond => buf.push(OP_COND),
+        Op::Scan { n_iterations } => {
+            buf.push(OP_SCAN);
+            buf.extend_from_slice(&(*n_iterations as u32).to_le_bytes());
         }
-        Op::Measure => buf.push(OP_MEASURE),
-        Op::Entangle => buf.push(OP_ENTANGLE),
-        Op::Collapse => buf.push(OP_COLLAPSE),
-        Op::Entropy => buf.push(OP_ENTROPY),
-        Op::ToTernary => buf.push(OP_TO_TERNARY),
-        Op::ToLowRank { rank } => {
-            buf.push(OP_TO_LOW_RANK);
-            buf.extend_from_slice(&(*rank as u32).to_le_bytes());
+        Op::SubGraph { graph_id } => {
+            buf.push(OP_SUB_GRAPH);
+            write_string(buf, graph_id);
         }
-        Op::ToSparse { sparsity } => {
-            buf.push(OP_TO_SPARSE);
-            buf.extend_from_slice(&sparsity.to_le_bytes());
-        }
-        Op::FisherMetric => buf.push(OP_FISHER_METRIC),
-        Op::Project { manifold } => {
-            buf.push(OP_PROJECT);
-            write_manifold(buf, manifold);
-        }
+        Op::Exp => buf.push(OP_EXP),
+        Op::Log => buf.push(OP_LOG),
         Op::LayerNorm { eps } => {
             buf.push(OP_LAYER_NORM);
             buf.extend_from_slice(&eps.to_le_bytes());
@@ -383,48 +350,10 @@ fn write_op(buf: &mut Vec<u8>, op: &Op) {
             buf.push(OP_OLLAMA_CHAT);
             write_string(buf, model);
         }
-        Op::Cond => buf.push(OP_COND),
-        Op::Scan { n_iterations } => {
-            buf.push(OP_SCAN);
-            buf.extend_from_slice(&(*n_iterations as u32).to_le_bytes());
-        }
-        Op::SubGraph { graph_id } => {
-            buf.push(OP_SUB_GRAPH);
-            write_string(buf, graph_id);
-        }
-        Op::Exp => buf.push(OP_EXP),
-        Op::Log => buf.push(OP_LOG),
-        Op::ClassMean { n_classes } => {
-            buf.push(OP_CLASS_MEAN);
-            buf.extend_from_slice(&(*n_classes as u32).to_le_bytes());
-        }
-        Op::Ternarize { threshold_ratio } => {
-            buf.push(OP_TERNARIZE);
-            buf.extend_from_slice(&threshold_ratio.to_le_bytes());
-        }
-        Op::TernaryMatVec => buf.push(OP_TERNARY_MATVEC),
         Op::ArgMax => buf.push(OP_ARGMAX),
-        Op::EnsembleVote => buf.push(OP_ENSEMBLE_VOTE),
     }
 }
 
-fn write_manifold(buf: &mut Vec<u8>, m: &Manifold) {
-    match m {
-        Manifold::Ternary => buf.push(MANIFOLD_TERNARY),
-        Manifold::LowRank { max_rank } => {
-            buf.push(MANIFOLD_LOW_RANK);
-            buf.extend_from_slice(&(*max_rank as u32).to_le_bytes());
-        }
-        Manifold::Sparse { max_nonzero } => {
-            buf.push(MANIFOLD_SPARSE);
-            buf.extend_from_slice(&(*max_nonzero as u32).to_le_bytes());
-        }
-        Manifold::Custom { name } => {
-            buf.push(MANIFOLD_CUSTOM);
-            write_string(buf, name);
-        }
-    }
-}
 
 fn write_tensor_type(buf: &mut Vec<u8>, tt: &TensorType) {
     write_dtype(buf, &tt.dtype);
@@ -519,10 +448,6 @@ fn read_u64(data: &[u8], pos: &mut usize) -> Result<u64, BinaryError> {
     Ok(v)
 }
 
-fn read_f32(data: &[u8], pos: &mut usize) -> Result<f32, BinaryError> {
-    let bits = read_u32(data, pos)?;
-    Ok(f32::from_le_bytes(bits.to_le_bytes()))
-}
 
 fn read_f64(data: &[u8], pos: &mut usize) -> Result<f64, BinaryError> {
     let bits = read_u64(data, pos)?;
@@ -590,30 +515,7 @@ fn read_op(data: &[u8], pos: &mut usize) -> Result<Op, BinaryError> {
             let axis = read_u32(data, pos)? as usize;
             Ok(Op::Softmax { axis })
         }
-        OP_SUPERPOSE => Ok(Op::Superpose),
-        OP_EVOLVE => {
-            let gamma = read_f64(data, pos)?;
-            let dt = read_f64(data, pos)?;
-            Ok(Op::Evolve { gamma, dt })
-        }
-        OP_MEASURE => Ok(Op::Measure),
-        OP_ENTANGLE => Ok(Op::Entangle),
-        OP_COLLAPSE => Ok(Op::Collapse),
-        OP_ENTROPY => Ok(Op::Entropy),
-        OP_TO_TERNARY => Ok(Op::ToTernary),
-        OP_TO_LOW_RANK => {
-            let rank = read_u32(data, pos)? as usize;
-            Ok(Op::ToLowRank { rank })
-        }
-        OP_TO_SPARSE => {
-            let sparsity = read_f64(data, pos)?;
-            Ok(Op::ToSparse { sparsity })
-        }
-        OP_FISHER_METRIC => Ok(Op::FisherMetric),
-        OP_PROJECT => {
-            let manifold = read_manifold(data, pos)?;
-            Ok(Op::Project { manifold })
-        }
+        OP_ARGMAX => Ok(Op::ArgMax),
         OP_LAYER_NORM => {
             let eps = read_f64(data, pos)?;
             Ok(Op::LayerNorm { eps })
@@ -642,51 +544,10 @@ fn read_op(data: &[u8], pos: &mut usize) -> Result<Op, BinaryError> {
             let model = read_string(data, pos)?;
             Ok(Op::OllamaChat { model })
         }
-        OP_COND => Ok(Op::Cond),
-        OP_SCAN => {
-            let n_iterations = read_u32(data, pos)? as usize;
-            Ok(Op::Scan { n_iterations })
-        }
-        OP_SUB_GRAPH => {
-            let graph_id = read_string(data, pos)?;
-            Ok(Op::SubGraph { graph_id })
-        }
-        OP_EXP => Ok(Op::Exp),
-        OP_LOG => Ok(Op::Log),
-        OP_CLASS_MEAN => {
-            let n_classes = read_u32(data, pos)? as usize;
-            Ok(Op::ClassMean { n_classes })
-        }
-        OP_TERNARIZE => {
-            let threshold_ratio = read_f32(data, pos)?;
-            Ok(Op::Ternarize { threshold_ratio })
-        }
-        OP_TERNARY_MATVEC => Ok(Op::TernaryMatVec),
-        OP_ARGMAX => Ok(Op::ArgMax),
-        OP_ENSEMBLE_VOTE => Ok(Op::EnsembleVote),
         _ => Err(BinaryError::InvalidOpTag(tag)),
     }
 }
 
-fn read_manifold(data: &[u8], pos: &mut usize) -> Result<Manifold, BinaryError> {
-    let tag = read_u8(data, pos)?;
-    match tag {
-        MANIFOLD_TERNARY => Ok(Manifold::Ternary),
-        MANIFOLD_LOW_RANK => {
-            let max_rank = read_u32(data, pos)? as usize;
-            Ok(Manifold::LowRank { max_rank })
-        }
-        MANIFOLD_SPARSE => {
-            let max_nonzero = read_u32(data, pos)? as usize;
-            Ok(Manifold::Sparse { max_nonzero })
-        }
-        MANIFOLD_CUSTOM => {
-            let name = read_string(data, pos)?;
-            Ok(Manifold::Custom { name })
-        }
-        _ => Err(BinaryError::InvalidOpTag(tag)),
-    }
-}
 
 fn read_tensor_type(data: &[u8], pos: &mut usize) -> Result<TensorType, BinaryError> {
     let dtype = read_dtype(data, pos)?;
@@ -759,7 +620,7 @@ fn read_optional_usize(data: &[u8], pos: &mut usize) -> Result<Option<usize>, Bi
 mod tests {
     use super::*;
     use crate::graph::Graph;
-    use crate::ops::{Manifold, Op};
+    use crate::ops::Op;
     use crate::tensor::{Dtype, Shape, TensorType};
 
     fn f32_vec(n: usize) -> TensorType {
@@ -833,20 +694,7 @@ mod tests {
             Op::Sigmoid,
             Op::Tanh,
             Op::Softmax { axis: 1 },
-            Op::Superpose,
-            Op::Evolve { gamma: 0.01, dt: 0.001 },
-            Op::Measure,
-            Op::Entangle,
-            Op::Collapse,
-            Op::Entropy,
-            Op::ToTernary,
-            Op::ToLowRank { rank: 16 },
-            Op::ToSparse { sparsity: 0.9 },
-            Op::FisherMetric,
-            Op::Project { manifold: Manifold::Ternary },
-            Op::Project { manifold: Manifold::LowRank { max_rank: 8 } },
-            Op::Project { manifold: Manifold::Sparse { max_nonzero: 100 } },
-            Op::Project { manifold: Manifold::Custom { name: "my_manifold".into() } },
+            Op::ArgMax,
             Op::LayerNorm { eps: 1e-5 },
             Op::Attention { n_heads: 8, d_model: 512 },
             Op::Embedding { vocab_size: 50000, d_model: 768 },

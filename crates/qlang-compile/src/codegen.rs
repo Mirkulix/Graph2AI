@@ -263,30 +263,6 @@ pub fn emit_ops<'ctx>(
                 builder.build_float_mul(half_x, one_plus_tanh, "gelu").unwrap()
             }
 
-            Op::ToTernary => {
-                // Ternary: x > 0.3 → 1.0, x < -0.3 → -1.0, else → 0.0
-                let pos_thresh = context.f32_type().const_float(0.3);
-                let neg_thresh = context.f32_type().const_float(-0.3);
-                let one = context.f32_type().const_float(1.0);
-                let neg_one = context.f32_type().const_float(-1.0);
-                let zero = context.f32_type().const_float(0.0);
-
-                let is_pos = builder
-                    .build_float_compare(inkwell::FloatPredicate::OGT, current, pos_thresh, "is_pos")
-                    .unwrap();
-                let is_neg = builder
-                    .build_float_compare(inkwell::FloatPredicate::OLT, current, neg_thresh, "is_neg")
-                    .unwrap();
-
-                let neg_or_zero = builder
-                    .build_select(is_neg, neg_one, zero, "neg_or_zero")
-                    .unwrap()
-                    .into_float_value();
-                builder
-                    .build_select(is_pos, one, neg_or_zero, "ternary")
-                    .unwrap()
-                    .into_float_value()
-            }
 
             other => {
                 return Err(CodegenError::UnsupportedOp(format!("{other}")));
@@ -396,25 +372,6 @@ mod tests {
         assert_eq!(result, vec![1.0, 0.0, 3.0, 0.0]);
     }
 
-    #[test]
-    fn jit_ternary() {
-        let mut g = Graph::new("ternary_test");
-        let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![TensorType::f32_vector(4)]);
-        let b = g.add_node(Op::Input { name: "b".into() }, vec![], vec![TensorType::f32_vector(4)]);
-        let ternary = g.add_node(Op::ToTernary, vec![TensorType::f32_vector(4)], vec![TensorType::f32_vector(4)]);
-        let out = g.add_node(Op::Output { name: "y".into() }, vec![TensorType::f32_vector(4)], vec![]);
-        g.add_edge(a, 0, ternary, 0, TensorType::f32_vector(4));
-        g.add_edge(ternary, 0, out, 0, TensorType::f32_vector(4));
-
-        let context = Context::create();
-        let compiled = compile_graph(&context, &g, OptimizationLevel::Aggressive).unwrap();
-
-        let input = vec![0.5, -0.5, 0.1, -0.1];
-        let dummy = vec![0.0; 4];
-        let result = execute_compiled(&compiled, &input, &dummy).unwrap();
-
-        assert_eq!(result, vec![1.0, -1.0, 0.0, 0.0]); // ternary: {+1, -1, 0, 0}
-    }
 
     #[test]
     fn jit_prints_llvm_ir() {

@@ -4,20 +4,19 @@ use axum::{
     middleware::Next,
     response::Response,
 };
+use qlang_core::crypto::ct_eq;
 
 pub async fn auth_middleware(
     headers: HeaderMap,
     request: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
-    // Get token from env
     let required_token = std::env::var("QO_AUTH_TOKEN").ok();
 
     if let Some(token) = required_token {
         if token.is_empty() {
             return Ok(next.run(request).await);
         }
-        // Check Authorization: Bearer <token> or ?token=<token>
         let provided = headers
             .get("authorization")
             .and_then(|v| v.to_str().ok())
@@ -30,11 +29,10 @@ pub async fn auth_middleware(
             });
 
         match provided {
-            Some(t) if t == token => Ok(next.run(request).await),
+            Some(t) if ct_eq(t.as_bytes(), token.as_bytes()) => Ok(next.run(request).await),
             _ => Err(StatusCode::UNAUTHORIZED),
         }
     } else {
-        // No token configured — allow all
         Ok(next.run(request).await)
     }
 }

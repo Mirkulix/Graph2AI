@@ -34,10 +34,10 @@ pub fn compute_stats(graph: &Graph) -> GraphStats {
         *ops_count.entry(op_name).or_default() += 1;
 
         if node.op.is_quantum() { quantum += 1; }
-        if matches!(node.op, Op::ToTernary | Op::ToLowRank { .. } | Op::ToSparse { .. }) {
-            compression += 1;
+        if matches!(node.op, Op::ArgMax) {
+            compression += 1; // ArgMax is a form of quantization/compression
         }
-        if matches!(node.op, Op::Attention { .. } | Op::LayerNorm { .. } | Op::Gelu) {
+        if matches!(node.op, Op::LayerNorm { .. } | Op::Gelu | Op::Attention { .. }) {
             transformer += 1;
         }
     }

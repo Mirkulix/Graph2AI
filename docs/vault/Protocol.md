@@ -1,3 +1,8 @@
+> Status: stable
+> Sync: QLMS v1 ist implementiert (MessageBus, NetworkBridge, signierte
+> GraphMessages — siehe `QLANG-STATUS.md`). v1.1-Erweiterungen (Federation,
+> Replay-Schutz) sind in `spec/QLMS_PROTOCOL_v1_1.md` als Draft beschrieben.
+
 # Protocol
 
 QLMS (QLANG Message Stream) is the binary wire format for AI-to-AI communication. Specified in `spec/QLMS_PROTOCOL_v1.md`.

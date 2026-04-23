@@ -110,16 +110,6 @@ pub fn to_wat(graph: &Graph) -> String {
                 wat.push_str(&format!("        (local.set {} (call $tanh (local.get {})))\n",
                     result_var, current));
             }
-            Op::ToTernary => {
-                wat.push_str(&format!(
-                    "        (local.set {0}\n\
-                     \x20         (if (result f32) (f32.gt (local.get {1}) (f32.const 0.3))\n\
-                     \x20           (then (f32.const 1.0))\n\
-                     \x20           (else (if (result f32) (f32.lt (local.get {1}) (f32.const -0.3))\n\
-                     \x20             (then (f32.const -1.0))\n\
-                     \x20             (else (f32.const 0.0))))))\n",
-                    result_var, current));
-            }
             _ => {
                 wat.push_str(&format!("        ;; unsupported op: {}\n", op));
                 wat.push_str(&format!("        (local.set {} (local.get {}))\n", result_var, current));
@@ -233,21 +223,6 @@ mod tests {
         assert!(wat.contains("f32.add"));
         assert!(wat.contains("f32.max"));
         assert!(wat.contains("qlang_graph"));
-    }
-
-    #[test]
-    fn wat_ternary() {
-        let mut g = Graph::new("ternary_wasm");
-        let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![TensorType::f32_vector(8)]);
-        let _b = g.add_node(Op::Input { name: "b".into() }, vec![], vec![TensorType::f32_vector(8)]);
-        let t = g.add_node(Op::ToTernary, vec![TensorType::f32_vector(8)], vec![TensorType::f32_vector(8)]);
-        let out = g.add_node(Op::Output { name: "y".into() }, vec![TensorType::f32_vector(8)], vec![]);
-        g.add_edge(a, 0, t, 0, TensorType::f32_vector(8));
-        g.add_edge(t, 0, out, 0, TensorType::f32_vector(8));
-
-        let wat = to_wat(&g);
-        assert!(wat.contains("f32.const 1.0"));
-        assert!(wat.contains("f32.const -1.0"));
     }
 
     #[test]

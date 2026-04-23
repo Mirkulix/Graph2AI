@@ -4,8 +4,7 @@ use crate::{
     llm_node,
 };
 use qo_llm::LlmRouter;
-use qo_evolution::QuantumState;
-use qo_simulation::{predict, Scenario, Simulator, Strategy};
+
 use qlang_core::binary;
 use qlang_core::graph::Graph;
 use qlang_core::ops::Op;
@@ -22,55 +21,6 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-// ============================================================
-// Simulation helper — runs before CEO decomposition
-// ============================================================
-
-/// Run a fast Monte-Carlo simulation across 4 standard strategies.
-/// Returns (recommended_strategy_name, confidence_0_to_1).
-pub fn simulate_before_execution(goal_description: &str) -> (String, f32) {
-    let mut scenario = Scenario::new(1, goal_description.to_string());
-
-    scenario.add_strategy(Strategy {
-        name: "Direkte Ausführung".into(),
-        agents_involved: vec!["Researcher".into()],
-        steps: vec!["Recherchiere und liefere Ergebnis".into()],
-        estimated_cost: 0.0,
-        estimated_duration_ms: 500,
-    });
-    scenario.add_strategy(Strategy {
-        name: "Dekomposition + Delegation".into(),
-        agents_involved: vec!["CEO".into(), "Researcher".into(), "Developer".into()],
-        steps: vec![
-            "Zerlege".into(),
-            "Recherchiere".into(),
-            "Implementiere".into(),
-            "Verifiziere".into(),
-        ],
-        estimated_cost: 0.0,
-        estimated_duration_ms: 2000,
-    });
-    scenario.add_strategy(Strategy {
-        name: "Recherche zuerst".into(),
-        agents_involved: vec!["Researcher".into(), "Strategist".into()],
-        steps: vec!["Recherchiere".into(), "Analysiere und plane".into()],
-        estimated_cost: 0.0,
-        estimated_duration_ms: 1000,
-    });
-    scenario.add_strategy(Strategy {
-        name: "Kreative Lösung".into(),
-        agents_involved: vec!["Artisan".into(), "Researcher".into()],
-        steps: vec!["Brainstorme".into(), "Recherchiere".into()],
-        estimated_cost: 0.0,
-        estimated_duration_ms: 800,
-    });
-
-    let mut sim = Simulator::new(30);
-    let results = sim.simulate(&scenario);
-    let prediction = predict(&scenario, &results);
-
-    (prediction.recommended_name.clone(), prediction.confidence)
-}
 
 /// Map a strategy name to the CEO decomposition instruction.
 pub fn strategy_instruction(chosen_strategy: &str) -> &'static str {
@@ -228,7 +178,7 @@ pub async fn execute_goal(
     llm: &LlmRouter,
     goal: &mut Goal,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let (graph_data, chosen_strategy, _succeeded) = execute_goal_qlang(llm, goal, None, None).await?;
+    let (graph_data, chosen_strategy, _succeeded) = execute_goal_qlang(llm, goal, None).await?;
 
     // Log QLANG graph stats
     tracing::info!(
@@ -254,7 +204,6 @@ pub async fn execute_goal(
 pub async fn execute_goal_qlang(
     llm: &LlmRouter,
     goal: &mut Goal,
-    quantum_state: Option<&QuantumState>,
     bus: Option<Arc<MessageBus>>,
 ) -> Result<(ExecutionGraphData, String, bool), Box<dyn std::error::Error + Send + Sync>> {
     goal.status = GoalStatus::InProgress;
@@ -300,36 +249,8 @@ pub async fn execute_goal_qlang(
         tracing::debug!("CEO broadcast: {:?}", status);
     }
 
-    // --- Step 2a: Run simulation to predict best strategy ---
-    let (sim_strategy, sim_confidence) = simulate_before_execution(&goal.description);
-    tracing::info!(
-        "Simulation recommended '{}' (confidence: {:.0}%)",
-        sim_strategy,
-        sim_confidence * 100.0
-    );
-
-    // --- Step 2b: Get quantum recommendation ---
-    let (quantum_strategy, quantum_confidence) = if let Some(ref qs) = quantum_state {
-        let confidence = qs.purity() as f32;
-        match qs.measure() {
-            Some((_, name)) => (name.to_string(), confidence),
-            None => ("Dekomposition + Delegation".to_string(), 0.0f32),
-        }
-    } else {
-        ("Dekomposition + Delegation".to_string(), 0.0f32)
-    };
-    tracing::info!(
-        "Quantum recommended '{}' (purity/confidence: {:.2})",
-        quantum_strategy,
-        quantum_confidence
-    );
-
-    // Prefer quantum when it has high purity (confident), else use simulation
-    let chosen_strategy = if quantum_confidence > 0.6 {
-        quantum_strategy.clone()
-    } else {
-        sim_strategy.clone()
-    };
+    let chosen_strategy = "Dekomposition + Delegation".to_string();
+    let sim_confidence = 1.0f32;
     tracing::info!("Chosen strategy: '{}'", chosen_strategy);
 
     // --- Step 2c: CEO reasoning via LLM using chosen strategy ---
@@ -344,7 +265,7 @@ pub async fn execute_goal_qlang(
     );
     let t0 = now_ms();
     let decomposition =
-        llm_node::llm_reason(llm, AgentRole::Ceo, "Goal-Dekomposition", &decomposition_prompt)
+        llm_node::llm_reason(llm, AgentRole::Ceo, "Goal-Dekomposition", &decomposition_prompt, None)
             .await?;
     let decompose_ms = now_ms() - t0;
     graph_data.record_execution("ceo_decompose", decompose_ms, true);
@@ -436,9 +357,8 @@ pub async fn execute_goal_qlang(
         goal.subtasks[i].status = GoalStatus::InProgress;
         let goal_desc = goal.description.clone();
 
-        let values = qo_values::ValueScores::default();
         let t_sub = now_ms();
-        match llm_node::agent_execute_with_tools(llm, agent_role, &goal_desc, &task_text, &values).await {
+        match execute_task(llm, agent_role, &goal_desc, &task_text, None).await {
             Ok(result) => {
                 let sub_ms = now_ms() - t_sub;
                 goal.subtasks[i].result = Some(result.clone());
@@ -517,7 +437,7 @@ pub async fn execute_goal_qlang(
 
     let t_sum = now_ms();
     let summary =
-        llm_node::llm_reason(llm, AgentRole::Ceo, "Zusammenfassung", &summary_prompt).await?;
+        llm_node::llm_reason(llm, AgentRole::Ceo, "Zusammenfassung", &summary_prompt, None).await?;
     let sum_ms = now_ms() - t_sum;
     graph_data.record_execution("ceo_summary", sum_ms, true);
 
@@ -546,39 +466,12 @@ pub async fn execute_goal_qlang(
 pub async fn decompose_goal(
     llm: &LlmRouter,
     goal: &mut Goal,
-    quantum_state: Option<&QuantumState>,
+    preferred_tier: Option<qo_llm::Tier>,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     goal.status = GoalStatus::InProgress;
 
-    // Run simulation to predict best strategy
-    let (sim_strategy, sim_confidence) = simulate_before_execution(&goal.description);
-    tracing::info!(
-        "Simulation recommended '{}' (confidence: {:.0}%)",
-        sim_strategy,
-        sim_confidence * 100.0
-    );
-
-    // Get quantum recommendation
-    let (quantum_strategy, quantum_confidence) = if let Some(ref qs) = quantum_state {
-        let confidence = qs.purity() as f32;
-        match qs.measure() {
-            Some((_, name)) => (name.to_string(), confidence),
-            None => ("Dekomposition + Delegation".to_string(), 0.0f32),
-        }
-    } else {
-        ("Dekomposition + Delegation".to_string(), 0.0f32)
-    };
-    tracing::info!(
-        "Quantum recommended '{}' (purity/confidence: {:.2})",
-        quantum_strategy,
-        quantum_confidence
-    );
-
-    let chosen_strategy = if quantum_confidence > 0.6 {
-        quantum_strategy
-    } else {
-        sim_strategy
-    };
+    let chosen_strategy = "Dekomposition + Delegation".to_string();
+    let sim_confidence = 1.0f32;
     tracing::info!("Chosen strategy for decomposition: '{}'", chosen_strategy);
 
     let instruction = strategy_instruction(&chosen_strategy);
@@ -596,6 +489,7 @@ pub async fn decompose_goal(
         AgentRole::Ceo,
         "Goal-Dekomposition",
         &decomposition_prompt,
+        preferred_tier,
     )
     .await?;
 
@@ -613,10 +507,21 @@ pub async fn decompose_goal(
     Ok(chosen_strategy)
 }
 
+pub async fn execute_task(
+    llm: &LlmRouter,
+    agent: AgentRole,
+    context: &str,
+    task: &str,
+    preferred_tier: Option<qo_llm::Tier>,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    llm_node::llm_reason(llm, agent, context, task, preferred_tier).await
+}
+
 pub async fn execute_subtask(
     llm: &LlmRouter,
     goal: &mut Goal,
     index: usize,
+    preferred_tier: Option<qo_llm::Tier>,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let subtask = goal
         .subtasks
@@ -629,7 +534,7 @@ pub async fn execute_subtask(
     let assigned_to = goal.subtasks[index].assigned_to;
 
     let values = qo_values::ValueScores::default();
-    match llm_node::agent_execute_with_tools(llm, assigned_to, &goal_desc, &subtask_desc, &values).await {
+    match llm_node::agent_execute_with_tools(llm, assigned_to, &goal_desc, &subtask_desc, &values, preferred_tier).await {
         Ok(result) => {
             goal.subtasks[index].result = Some(result.clone());
             goal.subtasks[index].status = GoalStatus::Completed;
@@ -647,6 +552,7 @@ pub async fn execute_subtask(
 pub async fn summarize_goal(
     llm: &LlmRouter,
     goal: &mut Goal,
+    preferred_tier: Option<qo_llm::Tier>,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let all_results: Vec<String> = goal
         .subtasks
@@ -663,7 +569,7 @@ pub async fn summarize_goal(
     );
 
     let summary =
-        llm_node::llm_reason(llm, AgentRole::Ceo, "Zusammenfassung", &summary_prompt).await?;
+        llm_node::llm_reason(llm, AgentRole::Ceo, "Zusammenfassung", &summary_prompt, preferred_tier).await?;
     goal.result = Some(summary.clone());
     goal.status = GoalStatus::Completed;
 
@@ -911,15 +817,6 @@ mod tests {
         );
     }
 
-    // --- Simulation + strategy tests ---
-
-    #[test]
-    fn simulation_runs_before_execution() {
-        let (strategy, confidence) = simulate_before_execution("Recherchiere die Vorteile von Rust");
-        assert!(!strategy.is_empty(), "strategy name must not be empty");
-        assert!(confidence > 0.0 && confidence <= 1.0, "confidence must be in (0, 1]");
-    }
-
     #[test]
     fn strategy_instruction_maps_correctly() {
         let strategies = [
@@ -955,3 +852,4 @@ mod tests {
         assert_eq!(strategy_index("unknown"), 1); // default fallback
     }
 }
+

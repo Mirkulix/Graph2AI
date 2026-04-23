@@ -1,10 +1,10 @@
 #!/bin/bash
 # QLANG Watchdog — Keeps all services alive, protects GPU 0, auto-restart on crash.
 
-cd /home/mirkulix/AI/neoqlang/qlang
+cd ${REPO_ROOT:-.}
 export LIBTORCH_USE_PYTORCH=1
 TORCH_LIB=$(python3 -c "import torch,os; print(os.path.join(os.path.dirname(torch.__file__),'lib'))" 2>/dev/null)
-CUDA_LIBS="/home/mirkulix/.local/lib/python3.14/site-packages/nvidia/cu13/lib"
+CUDA_LIBS="${CUDA_LIBS:-}"
 LOG_DIR=/tmp/qlang-watchdog
 mkdir -p "$LOG_DIR"
 

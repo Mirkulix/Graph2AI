@@ -11,8 +11,8 @@ target/
 *.swp
 *.swo
 *~
-Dockerfile
-docker-compose.yml
+Dockerfile.qo
+docker-compose.swarm.yml
 .dockerignore
 docs/
 spec/

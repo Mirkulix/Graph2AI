@@ -222,7 +222,7 @@ export default function ChatView(props: ChatViewProps = {}) {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, loading, liveEvents])
 
-  // While a request is in flight, tail /api/consciousness/stream for
+  // While a request is in flight, tail /api/messages/stream for
   // activity events ("CEO dekomponiert …", "Researcher fertig", …) and
   // render them below the loading dots. This makes single-shot chat
   // and multi-agent goal flows visibly "live" without needing real
@@ -232,17 +232,16 @@ export default function ChatView(props: ChatViewProps = {}) {
       setLiveEvents([])
       return
     }
-    const src = new EventSource('/api/consciousness/stream')
+    const src = new EventSource('/api/messages/stream')
     src.onmessage = (ev) => {
       try {
         const data = JSON.parse(ev.data)
-        if (data?.type !== 'activity') return
         setLiveEvents((prev) => {
           const entry: LiveEvent = {
-            id: `${data.timestamp}-${prev.length}`,
-            message: data.message ?? '',
-            agent: data.agent ?? undefined,
-            level: data.level ?? 'info',
+            id: `${data.timestamp ?? Date.now()}-${prev.length}`,
+            message: `${data.intent ?? 'Message'}: ${data.from ?? '?'} -> ${data.to ?? '?'}`,
+            agent: data.graph_name ?? undefined,
+            level: 'info',
             timestamp: data.timestamp ?? Math.floor(Date.now() / 1000),
           }
           return [...prev, entry].slice(-12)

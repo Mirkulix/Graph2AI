@@ -1,3 +1,10 @@
+> Status: planned
+> Sync: Positionierungs-Dokument. Einzelne Vergleichszeilen (Swarm Training,
+> 16x-Kompression bei 100% Accuracy, "vollstaendiges ML-Training") spiegeln
+> die *Zielarchitektur*, nicht den heute lauffaehigen Stand — siehe
+> `QLANG-STATUS.md` fuer die belegten Werte. Beim Update QLANG-STATUS-Zahlen
+> verwenden, keine Marketing-Werte.
+
 # Comparison
 
 Wie QLANG sich von bestehenden Tools und Frameworks unterscheidet.
