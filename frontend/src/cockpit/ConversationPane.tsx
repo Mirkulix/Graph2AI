@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Radio, Send, Shield, ShieldOff, Users, X, Zap } from 'lucide-react';
+import { GitBranch, Radio, Send, Shield, ShieldOff, Users, X, Zap } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api, type BusMessage, type ConsensusResponse, type ConsensusReply, nameOf, intentOf, bytesToHex } from '../lib/api';
 import GraphThumbnail from './GraphThumbnail';
 
-type ComposerMode = 'single' | 'consensus';
+type ComposerMode = 'single' | 'consensus' | 'pipeline';
 
 interface Props {
   selectedAgent: string | null;
@@ -182,10 +182,17 @@ function MessageContent({ content, isReply }: { content: string; isReply: boolea
 }
 
 const CONSENSUS_DEFAULTS = ['developer', 'guardian', 'strategist'];
+const PIPELINE_DEFAULTS  = ['ceo', 'developer', 'guardian'];
 
 function pickDefaultConsensusAgents(agents: string[]): string[] {
   const present = CONSENSUS_DEFAULTS.filter(a => agents.includes(a));
   if (present.length > 0) return present.slice(0, 3);
+  return agents.slice(0, Math.min(3, agents.length));
+}
+
+function pickDefaultPipelineChain(agents: string[]): string[] {
+  const present = PIPELINE_DEFAULTS.filter(a => agents.includes(a));
+  if (present.length === PIPELINE_DEFAULTS.length) return present;
   return agents.slice(0, Math.min(3, agents.length));
 }
 
@@ -202,14 +209,19 @@ function Composer({
   const [text, setText] = useState('');
   const [target, setTarget] = useState(defaultTo);
   const [selectedAgents, setSelectedAgents] = useState<string[]>(() => pickDefaultConsensusAgents(agents));
+  const [chain, setChain] = useState<string[]>(() => pickDefaultPipelineChain(agents));
+  const [addStepPick, setAddStepPick] = useState<string>('');
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
   useEffect(() => { setTarget(defaultTo); }, [defaultTo]);
-  // Re-seed default consensus agents when the agent list first becomes non-empty
+  // Re-seed default consensus + pipeline agents when the agent list first becomes non-empty
   useEffect(() => {
     if (selectedAgents.length === 0 && agents.length > 0) {
       setSelectedAgents(pickDefaultConsensusAgents(agents));
+    }
+    if (chain.length === 0 && agents.length > 0) {
+      setChain(pickDefaultPipelineChain(agents));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agents.join('|')]);
@@ -265,15 +277,80 @@ function Composer({
     }
   }
 
+  async function sendPipeline() {
+    if (!text.trim() || busy || chain.length === 0) return;
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const target0 = chain[0];
+      const remainingChain = chain.slice(1).join(',');
+      const msg = {
+        id: Math.floor(Math.random() * 1_000_000),
+        from: { name: 'cockpit', capabilities: ['Execute'] },
+        to:   { name: target0, capabilities: ['Execute'] },
+        graph: {
+          id: `pipeline-${Date.now()}`,
+          version: '1.0',
+          nodes: [], edges: [], constraints: [],
+          metadata: {
+            source: 'cockpit-pipeline',
+            content: text,
+            chain: remainingChain,
+            pipeline_origin: 'cockpit',
+            pipeline_step: '0',
+          },
+        },
+        inputs: {},
+        intent: 'Execute',
+        in_reply_to: null,
+        signature: null,
+        signer_pubkey: null,
+        graph_hash: null,
+      };
+      const seedHex = '0'.repeat(64);
+      const reply = await api.qlmsReply([msg], seedHex);
+      const delivered = await api.qlmsDeliver(reply.frame);
+      if (delivered.signature_verified) {
+        setFeedback({ kind: 'ok', text: `pipeline · ${chain.length} step${chain.length === 1 ? '' : 's'} dispatched → ${target0}` });
+        setText('');
+      } else {
+        setFeedback({ kind: 'err', text: 'signature not verified' });
+      }
+    } catch (e) {
+      setFeedback({ kind: 'err', text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+      setTimeout(() => setFeedback(null), 4000);
+    }
+  }
+
   function toggleAgent(name: string) {
     setSelectedAgents(prev =>
       prev.includes(name) ? prev.filter(a => a !== name) : [...prev, name],
     );
   }
 
+  function removeChainStep(idx: number) {
+    setChain(prev => prev.filter((_, i) => i !== idx));
+  }
+
+  function appendChainStep(name: string) {
+    if (!name) return;
+    setChain(prev => [...prev, name]);
+    setAddStepPick('');
+  }
+
+  function dispatchSend() {
+    if (mode === 'single')   return send();
+    if (mode === 'pipeline') return sendPipeline();
+    return sendConsensus();
+  }
+
   const canSend = mode === 'single'
     ? !!text.trim()
-    : !!text.trim() && selectedAgents.length > 0;
+    : mode === 'pipeline'
+      ? !!text.trim() && chain.length > 0
+      : !!text.trim() && selectedAgents.length > 0;
 
   return (
     <div style={composerStyle}>
@@ -308,15 +385,30 @@ function Composer({
             role="tab"
             aria-selected={mode === 'consensus'}
             onClick={() => setMode('consensus')}
-            style={modeButtonStyle(mode === 'consensus', true)}
+            style={modeButtonStyle(mode === 'consensus', 'consensus')}
           >
             <Users size={10} strokeWidth={2} />
             consensus
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === 'pipeline'}
+            onClick={() => setMode('pipeline')}
+            style={modeButtonStyle(mode === 'pipeline', 'pipeline')}
+          >
+            <GitBranch size={10} strokeWidth={2} />
+            pipeline
           </button>
         </div>
         {mode === 'consensus' && (
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--ink-faint)' }}>
             {selectedAgents.length} of {agents.length} agents selected
+          </span>
+        )}
+        {mode === 'pipeline' && (
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--ink-faint)' }}>
+            {chain.length} step{chain.length === 1 ? '' : 's'} · final reply returns to cockpit
           </span>
         )}
       </div>
@@ -347,6 +439,68 @@ function Composer({
         </div>
       )}
 
+      {mode === 'pipeline' && (
+        <div style={pipelinePanelStyle}>
+          <div style={pipelineChainVizStyle} aria-label="pipeline chain">
+            {chain.length === 0 ? (
+              <span style={{ color: 'var(--ink-faint)' }}>empty chain — add a step below</span>
+            ) : chain.map((a, i) => (
+              <span key={`${a}-${i}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ color: 'var(--ink-bright)', fontWeight: 600 }}>{a}</span>
+                {i < chain.length - 1 && (
+                  <span style={{ color: 'var(--ink-faint)' }}>→</span>
+                )}
+              </span>
+            ))}
+          </div>
+
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', marginTop: 8 }}>
+            {chain.map((a, i) => (
+              <button
+                key={`chip-${a}-${i}`}
+                type="button"
+                onClick={() => removeChainStep(i)}
+                className="chip chip-cta"
+                title={`remove step ${i + 1}: ${a}`}
+                style={{
+                  cursor: 'pointer',
+                  border: '1px solid transparent',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                }}
+              >
+                <X size={9} strokeWidth={2.4} />
+                {a}
+              </button>
+            ))}
+
+            <select
+              value={addStepPick}
+              onChange={e => appendChainStep(e.target.value)}
+              aria-label="add pipeline step"
+              style={{
+                background: 'var(--bg-elevated)',
+                border: '1px dashed var(--rule-default)',
+                borderRadius: 4,
+                color: 'var(--ink-muted)',
+                fontFamily: 'var(--font-mono)',
+                fontSize: 10,
+                padding: '4px 6px',
+                cursor: 'pointer',
+                textTransform: 'uppercase',
+                letterSpacing: 0.04,
+              }}
+            >
+              <option value="">+ add step</option>
+              {agents.map(a => (
+                <option key={a} value={a}>{a}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
+
       <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
         {mode === 'single' && (
           <select
@@ -373,13 +527,15 @@ function Composer({
           onKeyDown={e => {
             if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
               e.preventDefault();
-              void (mode === 'single' ? send() : sendConsensus());
+              void dispatchSend();
             }
           }}
           placeholder={
             mode === 'single'
               ? 'Compose a signed message…   (Cmd/Ctrl+Enter to send)'
-              : 'Ask N agents the same question…   (Cmd/Ctrl+Enter to fan out)'
+              : mode === 'pipeline'
+                ? 'Seed message for the first agent in the chain…   (Cmd/Ctrl+Enter to dispatch)'
+                : 'Ask N agents the same question…   (Cmd/Ctrl+Enter to fan out)'
           }
           rows={2}
           style={{
@@ -397,7 +553,7 @@ function Composer({
           }}
         />
         <button
-          onClick={() => void (mode === 'single' ? send() : sendConsensus())}
+          onClick={() => void dispatchSend()}
           disabled={busy || !canSend}
           className="surface-button surface-button--primary"
           style={{
@@ -409,10 +565,16 @@ function Composer({
             cursor: (busy || !canSend) ? 'not-allowed' : 'pointer',
           }}
         >
-          {mode === 'single' ? <Send size={12} strokeWidth={2} /> : <Users size={12} strokeWidth={2} />}
+          {mode === 'single'
+            ? <Send size={12} strokeWidth={2} />
+            : mode === 'pipeline'
+              ? <GitBranch size={12} strokeWidth={2} />
+              : <Users size={12} strokeWidth={2} />}
           {mode === 'single'
             ? (busy ? 'signing…' : 'send')
-            : (busy ? 'asking…' : `ask ${selectedAgents.length} agent${selectedAgents.length === 1 ? '' : 's'}`)}
+            : mode === 'pipeline'
+              ? (busy ? 'dispatching…' : `pipeline (${chain.length} step${chain.length === 1 ? '' : 's'})`)
+              : (busy ? 'asking…' : `ask ${selectedAgents.length} agent${selectedAgents.length === 1 ? '' : 's'}`)}
         </button>
       </div>
     </div>
@@ -713,7 +875,17 @@ const modeToggleStyle: React.CSSProperties = {
   background: 'var(--bg-elevated)',
 };
 
-function modeButtonStyle(active: boolean, isConsensus = false): React.CSSProperties {
+type ModeVariant = 'single' | 'consensus' | 'pipeline';
+
+function modeButtonStyle(active: boolean, variant: ModeVariant = 'single'): React.CSSProperties {
+  const accentBg =
+    variant === 'consensus' ? 'var(--process-soft)' :
+    variant === 'pipeline'  ? 'var(--warn-soft)'    :
+                              'var(--cta-soft)';
+  const accentFg =
+    variant === 'consensus' ? 'var(--process)' :
+    variant === 'pipeline'  ? 'var(--warn)'    :
+                              'var(--cta)';
   return {
     display: 'inline-flex',
     alignItems: 'center',
@@ -723,12 +895,8 @@ function modeButtonStyle(active: boolean, isConsensus = false): React.CSSPropert
     fontSize: 10,
     letterSpacing: 0.04,
     textTransform: 'uppercase',
-    background: active
-      ? (isConsensus ? 'var(--process-soft)' : 'var(--cta-soft)')
-      : 'transparent',
-    color: active
-      ? (isConsensus ? 'var(--process)' : 'var(--cta)')
-      : 'var(--ink-muted)',
+    background: active ? accentBg : 'transparent',
+    color: active ? accentFg : 'var(--ink-muted)',
     border: 'none',
     cursor: 'pointer',
     fontWeight: active ? 600 : 500,
@@ -744,6 +912,26 @@ const agentMultiSelectStyle: React.CSSProperties = {
   background: 'var(--bg-elevated)',
   border: '1px solid var(--rule-faint)',
   borderRadius: 4,
+};
+
+const pipelinePanelStyle: React.CSSProperties = {
+  marginBottom: 8,
+  padding: '8px 10px',
+  background: 'var(--bg-elevated)',
+  border: '1px solid var(--rule-faint)',
+  borderLeft: '3px solid var(--warn)',
+  borderRadius: 4,
+};
+
+const pipelineChainVizStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  flexWrap: 'wrap',
+  gap: 6,
+  fontFamily: 'var(--font-mono)',
+  fontSize: 12,
+  color: 'var(--ink-muted)',
+  letterSpacing: 0.02,
 };
 
 const consensusBlockStyle: React.CSSProperties = {

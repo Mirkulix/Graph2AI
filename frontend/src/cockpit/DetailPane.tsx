@@ -1,7 +1,9 @@
+import { useEffect, useState } from 'react';
 import { PanelRightClose, PanelRightOpen } from 'lucide-react';
-import type { BusMessage } from '../lib/api';
+import { api, type BusMessage, type PresenceEntry } from '../lib/api';
 import GraphInspector from './detail/GraphInspector';
 import AgentStats from './detail/AgentStats';
+import IdePresenceDetail from './detail/IdePresenceDetail';
 import ProvidersDetail from './detail/ProvidersDetail';
 
 export type DetailContext =
@@ -61,11 +63,30 @@ export default function DetailPane({ ctx, collapsed, onToggleCollapse, onClose }
       <div style={scrollStyle}>
         {ctx.kind === 'empty'     && <EmptyDetail />}
         {ctx.kind === 'graph'     && <GraphInspector message={ctx.message} />}
-        {ctx.kind === 'agent'     && <AgentStats name={ctx.name} />}
+        {ctx.kind === 'agent'     && <AgentDetailRouter identity={ctx.name} />}
         {ctx.kind === 'providers' && <ProvidersDetail />}
       </div>
     </aside>
   );
+}
+
+function AgentDetailRouter({ identity }: { identity: string }) {
+  const [presenceList, setPresenceList] = useState<PresenceEntry[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    api.presence()
+      .then(list => { if (alive) setPresenceList(list); })
+      .catch(() => { if (alive) setPresenceList([]); });
+    return () => { alive = false; };
+  }, [identity]);
+  if (presenceList === null) {
+    return <div style={{ padding: 16, color: 'var(--ink-muted)', fontSize: 12 }}>resolving…</div>;
+  }
+  const isIde = presenceList.some(p => p.identity === identity);
+  if (isIde) {
+    return <IdePresenceDetail identity={identity} presenceCache={presenceList} />;
+  }
+  return <AgentStats name={identity} />;
 }
 
 function EmptyDetail() {

@@ -347,6 +347,122 @@ pub async fn build_app(
                                 }
                             };
 
+                            // ─── Pipeline-chain forwarding ────────────────────
+                            // If the incoming graph carries a `chain` metadata key
+                            // (comma-separated list of next agent names), forward
+                            // this agent's reply as a fresh Execute to the first
+                            // name in the chain instead of replying to the sender.
+                            // The original sender is preserved via `pipeline_origin`
+                            // so the LAST agent in the chain can route the final
+                            // Result back to the true initiator.
+                            let chain_str = msg
+                                .graph
+                                .metadata
+                                .get("chain")
+                                .cloned()
+                                .unwrap_or_default();
+                            let chain: Vec<String> = chain_str
+                                .split(',')
+                                .map(|s| s.trim().to_string())
+                                .filter(|s| !s.is_empty())
+                                .collect();
+
+                            if !chain.is_empty() {
+                                let next_target = chain[0].clone();
+                                let remaining: Vec<String> = chain[1..].to_vec();
+                                let next_chain_str = remaining.join(",");
+
+                                let original_sender = msg
+                                    .graph
+                                    .metadata
+                                    .get("pipeline_origin")
+                                    .cloned()
+                                    .unwrap_or_else(|| msg.from.name.clone());
+
+                                let mut forward_metadata = StdHashMap::new();
+                                forward_metadata
+                                    .insert("source".to_string(), "pipeline-forward".to_string());
+                                forward_metadata
+                                    .insert("agent".to_string(), agent_name.clone());
+                                forward_metadata
+                                    .insert("content".to_string(), reply_text.clone());
+                                forward_metadata
+                                    .insert("chain".to_string(), next_chain_str);
+                                forward_metadata.insert(
+                                    "pipeline_origin".to_string(),
+                                    original_sender.clone(),
+                                );
+                                forward_metadata.insert(
+                                    "pipeline_step".to_string(),
+                                    format!(
+                                        "{}",
+                                        msg.graph
+                                            .metadata
+                                            .get("pipeline_step")
+                                            .and_then(|s| s.parse::<u32>().ok())
+                                            .unwrap_or(0)
+                                            + 1
+                                    ),
+                                );
+
+                                let forward_id = (msg.id ^ 0x6A09E667F3BCC908u64).wrapping_add(
+                                    std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .map(|d| d.as_nanos() as u64)
+                                        .unwrap_or(0),
+                                );
+
+                                let forward_graph = Graph {
+                                    id: format!(
+                                        "pipeline-{}-{}-{}",
+                                        agent_name, next_target, forward_id
+                                    ),
+                                    version: "1.0".to_string(),
+                                    nodes: vec![],
+                                    edges: vec![],
+                                    constraints: vec![],
+                                    metadata: forward_metadata,
+                                };
+
+                                let forward_msg = qlang_agent::protocol::GraphMessage {
+                                    id: forward_id,
+                                    from: AgentId {
+                                        name: agent_name.clone(),
+                                        capabilities: vec![Capability::Execute],
+                                    },
+                                    to: AgentId {
+                                        name: next_target.clone(),
+                                        capabilities: vec![Capability::Execute],
+                                    },
+                                    graph: forward_graph,
+                                    inputs: StdHashMap::new(),
+                                    intent: MessageIntent::Execute,
+                                    in_reply_to: Some(msg.id),
+                                    signature: None,
+                                    signer_pubkey: None,
+                                    graph_hash: None,
+                                };
+
+                                let _ = bus.send(forward_msg.clone()).await;
+
+                                // Dashboard fanout for the pipeline edge.
+                                let forward_size = serde_json::to_vec(&forward_msg.graph)
+                                    .map(|v| v.len() as u32)
+                                    .unwrap_or(0);
+                                let _ = events_tx.send(routes::dashboard::GraphEvent::now(
+                                    &agent_name,
+                                    &next_target,
+                                    "PipelineForward",
+                                    forward_size,
+                                ));
+
+                                // Skip the regular Result-reply: the LAST agent
+                                // in the chain produces the final Result and
+                                // routes it to pipeline_origin. Replying here
+                                // would double-deliver to the sender.
+                                continue;
+                            }
+
                             // ─── Build reply GraphMessage ─────────────────────
                             let reply_id = (msg.id ^ 0x9E3779B97F4A7C15u64).wrapping_add(
                                 std::time::SystemTime::now()
@@ -360,6 +476,24 @@ pub async fn build_app(
                             reply_metadata.insert("content".to_string(), reply_text.clone());
                             reply_metadata.insert("in_reply_to_graph".to_string(), msg.graph.id.clone());
 
+                            // Pipeline summary for the cockpit/IDE: copy origin
+                            // and step counter through, and tag this final agent
+                            // so the receiver can render the chain history.
+                            if let Some(origin) = msg.graph.metadata.get("pipeline_origin") {
+                                reply_metadata
+                                    .insert("pipeline_origin".to_string(), origin.clone());
+                            }
+                            if let Some(step) = msg.graph.metadata.get("pipeline_step") {
+                                reply_metadata
+                                    .insert("pipeline_step".to_string(), step.clone());
+                            }
+                            if msg.graph.metadata.contains_key("pipeline_origin") {
+                                reply_metadata.insert(
+                                    "pipeline_chain_completed".to_string(),
+                                    agent_name.clone(),
+                                );
+                            }
+
                             let reply_graph = Graph {
                                 id: format!("reply-{}-{}", agent_name, reply_id),
                                 version: "1.0".to_string(),
@@ -369,13 +503,28 @@ pub async fn build_app(
                                 metadata: reply_metadata,
                             };
 
+                            // If we are the LAST agent in a pipeline, route the
+                            // Result back to the true original sender (carried in
+                            // pipeline_origin) instead of the immediate `from`
+                            // (which would be the previous pipeline agent).
+                            let reply_to = if let Some(origin) =
+                                msg.graph.metadata.get("pipeline_origin")
+                            {
+                                AgentId {
+                                    name: origin.clone(),
+                                    capabilities: vec![Capability::Execute],
+                                }
+                            } else {
+                                msg.from.clone()
+                            };
+
                             let reply = qlang_agent::protocol::GraphMessage {
                                 id: reply_id,
                                 from: AgentId {
                                     name: agent_name.clone(),
                                     capabilities: vec![Capability::Execute],
                                 },
-                                to: msg.from.clone(),
+                                to: reply_to,
                                 graph: reply_graph,
                                 inputs: StdHashMap::new(),
                                 intent: MessageIntent::Result { original_message_id: msg.id },

@@ -12,6 +12,7 @@ import Knowledge3DView from './cockpit/secondary/Knowledge3DView';
 import SettingsView from './cockpit/secondary/SettingsView';
 import { subscribeSSE, throttle } from './lib/sse';
 import { api, type BusMessage, nameOf } from './lib/api';
+import { loadTail, saveTail } from './lib/history';
 
 const TAIL_CAP = 200;
 
@@ -20,7 +21,12 @@ export default function App() {
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [detail, setDetail] = useState<DetailContext>({ kind: 'empty' });
   const [collapsed, setCollapsed] = useState(false);
-  const [liveTail, setLiveTail] = useState<BusMessage[]>([]);
+  // liveTail is seeded from localStorage so the cockpit shows recent history
+  // on reload instead of an empty view. SSE keeps appending new messages on top.
+  // NOTE: ConversationPane currently displays a "Reload clears the view." banner
+  // which is no longer accurate — leaving it for now to avoid conflict with the
+  // in-flight pipelines edit on that file. Update the banner in a follow-up.
+  const [liveTail, setLiveTail] = useState<BusMessage[]>(() => loadTail());
   const [online, setOnline] = useState<boolean>(false);
 
   // Profile menu + secondary view
@@ -72,6 +78,12 @@ export default function App() {
     });
     return () => sub.close();
   }, []);
+
+  // ─── Persist liveTail to localStorage (debounced) ───────────────
+  useEffect(() => {
+    const t = setTimeout(() => saveTail(liveTail), 500);
+    return () => clearTimeout(t);
+  }, [liveTail]);
 
   // ─── Auto-detail when agent changes ──────────────────────────────
   useEffect(() => {
