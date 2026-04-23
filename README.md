@@ -1,90 +1,100 @@
-# OrbitQLang
+# OrbitQO
 
-## The Agent-to-Agent Control Plane
+> Graph-native AI-to-AI control plane: signed message graphs over a multi-LLM
+> bus, with IDE extensions for Cursor, Antigravity, Trae, VS Code, ...
 
-OrbitQLang is a **graph-native AI-to-AI control plane** designed strictly for secure, deterministic agent coordination. 
+Status: early-alpha · Rust 2021 · React 19 · DeepSeek/OpenAI/Claude/Groq/Ollama
 
-The traditional way to connect multiple AI agents (e.g., Claude, Codex, Gemini) relies on "loose text" prompts across chat interfaces. This approach is lossy, insecure, token-heavy, and prone to hallucination.
+## Why use this
 
-**OrbitQLang replaces text-chats between AIs with a cryptographically signed, binary graph protocol (QLMS).**
+- **Multi-LLM, multi-IDE bus** — route the same task to DeepSeek, OpenAI, Claude, Groq or local Ollama from any of your IDEs, instead of being locked to one vendor's inline AI.
+- **Signed message graphs (QLMS)** — every agent-to-agent envelope is HMAC-SHA256 signed and audit-logged, not a fire-and-forget chat call.
+- **Closed-loop automation** — file save in your IDE can trigger an LLM review without a click, with rate-limits and per-rule cooldowns.
 
-## Core Capabilities
+## Five killer workflows
 
-1. **Signed AI-to-AI Handovers (QLMS)**: Instead of generating text, agents output structured tensors packed into a Directed Acyclic Graph (DAG). This graph is cryptographically signed (HMAC-SHA256) by the Rust backend, ensuring absolute security and auditability.
-2. **Deterministic Context Management**: The Rust supervisor decides *what* context the LLM sees. The LLM only acts as the "reasoning engine" and is isolated from the underlying data management.
-3. **Model-Agnostic Supervisor**: Plug any model (OpenAI, Anthropic, Ollama) into the QLMS proxy. The proxy handles the translation between raw text APIs and the secure QLMS binary protocol.
-4. **Browser Cockpit (`qo`)**: A Mission Control UI to observe agent sessions, tool calls, and binary handovers in real-time.
+| Workflow | Latency | Trigger |
+|----------|---------|---------|
+| Specialist Q&A | 1-3s | Ctrl+Shift+P → handover |
+| Multi-LLM Consensus | 2-3s | Cockpit composer → "consensus" → 3-6 agents |
+| Sequential Pipeline | 15-25s | Cockpit composer → "pipeline" → ordered chain |
+| Auto-trigger on save | 2-5s | `.qlang/routing.json` + opt-in setting |
+| Cross-IDE handover | 2-3s | Picker shows online IDE peers |
 
-```mermaid
-flowchart TD
-    U["User"] --> GUI["OrbitQLang Cockpit"]
-    
-    GUI --> API["Supervisory API (Rust)"]
-    
-    API --> SUP["QLMS Gateway & Supervisor"]
+Bonus: server agents can call internal MCP-style tools (`read_file`, `write_file`, `web_fetch`, `exec_shell`) inside a sandbox while answering.
 
-    SUP --> H["Signed Binary Graphen (QLMS)"]
-    SUP --> S["Session & Tool Logs"]
-    
-    SUP --> A1["Claude Code Proxy"]
-    SUP --> A2["Llama 3 Local Proxy"]
-    
-    A1 <--> |Struggles w/ Bug| H
-    H <--> |Safe Handover| A2
-```
+## Quickstart
 
-## Quick Start (Offline Build)
-
-To build OrbitQLang on Windows using the GNU Toolchain (see `docs/BUILD_WINDOWS.md` for full environment setup):
+Prerequisites: Rust toolchain (MSYS2 MINGW64 on Windows), Node 20+.
 
 ```bash
-git clone https://github.com/Mirkulix/qland.git
-cd qland/qlang
+# 1. Build server + LSP binaries
+cargo build --bin qo --no-default-features
+cargo build --bin qlang-cli --no-default-features
 
-# Start the QO server
-cargo run --bin qo --offline
+# 2. Put binaries on PATH (Windows: copy to a directory in %PATH%)
+cp target/debug/{qo,qlang-cli}.exe ~/.cargo/bin/
+
+# 3. Build the IDE extension VSIX
+cd editors/vscode && npx tsc -p . && npx -y @vscode/vsce package --allow-missing-repository
+# Drag-drop the resulting qlang-0.2.0.vsix into Cursor / Antigravity / Trae / VS Code
+
+# 4. Build the cockpit (qo serves frontend/dist/ on port 4646)
+cd ../../frontend && npx tsc && npx vite build
+
+# 5. Run
+qo --offline
+# open http://localhost:4646/
 ```
 
-Open `http://localhost:3000/supervisor` (or your configured port) to access the cockpit.
+## Configure a provider
 
-## The QLMS Handover Example
-
-Instead of Claude telling Codex "I found a bug on line 5", OrbitQLang enforces a structured CLI handover:
-
-```powershell
-# Agent A proposes a change
-cargo run --bin coding-handover --offline -- create `
-  --from claude `
-  --to codex `
-  --phase analyze `
-  --request "Inspect parser crash" `
-  --output handoff.qlms
-
-# Agent B receives the verified binary context and acts
-cargo run --bin coding-handover --offline -- reply `
-  --input handoff.qlms `
-  --from codex `
-  --to claude `
-  --change "Guard empty token stream" `
-  --output handoff-reply.qlms
+```
+Cockpit (top-right) → Profile → Providers → DeepSeek → Add → API key → Save
 ```
 
-## Architecture
+Done. The 6 server agents (ceo, developer, designer, ...) are now LLM-backed.
+Hot-reload, no restart needed.
 
-```text
-qlang/
-├── crates/
-│   ├── qlang-core/        # Crypto (Constant-time SHA256), Base Tensors, Graph definitions
-│   ├── qlang-compile/     # LLVM backend config
-│   ├── qlang-runtime/     # Graph executor
-│   └── qlang-agent/       # QLMS protocol specs
-│       └── qlm-bridge/    # (Gateway/Proxy transforming LLM JSON -> QLMS)
-├── qo/
-│   ├── qo-server/         # Axum HTTP + WebSocket + SSE Dashboard
-│   └── qo-agents/         # LLM routing mechanisms
-└── frontend/              # React UI
+## Opt into auto-trigger (optional)
+
+```bash
+mkdir -p .qlang
+cp editors/vscode/src/example-routing.json .qlang/routing.json
+# In your IDE: Settings → qlang.qlms.triggers.enabled = true → Reload Window
 ```
+
+Defaults: 2s debounce, 3 concurrent, 60/hour rolling cap, per-rule cooldowns.
+
+## Repo layout
+
+```
+crates/      Rust workspace — qlang-{core,compile,runtime,agent,sdk}
+qo/          QO server crates — qo-{server,agents,llm,memory,values,...}
+frontend/    React cockpit (Vite + TypeScript)
+editors/     IDE integrations (vscode/, theia/)
+spec/        QLMS protocol spec (v1.1)
+scripts/     PowerShell installers (install-qlang-ide.ps1)
+docs/        ARCHITECTURE.md, BUILD.md, QUICKSTART.md, vault/
+```
+
+## Read next
+
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — full system topology, every module, honest limitations
+- [editors/vscode/QUICKSTART.md](editors/vscode/QUICKSTART.md) — extension setup, commands, settings reference
+- [QLANG-STATUS.md](QLANG-STATUS.md) — "what actually works" source of truth
+- [CLAUDE.md](CLAUDE.md) — project-specific developer rules
+
+## Honest status
+
+Production-ready: no — needs CI, observability, and a security review before
+anything mission-critical. Daily-driver-ready: yes — verified end-to-end with
+Playwright against real DeepSeek calls (1.4s consensus across 3 agents,
+21.7s 3-hop pipeline, 2-5s auto-trigger reviews on file save). Conversation
+history is browser-localStorage only, the tool sandbox is `/workspace`-scoped,
+and the internal `<tool/>` markers are not yet real MCP JSON-RPC. Use it,
+file issues, don't bet your job on it.
 
 ## License
 
-MIT — see `LICENSE`.
+MIT — see `LICENSE` (TODO: add file if missing).

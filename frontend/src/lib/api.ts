@@ -183,6 +183,10 @@ export const api = {
                      });
                    },
   conversations:   () => get<Conversation[]>('/api/messages/conversations'),
+  // Server-side ring buffer (cap 200) of the most recent bus messages.
+  // Used by the cockpit to hydrate liveTail on a fresh machine where
+  // localStorage is empty. Falls back to localStorage on network error.
+  recentMessages:  (n: number = 50) => get<BusMessage[]>(`/api/messages/recent?n=${n}`),
 
   // QLMS bridge — sign + deliver
   qlmsReply:       (messages: unknown[], seedHex?: string) =>
