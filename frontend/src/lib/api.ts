@@ -127,6 +127,10 @@ export interface ConsensusSummary {
   avg_latency_ms: number;
   consensus_score: number;
   consensus_label: ConsensusLabel;
+  // Pseudo-semantic score (character-trigram cosine). Optional for
+  // backward compat with older backends that only return Jaccard.
+  consensus_score_semantic?: number;
+  consensus_label_semantic?: ConsensusLabel;
 }
 
 export interface ConsensusResponse {

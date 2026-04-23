@@ -2,6 +2,7 @@ pub mod auth;
 pub mod config;
 pub mod peer_discovery;
 pub mod routes;
+pub mod tools;
 use axum::{
     middleware,
     routing::{delete, get, post, put},
@@ -317,35 +318,108 @@ pub async fn build_app(
                                 size_bytes,
                             ));
 
-                            // ─── LLM call ─────────────────────────────────────
+                            // ─── LLM call (with MCP-style tool loop) ─────────
+                            //
+                            // For selected agents (developer, researcher) the
+                            // system prompt advertises a small set of tools.
+                            // After each LLM reply we scan for `<tool .../>`
+                            // markers; if any are present, we execute them,
+                            // append the results as a new user turn, and call
+                            // the LLM again. Capped at 3 iterations so a
+                            // misbehaving model can't loop forever.
                             let user_prompt = extract_prompt(&msg);
-                            let messages = vec![
-                                ("system".to_string(), system_prompt_for(&agent_name).to_string()),
+                            let tools_block = match agent_name.as_str() {
+                                "developer" | "researcher" => {
+                                    format!("\n\n{}", crate::tools::available_tools_help())
+                                }
+                                _ => String::new(),
+                            };
+                            let system =
+                                format!("{}{}", system_prompt_for(&agent_name), tools_block);
+                            let mut messages: Vec<(String, String)> = vec![
+                                ("system".to_string(), system),
                                 ("user".to_string(), user_prompt),
                             ];
 
-                            // Prefer DeepSeek explicitly — auto-router never selects it.
-                            // Per-agent model picks (developer→coder, researcher→reasoner,
-                            // others→chat). Falls back to whatever tier is available if
-                            // DeepSeek is offline.
+                            // Per-agent model picks (developer→coder,
+                            // researcher→reasoner, others→chat). Prefer
+                            // DeepSeek explicitly — auto-router never picks it.
                             let model = deepseek_model_for(&agent_name).to_string();
-                            let reply_text = match llm
-                                .chat_with_model(
-                                    Some(qo_llm::Tier::DeepSeek),
-                                    Some(model),
-                                    messages,
-                                )
-                                .await
-                            {
-                                Ok((text, used)) => {
-                                    tracing::debug!(?used, "agent '{}' got LLM reply", agent_name);
-                                    text
+                            const MAX_ITERATIONS: usize = 3;
+                            let mut reply_text = String::new();
+                            let mut tools_used: Vec<String> = Vec::new();
+
+                            for _iter in 0..MAX_ITERATIONS {
+                                let response = match llm
+                                    .chat_with_model(
+                                        Some(qo_llm::Tier::DeepSeek),
+                                        Some(model.clone()),
+                                        messages.clone(),
+                                    )
+                                    .await
+                                {
+                                    Ok((text, used)) => {
+                                        tracing::debug!(?used, "agent '{}' got LLM reply", agent_name);
+                                        text
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "Agent '{}' LLM call failed: {}",
+                                            agent_name,
+                                            e
+                                        );
+                                        reply_text = format!("[agent '{}' error: {}]", agent_name, e);
+                                        break;
+                                    }
+                                };
+
+                                let tool_calls = crate::tools::parse_tool_calls(&response);
+                                if tool_calls.is_empty() {
+                                    // No tool calls — this IS the final answer.
+                                    reply_text = response;
+                                    break;
                                 }
-                                Err(e) => {
-                                    tracing::warn!("Agent '{}' LLM call failed: {}", agent_name, e);
-                                    format!("[agent '{}' error: {}]", agent_name, e)
+
+                                // Execute every tool call in order, building
+                                // up a single user-turn message that the LLM
+                                // sees on the next round.
+                                let mut tool_results_text = String::new();
+                                for call in tool_calls.iter().cloned() {
+                                    let tool_name = call.name.clone();
+                                    let result = crate::tools::execute_tool(call).await;
+                                    tool_results_text.push_str(&format!(
+                                        "<tool_result name=\"{}\" ok=\"{}\">\n{}\n</tool_result>\n",
+                                        tool_name,
+                                        result.ok,
+                                        if result.ok {
+                                            result.output.as_str()
+                                        } else {
+                                            result.error.as_deref().unwrap_or("?")
+                                        }
+                                    ));
+                                    tools_used.push(tool_name);
                                 }
-                            };
+
+                                messages.push(("assistant".to_string(), response));
+                                messages.push((
+                                    "user".to_string(),
+                                    format!(
+                                        "Tool results:\n{}\n\nNow give your final answer.",
+                                        tool_results_text
+                                    ),
+                                ));
+                            }
+
+                            // If we exited the loop with reply_text still empty
+                            // (i.e. hit MAX_ITERATIONS while still emitting
+                            // tool calls), fall back to a graceful note so the
+                            // bus delivery path always has something to send.
+                            if reply_text.is_empty() {
+                                reply_text = format!(
+                                    "[agent '{}' reached the {}-iteration tool loop cap]",
+                                    agent_name, MAX_ITERATIONS
+                                );
+                            }
 
                             // ─── Pipeline-chain forwarding ────────────────────
                             // If the incoming graph carries a `chain` metadata key
@@ -475,6 +549,13 @@ pub async fn build_app(
                             reply_metadata.insert("agent".to_string(), agent_name.clone());
                             reply_metadata.insert("content".to_string(), reply_text.clone());
                             reply_metadata.insert("in_reply_to_graph".to_string(), msg.graph.id.clone());
+
+                            // Surface tool usage so the cockpit can render a
+                            // "tools used" badge next to the agent reply.
+                            if !tools_used.is_empty() {
+                                reply_metadata
+                                    .insert("tools_used".to_string(), tools_used.join(","));
+                            }
 
                             // Pipeline summary for the cockpit/IDE: copy origin
                             // and step counter through, and tag this final agent

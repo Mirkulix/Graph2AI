@@ -7,7 +7,7 @@
 
 use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -41,8 +41,16 @@ pub struct Summary {
     pub successful: usize,
     pub failed: usize,
     pub avg_latency_ms: u64,
+    /// Lexical Jaccard overlap on word-token sets. Range [0.0, 1.0].
     pub consensus_score: f64,
     pub consensus_label: String,
+    /// Pseudo-semantic score: cosine similarity on character-trigram
+    /// vectors. Captures partial-word / morphological overlap that
+    /// pure word-set Jaccard misses. Range [0.0, 1.0]. Real embedding
+    /// models (Ollama / OpenAI / etc.) can be plugged in later via
+    /// the LlmRouter without changing this field's contract.
+    pub consensus_score_semantic: f64,
+    pub consensus_label_semantic: String,
 }
 
 /// Outbound response — echo of inputs + every reply + summary.
@@ -170,20 +178,25 @@ fn compute_summary(replies: &[AgentReply]) -> Summary {
         0
     };
 
-    // consensus_score = average pairwise Jaccard overlap on word-token sets
-    // across all SUCCESSFUL replies. Cheap, no extra LLM call. Range [0.0, 1.0].
+    // Both consensus signals are computed across SUCCESSFUL replies only.
+    // They are cheap, deterministic, and add no extra LLM call.
     let texts: Vec<&str> = replies
         .iter()
         .filter(|r| r.ok)
         .map(|r| r.content.as_str())
         .collect();
+
+    // 1) Lexical: average pairwise Jaccard on word-token sets. Range [0.0, 1.0].
     let consensus_score = jaccard_overlap(&texts);
-    let consensus_label = match consensus_score {
-        s if s >= 0.6 => "strong-agreement",
-        s if s >= 0.35 => "majority-agrees",
-        s if s >= 0.15 => "mixed-signals",
-        _ => "diverse-opinions",
-    };
+    let consensus_label = label_for_score(consensus_score);
+
+    // 2) Pseudo-semantic: average pairwise cosine on character-trigram vectors.
+    //    Stronger than Jaccard because it captures partial-word matches and
+    //    morphological variants (e.g. "secure"/"security"/"securing" share
+    //    most trigrams). Real embeddings would still be better and can be
+    //    swapped in later through the LlmRouter.
+    let consensus_score_semantic = trigram_cosine_pairwise(&texts);
+    let consensus_label_semantic = label_for_score(consensus_score_semantic);
 
     Summary {
         total_replies,
@@ -191,8 +204,21 @@ fn compute_summary(replies: &[AgentReply]) -> Summary {
         failed,
         avg_latency_ms,
         consensus_score,
-        consensus_label: consensus_label.to_string(),
+        consensus_label,
+        consensus_score_semantic,
+        consensus_label_semantic,
     }
+}
+
+/// Shared 4-bucket label ladder so both scores use identical thresholds.
+fn label_for_score(s: f64) -> String {
+    match s {
+        s if s >= 0.6 => "strong-agreement",
+        s if s >= 0.35 => "majority-agrees",
+        s if s >= 0.15 => "mixed-signals",
+        _ => "diverse-opinions",
+    }
+    .to_string()
 }
 
 /// Average pairwise Jaccard overlap across all texts.
@@ -233,6 +259,70 @@ fn jaccard_overlap(texts: &[&str]) -> f64 {
     }
 }
 
+/// Average pairwise cosine similarity on character-trigram vectors.
+/// Pure-Rust, no extra deps. Range [0.0, 1.0]. Higher = more similar.
+///
+/// Why trigrams over Jaccard-on-words for an MVP "semantic" signal:
+/// - captures partial-word overlap (root sharing, plurals, conjugations)
+/// - robust to small spelling/casing differences
+/// - still cheap and deterministic
+///
+/// This is NOT a real embedding model — it does not capture true synonymy
+/// (e.g. "car" vs "automobile" still score low). A real embedding backend
+/// (Ollama nomic-embed-text, OpenAI /v1/embeddings, etc.) can be plugged
+/// in later via qo-llm without changing the public score field.
+fn trigram_cosine_pairwise(texts: &[&str]) -> f64 {
+    if texts.len() < 2 {
+        return 1.0;
+    }
+    let vecs: Vec<HashMap<String, f64>> =
+        texts.iter().map(|t| trigram_vector(t)).collect();
+    let mut sum = 0.0;
+    let mut pairs = 0usize;
+    for i in 0..vecs.len() {
+        for j in (i + 1)..vecs.len() {
+            sum += cosine(&vecs[i], &vecs[j]);
+            pairs += 1;
+        }
+    }
+    if pairs == 0 {
+        0.0
+    } else {
+        sum / pairs as f64
+    }
+}
+
+fn trigram_vector(text: &str) -> HashMap<String, f64> {
+    let normalized: String = text
+        .to_lowercase()
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let chars: Vec<char> = normalized.chars().collect();
+    let mut counts: HashMap<String, f64> = HashMap::new();
+    for w in chars.windows(3) {
+        let trigram: String = w.iter().collect();
+        *counts.entry(trigram).or_insert(0.0) += 1.0;
+    }
+    counts
+}
+
+fn cosine(a: &HashMap<String, f64>, b: &HashMap<String, f64>) -> f64 {
+    let mut dot = 0.0;
+    for (k, va) in a {
+        if let Some(vb) = b.get(k) {
+            dot += va * vb;
+        }
+    }
+    let mag_a: f64 = a.values().map(|v| v * v).sum::<f64>().sqrt();
+    let mag_b: f64 = b.values().map(|v| v * v).sum::<f64>().sqrt();
+    if mag_a == 0.0 || mag_b == 0.0 {
+        0.0
+    } else {
+        dot / (mag_a * mag_b)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -265,28 +355,40 @@ mod tests {
 
     #[test]
     fn summary_label_thresholds() {
-        let label = |s: f64| -> String {
-            let replies = vec![AgentReply {
-                agent: "a".into(),
-                content: "x".repeat(8),
-                latency_ms: 100,
-                ok: true,
-                error: None,
-            }];
-            // Force a specific score via crafted contents would be flaky; test
-            // the thresholds directly.
-            let l = match s {
-                s if s >= 0.6 => "strong-agreement",
-                s if s >= 0.35 => "majority-agrees",
-                s if s >= 0.15 => "mixed-signals",
-                _ => "diverse-opinions",
-            };
-            let _ = replies;
-            l.to_string()
-        };
-        assert_eq!(label(0.9), "strong-agreement");
-        assert_eq!(label(0.5), "majority-agrees");
-        assert_eq!(label(0.2), "mixed-signals");
-        assert_eq!(label(0.0), "diverse-opinions");
+        assert_eq!(label_for_score(0.9), "strong-agreement");
+        assert_eq!(label_for_score(0.5), "majority-agrees");
+        assert_eq!(label_for_score(0.2), "mixed-signals");
+        assert_eq!(label_for_score(0.0), "diverse-opinions");
+    }
+
+    #[test]
+    fn trigram_identical_texts_is_one() {
+        let texts = vec!["alpha beta gamma", "alpha beta gamma"];
+        let s = trigram_cosine_pairwise(&texts);
+        assert!((s - 1.0).abs() < 1e-9, "expected 1.0, got {s}");
+    }
+
+    #[test]
+    fn trigram_single_text_is_one() {
+        let texts = vec!["alpha"];
+        assert!((trigram_cosine_pairwise(&texts) - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn trigram_disjoint_texts_is_low() {
+        // Wholly different character sets → near-zero cosine.
+        let texts = vec!["aaaa", "zzzz"];
+        let s = trigram_cosine_pairwise(&texts);
+        assert!(s < 0.05, "expected near 0.0, got {s}");
+    }
+
+    #[test]
+    fn trigram_beats_jaccard_on_morphology() {
+        // Jaccard on these word sets is 0 (no exact word matches), but
+        // trigram cosine should be clearly > 0 because they share roots.
+        let texts = vec!["securing the system", "secure security systems"];
+        let j = jaccard_overlap(&texts);
+        let t = trigram_cosine_pairwise(&texts);
+        assert!(t > j, "trigram ({t}) should exceed jaccard ({j})");
     }
 }
