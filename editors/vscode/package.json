@@ -170,6 +170,16 @@
           "type": "number",
           "default": 3,
           "description": "Maximum concurrent auto-triggered dispatches. Excess events are dropped silently."
+        },
+        "qlang.qlms.triggers.maxPerHour": {
+          "type": "number",
+          "default": 60,
+          "description": "Hard cap on auto-triggered dispatches per rolling hour. Excess fires are silently dropped after a one-time warning notification."
+        },
+        "qlang.qlms.triggers.warnOnQuota": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a notification once when the hourly quota is hit (auto-trigger then silent until window resets)."
         }
       }
     }

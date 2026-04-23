@@ -155,17 +155,20 @@ export class QlmsInbox {
     private notify(msg: InboxMessage): void {
         const fromLabel = labelOf(msg.from) ?? '?';
         const intent = typeof msg.intent === 'string' ? msg.intent : (msg.intent ? JSON.stringify(msg.intent) : '?');
+        const cfg = vscode.workspace.getConfiguration(QLMS_CONFIG_SECTION);
+        const autoRespondActive = cfg.get<boolean>('autoRespond.enabled', false) && msg.is_reply !== true;
+        const label = autoRespondActive
+            ? `Reply from ${fromLabel} (intent: ${intent}, auto-responded as ${this.opts.identity})`
+            : `Reply from ${fromLabel} (intent: ${intent})`;
         void vscode.window
             .showInformationMessage(
-                `Reply from ${fromLabel} (intent: ${intent})`,
-                'Open in editor',
-                'Dismiss',
+                label,
+                'Insert as Comment',
+                'Open Side-by-Side',
+                'Copy',
+                'Open as JSON',
             )
-            .then((choice) => {
-                if (choice === 'Open in editor') {
-                    openAsJson(msg);
-                }
-            });
+            .then((action) => handleInboxAction(action, msg));
     }
 
     /**
@@ -277,4 +280,136 @@ export function labelOf(field: unknown): string | undefined {
 
 function delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+type InboxAction = 'Insert as Comment' | 'Open Side-by-Side' | 'Copy' | 'Open as JSON';
+
+interface CommentStyle {
+    kind: 'line' | 'block';
+    /** Line-comment prefix (kind === 'line') OR opening delimiter (kind === 'block'). */
+    prefix: string;
+    /** Closing delimiter for block comments. */
+    suffix?: string;
+}
+
+const LINE_LANGS: Record<string, string> = {
+    rust: '// ',
+    c: '// ',
+    cpp: '// ',
+    java: '// ',
+    javascript: '// ',
+    typescript: '// ',
+    typescriptreact: '// ',
+    javascriptreact: '// ',
+    go: '// ',
+    swift: '// ',
+    kotlin: '// ',
+    php: '// ',
+    csharp: '// ',
+    python: '# ',
+    ruby: '# ',
+    bash: '# ',
+    shell: '# ',
+    shellscript: '# ',
+    yaml: '# ',
+    toml: '# ',
+    dockerfile: '# ',
+    sql: '-- ',
+};
+
+const BLOCK_LANGS: Record<string, { open: string; close: string }> = {
+    html: { open: '<!--', close: '-->' },
+    xml: { open: '<!--', close: '-->' },
+    vue: { open: '<!--', close: '-->' },
+    svg: { open: '<!--', close: '-->' },
+    css: { open: '/*', close: '*/' },
+    scss: { open: '/*', close: '*/' },
+    less: { open: '/*', close: '*/' },
+};
+
+function commentStyleFor(languageId: string): CommentStyle {
+    const blk = BLOCK_LANGS[languageId];
+    if (blk) return { kind: 'block', prefix: blk.open, suffix: blk.close };
+    const line = LINE_LANGS[languageId];
+    if (line) return { kind: 'line', prefix: line };
+    return { kind: 'line', prefix: '// ' };
+}
+
+function intentLabel(intent: unknown): string {
+    if (typeof intent === 'string') return intent;
+    if (intent && typeof intent === 'object') {
+        const keys = Object.keys(intent as object);
+        if (keys.length > 0) return keys[0];
+    }
+    return '?';
+}
+
+function formatAsComment(style: CommentStyle, header: string, body: string): string {
+    const lines = body.split(/\r?\n/);
+    if (style.kind === 'line') {
+        const prefixed = [header, ...lines].map((l) => `${style.prefix}${l}`);
+        return prefixed.join('\n');
+    }
+    // Block comment: wrap header + body in a single block.
+    const inner = [header, '', ...lines].join('\n');
+    return `${style.prefix}\n${inner}\n${style.suffix}`;
+}
+
+async function insertAsComment(msg: InboxMessage): Promise<void> {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+        void vscode.window.showWarningMessage('No active editor — open a file first to insert the reply as a comment.');
+        return;
+    }
+    const languageId = editor.document.languageId;
+    const style = commentStyleFor(languageId);
+    const fromName = labelOf(msg.from) ?? '?';
+    const intent = intentLabel(msg.intent);
+    const body = typeof msg.content === 'string' && msg.content.length > 0
+        ? msg.content
+        : JSON.stringify(msg, null, 2);
+    const header = `🤖 reply from ${fromName} (${intent}):`;
+    const text = formatAsComment(style, header, body);
+    await editor.edit((eb) => eb.insert(editor.selection.start, text + '\n'));
+}
+
+async function openSideBySide(msg: InboxMessage): Promise<void> {
+    const fromName = labelOf(msg.from) ?? '?';
+    const intent = intentLabel(msg.intent);
+    const ts = typeof msg['timestamp'] === 'string' || typeof msg['timestamp'] === 'number'
+        ? String(msg['timestamp'])
+        : new Date().toISOString();
+    const id = typeof msg.id === 'number' ? String(msg.id) : '?';
+    const body = typeof msg.content === 'string' && msg.content.length > 0
+        ? msg.content
+        : '```json\n' + JSON.stringify(msg, null, 2) + '\n```';
+    const md = `# Reply from ${fromName}\n\n**intent**: ${intent}\n**timestamp**: ${ts}\n**id**: ${id}\n\n---\n\n${body}\n`;
+    const doc = await vscode.workspace.openTextDocument({ language: 'markdown', content: md });
+    await vscode.window.showTextDocument(doc, vscode.ViewColumn.Beside);
+}
+
+async function copyToClipboard(msg: InboxMessage): Promise<void> {
+    const text = typeof msg.content === 'string' && msg.content.length > 0
+        ? msg.content
+        : JSON.stringify(msg, null, 2);
+    await vscode.env.clipboard.writeText(text);
+    vscode.window.setStatusBarMessage('Reply copied to clipboard', 2000);
+}
+
+async function handleInboxAction(action: string | undefined, msg: InboxMessage): Promise<void> {
+    if (!action) return;
+    switch (action as InboxAction) {
+        case 'Insert as Comment':
+            await insertAsComment(msg);
+            break;
+        case 'Open Side-by-Side':
+            await openSideBySide(msg);
+            break;
+        case 'Copy':
+            await copyToClipboard(msg);
+            break;
+        case 'Open as JSON':
+            openAsJson(msg);
+            break;
+    }
 }

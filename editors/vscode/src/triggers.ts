@@ -28,6 +28,15 @@ interface InternalState {
     maxConcurrent: number;
     inflight: number;
     debounceTimers: Map<string, NodeJS.Timeout>;
+    // Cost-protection state.
+    maxPerHour: number;
+    warnOnQuota: boolean;
+    /** key=`${ruleId}::${docUri}` -> last-fire epoch ms */
+    lastFireMap: Map<string, number>;
+    /** Sliding-window timestamps (ms) of every dispatched fire in the last hour. */
+    recentFires: number[];
+    /** Set when the user has been warned this minute; auto-resets so re-warns are rate-limited. */
+    quotaWarned: boolean;
 }
 
 /**
@@ -54,6 +63,11 @@ export function startTriggers(
         maxConcurrent: cfg.get<number>('triggers.maxConcurrent', 3),
         inflight: 0,
         debounceTimers: new Map(),
+        maxPerHour: cfg.get<number>('triggers.maxPerHour', 60),
+        warnOnQuota: cfg.get<boolean>('triggers.warnOnQuota', true),
+        lastFireMap: new Map(),
+        recentFires: [],
+        quotaWarned: false,
     };
 
     const disposables: vscode.Disposable[] = [];
@@ -168,6 +182,45 @@ async function dispatchForEvent(
         if (rule.enabled === false) continue;
         if (rule.trigger !== kind) continue;
         if (!matches(rule.when, doc)) continue;
+
+        // Per-rule cooldown: same rule won't fire more than once per N seconds for the same file.
+        const now = Date.now();
+        const cooldownMs = (rule.cooldownSec ?? 0) * 1000;
+        if (cooldownMs > 0) {
+            const key = `${rule.id}::${doc.uri.toString()}`;
+            const last = state.lastFireMap.get(key) ?? 0;
+            const elapsed = now - last;
+            if (elapsed < cooldownMs) {
+                const remainingSec = Math.ceil((cooldownMs - elapsed) / 1000);
+                vscode.window.setStatusBarMessage(
+                    `auto-trigger: ${rule.id} cooling (${remainingSec}s)`,
+                    3000,
+                );
+                continue;
+            }
+        }
+
+        // Per-IDE hourly quota: hard cap on auto-triggered dispatches per rolling hour.
+        state.recentFires = state.recentFires.filter((t) => now - t < 3600_000);
+        if (state.recentFires.length >= state.maxPerHour) {
+            if (state.warnOnQuota && !state.quotaWarned) {
+                vscode.window.showWarningMessage(
+                    `Auto-trigger quota reached (${state.maxPerHour}/hr). New triggers silently dropped until window resets.`,
+                );
+                state.quotaWarned = true;
+                // Re-warn at most every minute so the user isn't spammed.
+                setTimeout(() => {
+                    state.quotaWarned = false;
+                }, 60_000);
+            }
+            continue;
+        }
+
+        // Commit cost-protection counters before fanning out to targets.
+        if (cooldownMs > 0) {
+            state.lastFireMap.set(`${rule.id}::${doc.uri.toString()}`, now);
+        }
+        state.recentFires.push(now);
 
         const targets = Array.isArray(rule.send_to) ? rule.send_to : [rule.send_to];
         for (const target of targets) {

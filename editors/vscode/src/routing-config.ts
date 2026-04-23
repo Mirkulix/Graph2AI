@@ -24,6 +24,8 @@ export interface Rule {
     prompt: string;
     intent?: string;
     enabled?: boolean;
+    /** Minimum seconds between successive fires of this rule for the same file. Default 0 (no cooldown). */
+    cooldownSec?: number;
 }
 
 export interface RoutingConfig {
@@ -168,6 +170,15 @@ function validateRule(raw: unknown, idx: number): string[] {
     }
     if (raw.enabled !== undefined && typeof raw.enabled !== 'boolean') {
         errs.push(`${at}.enabled: must be a boolean when present`);
+    }
+    if (raw.cooldownSec !== undefined) {
+        if (
+            typeof raw.cooldownSec !== 'number' ||
+            !Number.isFinite(raw.cooldownSec) ||
+            raw.cooldownSec < 0
+        ) {
+            errs.push(`${at}.cooldownSec: must be a non-negative finite number when present`);
+        }
     }
     return errs;
 }

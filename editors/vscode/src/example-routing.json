@@ -11,7 +11,8 @@
       },
       "send_to": "developer",
       "prompt": "Review this Rust file for clarity, error handling, and unused code. Be brief — bullet points only.",
-      "intent": "Execute"
+      "intent": "Execute",
+      "cooldownSec": 30
     },
     {
       "id": "todo-comment-handler",
