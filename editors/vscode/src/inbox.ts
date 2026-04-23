@@ -243,8 +243,13 @@ export class QlmsInbox {
             from: this.opts.identity,
             to: toName,
             graph,
-            intent: 'Result',
         });
+        // Rust enum MessageIntent::Result is a struct variant — must be the
+        // {Result: {original_message_id}} object, NOT the bare string 'Result'.
+        // The string form gets a 422 from /qlms/v1.1/reply.
+        (reply as unknown as { intent: unknown }).intent = {
+            Result: { original_message_id: originalId ?? 0 },
+        };
         if (originalId !== null) {
             (reply as unknown as { in_reply_to: number | null }).in_reply_to = originalId;
         }
