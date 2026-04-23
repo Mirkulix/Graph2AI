@@ -36,6 +36,8 @@ export interface BusMessage {
   ts?: string;
   signed?: boolean;
   signature_verified?: boolean;
+  content?: string;
+  is_reply?: boolean;
 }
 
 export interface ProviderTemplate {
@@ -106,7 +108,22 @@ export const api = {
 
   // Messages / bus
   busStats:        () => get<BusStats>('/api/messages/stats'),
-  busAgents:       () => get<AgentInfo[]>('/api/messages/agents'),
+  // Backend currently returns Vec<String> (just names). Normalize to AgentInfo[].
+  busAgents:       async (): Promise<AgentInfo[]> => {
+                     const raw = await get<unknown>('/api/messages/agents');
+                     if (!Array.isArray(raw)) return [];
+                     return raw.map((entry): AgentInfo => {
+                       if (typeof entry === 'string') return { name: entry, online: true };
+                       const obj = entry as Record<string, unknown>;
+                       return {
+                         name: typeof obj.name === 'string' ? obj.name : String(obj),
+                         role: typeof obj.role === 'string' ? obj.role : undefined,
+                         online: obj.online !== false,
+                         mailbox_size: typeof obj.mailbox_size === 'number' ? obj.mailbox_size : undefined,
+                         capabilities: Array.isArray(obj.capabilities) ? obj.capabilities as string[] : undefined,
+                       };
+                     });
+                   },
   conversations:   () => get<Conversation[]>('/api/messages/conversations'),
 
   // QLMS bridge — sign + deliver

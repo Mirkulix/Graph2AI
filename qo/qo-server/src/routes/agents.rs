@@ -49,7 +49,7 @@ pub struct AgentModelsResponse {
 pub async fn list_agent_models(
     State(state): State<Arc<AppState>>,
 ) -> Json<AgentModelsResponse> {
-    let stats = state.llm.provider_stats();
+    let stats = state.llm.provider_stats().await;
     // Map provider names to their live model string.
     let lookup_model = |tier: &str| -> (String, &'static str) {
         let (name_match, fallback_name) = match tier {

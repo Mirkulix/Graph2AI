@@ -37,3 +37,7 @@ data/swarm-node-*/
 # build artifacts
 editors/vscode/*.vsix
 
+
+# playwright test artifacts
+cockpit-*.png
+.playwright-mcp/

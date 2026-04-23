@@ -26,6 +26,38 @@ pub enum ProviderType {
     Custom,
 }
 
+impl ProviderType {
+    /// Lower-case wire string used by `LlmRouter::install_provider` to
+    /// route to the right tier. Keep in sync with the match in
+    /// `router::LlmRouter::install_provider`.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ProviderType::Groq => "groq",
+            ProviderType::OpenAI => "openai",
+            ProviderType::Anthropic => "anthropic",
+            ProviderType::DeepSeek => "deepseek",
+            ProviderType::Gemini => "gemini",
+            ProviderType::Ollama => "ollama",
+            ProviderType::OpenRouter => "openrouter",
+            ProviderType::Mistral => "mistral",
+            ProviderType::Custom => "custom",
+        }
+    }
+}
+
+impl ProviderTemplate {
+    /// Convenience accessor used by routes that hot-reload providers.
+    pub fn provider_type_str(&self) -> &'static str {
+        self.provider_type.as_str()
+    }
+}
+
+impl ProviderConfig {
+    pub fn provider_type_str(&self) -> &'static str {
+        self.provider_type.as_str()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderTemplate {
     pub id: &'static str,

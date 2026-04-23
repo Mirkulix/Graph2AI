@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Send, Shield, ShieldOff } from 'lucide-react';
+import { Radio, Send, Shield, ShieldOff } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { api, type BusMessage, nameOf, intentOf, bytesToHex } from '../lib/api';
 import GraphThumbnail from './GraphThumbnail';
 
@@ -53,9 +55,17 @@ export default function ConversationPane({ selectedAgent, liveTail, onOpenGraph,
         {visible.length === 0 ? (
           <EmptyState selectedAgent={selectedAgent} />
         ) : (
-          visible.map((m, i) => (
-            <MessageCard key={`${m.id ?? i}-${i}`} msg={m} onOpenGraph={onOpenGraph} />
-          ))
+          <>
+            <div style={liveBannerStyle}>
+              <Radio size={10} strokeWidth={2.2} style={{ color: 'var(--cta)' }} />
+              <span style={{ color: 'var(--cta)', fontWeight: 600, letterSpacing: 0.06 }}>LIVE STREAM</span>
+              <span style={{ color: 'var(--ink-faint)' }}>·</span>
+              <span>this view shows messages received since the cockpit opened. Reload clears the view.</span>
+            </div>
+            {visible.map((m, i) => (
+              <MessageCard key={`${m.id ?? i}-${i}`} msg={m} onOpenGraph={onOpenGraph} />
+            ))}
+          </>
         )}
       </div>
 
@@ -108,6 +118,10 @@ function MessageCard({ msg, onOpenGraph }: { msg: BusMessage; onOpenGraph: (m: B
         )}
       </header>
 
+      {msg.content && msg.content.trim().length > 0 && (
+        <MessageContent content={msg.content} isReply={msg.is_reply === true} />
+      )}
+
       {msg.graph != null && (
         <div style={{ marginTop: 10 }}>
           <GraphThumbnail graph={msg.graph} onClick={() => onOpenGraph(msg)} />
@@ -120,6 +134,24 @@ function MessageCard({ msg, onOpenGraph }: { msg: BusMessage; onOpenGraph: (m: B
         </div>
       )}
     </article>
+  );
+}
+
+function MessageContent({ content, isReply }: { content: string; isReply: boolean }) {
+  if (isReply) {
+    return (
+      <div style={replyContentStyle}>
+        <div className="md-reply" style={{ fontSize: 13, lineHeight: 1.55, color: 'var(--ink-bright)' }}>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div style={promptContentStyle}>
+      <div className="eyebrow" style={{ color: 'var(--ink-faint)', marginBottom: 4 }}>prompt</div>
+      <pre style={promptPreStyle}>{content}</pre>
+    </div>
   );
 }
 
@@ -331,4 +363,47 @@ const composerStyle: React.CSSProperties = {
   borderTop: '1px solid var(--rule-default)',
   background: 'var(--bg-deep)',
   flexShrink: 0,
+};
+
+const liveBannerStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  fontSize: 10,
+  fontFamily: 'var(--font-mono)',
+  color: 'var(--ink-muted)',
+  padding: '6px 10px',
+  borderRadius: 3,
+  background: 'var(--cta-soft)',
+  border: '1px solid var(--rule-faint)',
+  marginBottom: 4,
+  flexShrink: 0,
+};
+
+const replyContentStyle: React.CSSProperties = {
+  marginTop: 10,
+  padding: '8px 12px',
+  borderLeft: '3px solid var(--cta)',
+  background: 'var(--cta-soft)',
+  borderRadius: '0 4px 4px 0',
+  maxHeight: 280,
+  overflowY: 'auto',
+};
+
+const promptContentStyle: React.CSSProperties = {
+  marginTop: 10,
+  padding: '6px 10px',
+  borderLeft: '2px solid var(--rule-default)',
+  maxHeight: 280,
+  overflowY: 'auto',
+};
+
+const promptPreStyle: React.CSSProperties = {
+  margin: 0,
+  fontFamily: 'var(--font-mono)',
+  fontSize: 11,
+  lineHeight: 1.5,
+  color: 'var(--ink-muted)',
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-word',
 };

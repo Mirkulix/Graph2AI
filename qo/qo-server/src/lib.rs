@@ -155,6 +155,28 @@ pub async fn build_app(
         configured_providers.len()
     );
 
+    // Inject persisted providers into the live LlmRouter so a UI-added
+    // key (e.g. DeepSeek) survives a restart of `qo --offline` even
+    // when no DEEPSEEK_API_KEY env var is set.
+    for cfg in &configured_providers {
+        if let Err(e) = llm
+            .install_provider(
+                cfg.provider_type_str(),
+                cfg.api_key.clone(),
+                cfg.base_url.clone(),
+                Some(cfg.model.clone()),
+            )
+            .await
+        {
+            tracing::warn!(
+                "startup: provider {} (type {}) not hot-reloaded: {}",
+                cfg.id,
+                cfg.provider_type_str(),
+                e
+            );
+        }
+    }
+
     tracing::info!("Restored: {} goals",
         agents_reg.list_goals().len(),
     );

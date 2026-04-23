@@ -27,7 +27,7 @@ pub struct CostSummaryResponse {
 }
 
 pub async fn list_providers(State(state): State<Arc<AppState>>) -> Json<ProvidersResponse> {
-    let providers = state.llm.provider_stats();
+    let providers = state.llm.provider_stats().await;
     let total_cost = state.llm.total_cost();
     let total_requests: u64 = providers.iter().map(|p| p.requests).sum();
 
@@ -39,7 +39,7 @@ pub async fn list_providers(State(state): State<Arc<AppState>>) -> Json<Provider
 }
 
 pub async fn cost_summary(State(state): State<Arc<AppState>>) -> Json<CostSummaryResponse> {
-    let providers = state.llm.provider_stats();
+    let providers = state.llm.provider_stats().await;
 
     let groq_cost = providers
         .iter()
@@ -106,7 +106,7 @@ pub async fn list_configured(
     let mut result = Vec::new();
 
     // Include runtime providers (from env vars) as editable entries
-    let runtime_stats = state.llm.provider_stats();
+    let runtime_stats = state.llm.provider_stats().await;
     for rs in &runtime_stats {
         // Skip "coming soon" providers
         if rs.status == "coming_soon" {
@@ -212,6 +212,21 @@ pub async fn add_provider(
         .store
         .save_provider(&config.id, &json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Hot-reload: inject the new provider into the live LlmRouter so
+    // it's reachable immediately, without restarting `qo`.
+    if let Err(e) = state
+        .llm
+        .install_provider(
+            template.provider_type_str(),
+            config.api_key.clone(),
+            config.base_url.clone(),
+            Some(config.model.clone()),
+        )
+        .await
+    {
+        tracing::warn!("provider {} saved but not hot-reloaded: {}", config.id, e);
+    }
 
     Ok(Json(AddProviderResponse {
         id: config.id,
@@ -343,6 +358,26 @@ pub async fn toggle_provider(
         .save_provider(&id, &updated_json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    // Hot-reload: install or evict the live client to match the new
+    // enabled state.
+    let ptype = config.provider_type_str();
+    if config.enabled {
+        if let Err(e) = state
+            .llm
+            .install_provider(
+                ptype,
+                config.api_key.clone(),
+                config.base_url.clone(),
+                Some(config.model.clone()),
+            )
+            .await
+        {
+            tracing::warn!("provider {} toggle: not hot-reloaded: {}", id, e);
+        }
+    } else {
+        state.llm.remove_provider(ptype).await;
+    }
+
     Ok(Json(serde_json::json!({ "id": id, "enabled": config.enabled })))
 }
 
@@ -391,6 +426,25 @@ pub async fn update_provider(
         .save_provider(&id, &updated_json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    // Hot-reload: re-install (or evict) the live client to reflect the edit.
+    let ptype = config.provider_type_str();
+    if config.enabled {
+        if let Err(e) = state
+            .llm
+            .install_provider(
+                ptype,
+                config.api_key.clone(),
+                config.base_url.clone(),
+                Some(config.model.clone()),
+            )
+            .await
+        {
+            tracing::warn!("provider {} edit: not hot-reloaded: {}", id, e);
+        }
+    } else {
+        state.llm.remove_provider(ptype).await;
+    }
+
     Ok(Json(serde_json::json!({
         "id": id,
         "name": config.name,
@@ -404,9 +458,24 @@ pub async fn delete_provider(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
+    // Look up the provider type before deleting so we know which live
+    // tier to evict. If the row is already gone, just no-op.
+    let provider_type = state
+        .store
+        .get_provider(&id)
+        .ok()
+        .flatten()
+        .and_then(|json| serde_json::from_str::<qo_llm::ProviderConfig>(&json).ok())
+        .map(|cfg| cfg.provider_type_str());
+
     state
         .store
         .delete_provider(&id)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if let Some(ptype) = provider_type {
+        state.llm.remove_provider(ptype).await;
+    }
+
     Ok(StatusCode::NO_CONTENT)
 }
