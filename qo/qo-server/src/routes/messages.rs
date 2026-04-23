@@ -40,6 +40,14 @@ struct MessageEvent {
     /// Convenience flag for IDE inboxes — true when this is an agent reply.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     is_reply: bool,
+    /// Whether this message was sent by an automatic trigger (e.g. file save)
+    /// rather than a manual user action. Read from graph.metadata["auto_triggered"].
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    auto_triggered: bool,
+    /// What kind of trigger fired this message. Empty string when not auto-triggered.
+    /// Examples: "on_save", "on_change", "on_test_fail", "on_commit", "scheduled".
+    #[serde(skip_serializing_if = "String::is_empty")]
+    trigger_kind: String,
 }
 
 /// GET /api/messages/stats — Message bus statistics.
@@ -86,6 +94,12 @@ pub async fn bus_stream(
                 if c.len() > 4096 { format!("{}…", &c[..4096]) } else { c.clone() }
             })
             .unwrap_or_default();
+        let auto_triggered = msg.graph.metadata.get("auto_triggered")
+            .map(|v| v == "true" || v == "1")
+            .unwrap_or(false);
+        let trigger_kind = msg.graph.metadata.get("trigger_kind")
+            .cloned()
+            .unwrap_or_default();
         let ev = MessageEvent {
             id: msg.id,
             from: msg.from.name.clone(),
@@ -98,6 +112,8 @@ pub async fn bus_stream(
                 .as_secs(),
             content,
             is_reply,
+            auto_triggered,
+            trigger_kind,
         };
         let json = serde_json::to_string(&ev).unwrap_or_default();
         Ok(Event::default().data(json))

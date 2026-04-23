@@ -1,0 +1,37 @@
+{
+  "$schema": "https://orbitqlang.dev/routing.schema.json",
+  "version": 1,
+  "rules": [
+    {
+      "id": "rust-on-save-review",
+      "trigger": "on_save",
+      "when": {
+        "languageId": "rust",
+        "minLines": 20
+      },
+      "send_to": "developer",
+      "prompt": "Review this Rust file for clarity, error handling, and unused code. Be brief — bullet points only.",
+      "intent": "Execute"
+    },
+    {
+      "id": "todo-comment-handler",
+      "trigger": "on_save",
+      "when": {
+        "contentMatches": "//\\s*TODO|#\\s*TODO"
+      },
+      "send_to": "artisan",
+      "prompt": "I've left TODO comments in this file. Suggest concrete implementations for each, ordered by priority.",
+      "intent": "Execute"
+    },
+    {
+      "id": "security-words-on-save",
+      "trigger": "on_save",
+      "when": {
+        "contentMatches": "auth|password|token|secret|encrypt"
+      },
+      "send_to": "guardian",
+      "prompt": "This file touches security-sensitive code. List concrete vulnerabilities and required mitigations.",
+      "intent": "Execute"
+    }
+  ]
+}

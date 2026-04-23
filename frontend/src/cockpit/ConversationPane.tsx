@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Radio, Send, Shield, ShieldOff } from 'lucide-react';
+import { Radio, Send, Shield, ShieldOff, Zap } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api, type BusMessage, nameOf, intentOf, bytesToHex } from '../lib/api';
@@ -86,7 +86,10 @@ function MessageCard({ msg, onOpenGraph }: { msg: BusMessage; onOpenGraph: (m: B
   const verified = msg.signature_verified !== false; // default true if signed
 
   return (
-    <article style={cardStyle}>
+    <article style={{
+      ...cardStyle,
+      borderLeft: msg.auto_triggered ? '3px solid var(--warn)' : cardStyle.borderLeft,
+    }}>
       <header style={cardHeaderStyle}>
         <span style={{ fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 500, color: 'var(--ink-bright)' }}>
           {from}
@@ -97,6 +100,18 @@ function MessageCard({ msg, onOpenGraph }: { msg: BusMessage; onOpenGraph: (m: B
         </span>
 
         <span style={intentBadgeStyle}>{intent}</span>
+
+        {msg.auto_triggered && (
+          <span style={autoTriggerBadgeStyle} title={`Sent automatically by trigger: ${msg.trigger_kind || 'unknown'}`}>
+            <Zap size={9} strokeWidth={2.2} />
+            auto
+            {msg.trigger_kind && (
+              <span style={{ marginLeft: 4, opacity: 0.75, fontFamily: 'var(--font-mono)' }}>
+                · {msg.trigger_kind}
+              </span>
+            )}
+          </span>
+        )}
 
         {isSigned ? (
           <span className={verified ? 'shield-mark' : 'shield-mark shield-mark--invalid'}>
@@ -356,6 +371,20 @@ const intentBadgeStyle: React.CSSProperties = {
   background: 'var(--process-soft)',
   padding: '2px 6px',
   borderRadius: 2,
+};
+
+const autoTriggerBadgeStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 4,
+  padding: '2px 7px',
+  fontSize: 10,
+  fontWeight: 500,
+  borderRadius: 999,
+  background: 'var(--warn-soft)',
+  color: 'var(--warn)',
+  letterSpacing: 0.04,
+  textTransform: 'uppercase',
 };
 
 const composerStyle: React.CSSProperties = {

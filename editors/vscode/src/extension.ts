@@ -4,6 +4,7 @@ import { randomBytes } from 'crypto';
 import { QlmsClient, QlmsConnectionReport } from './qlms-client';
 import { QlmsInbox, openAsJson, labelOf } from './inbox';
 import { startLanguageServer, QlangLspHandle } from './lsp';
+import { startTriggers } from './triggers';
 
 const QLMS_CONFIG_SECTION = 'qlang.qlms';
 const QLANG_CONFIG_SECTION = 'qlang';
@@ -30,6 +31,7 @@ export function activate(context: vscode.ExtensionContext) {
     registerQlmsCheck(context);
     startLspIfEnabled(context);
     startInboxIfEnabled(context, identity);
+    startTriggersIfEnabled(context, identity);
     startPresence(context, identity);
 
     vscode.window.showInformationMessage(
@@ -649,4 +651,23 @@ function startInboxIfEnabled(context: vscode.ExtensionContext, identity: string)
             if (pick) openAsJson(pick.msg);
         }),
     );
+}
+
+// ---------------------------------------------------------------------------
+// Auto-triggers (sender side: VS Code events → QLMS handovers)
+// ---------------------------------------------------------------------------
+
+/** Loads `.qlang/routing.json` and dispatches handovers when editor events match. */
+function startTriggersIfEnabled(
+    context: vscode.ExtensionContext,
+    identity: string,
+): void {
+    const cfg = vscode.workspace.getConfiguration(QLMS_CONFIG_SECTION);
+    const baseUrl = cfg.get<string>('baseUrl', 'http://localhost:4646');
+    const authToken = cfg.get<string>('authToken') || undefined;
+    const seedHex = resolveSeedHex(context);
+    const handle = startTriggers(context, identity, baseUrl, authToken, seedHex);
+    if (handle) {
+        context.subscriptions.push({ dispose: () => handle.dispose() });
+    }
 }

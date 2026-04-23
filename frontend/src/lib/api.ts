@@ -38,6 +38,8 @@ export interface BusMessage {
   signature_verified?: boolean;
   content?: string;
   is_reply?: boolean;
+  auto_triggered?: boolean;
+  trigger_kind?: string;
 }
 
 export interface ProviderTemplate {

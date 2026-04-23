@@ -155,6 +155,21 @@
           "type": "string",
           "default": "",
           "description": "Optional system prompt prepended to every auto-response. Empty = a generic helpful-assistant prompt."
+        },
+        "qlang.qlms.triggers.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable automatic QLMS handovers from VS Code events (file save, change, open) based on .qlang/routing.json. OFF by default — opt-in feature."
+        },
+        "qlang.qlms.triggers.debounceMs": {
+          "type": "number",
+          "default": 2000,
+          "description": "Debounce window in milliseconds for on_change triggers. Lower = more responsive but more API calls."
+        },
+        "qlang.qlms.triggers.maxConcurrent": {
+          "type": "number",
+          "default": 3,
+          "description": "Maximum concurrent auto-triggered dispatches. Excess events are dropped silently."
         }
       }
     }
