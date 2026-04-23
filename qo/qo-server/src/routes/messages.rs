@@ -1,8 +1,8 @@
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::Json;
 use futures::stream::Stream;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use std::sync::Arc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -120,4 +120,30 @@ pub async fn bus_stream(
     });
 
     Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+#[derive(Deserialize, Default)]
+pub struct RecentQuery {
+    #[serde(default = "default_limit")]
+    pub n: usize,
+}
+
+fn default_limit() -> usize {
+    50
+}
+
+/// GET /api/messages/recent?n=50 — returns the last N bus messages from
+/// the server-side ring buffer (cross-machine cockpit hydration). The
+/// per-request cap matches the ring capacity (200) to bound payload size;
+/// `n` is also clamped to a minimum of 1.
+pub async fn recent_messages(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<RecentQuery>,
+) -> Json<Vec<crate::RecentMessage>> {
+    let buf = state.recent_messages.lock().await;
+    let n = q.n.clamp(1, 200);
+    let len = buf.len();
+    let start = if len > n { len - n } else { 0 };
+    let slice: Vec<_> = buf.iter().skip(start).cloned().collect();
+    Json(slice)
 }

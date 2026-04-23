@@ -5,7 +5,7 @@
 // gives the user a populated thread on first paint instead of an empty view.
 // Survives F5; resets when the user clears browser data.
 
-import type { BusMessage } from './api';
+import { api, type BusMessage } from './api';
 
 const STORAGE_KEY = 'qo.cockpit.liveTail.v1';
 const CAP = 100;
@@ -36,5 +36,21 @@ export function clearTail(): void {
     localStorage.removeItem(STORAGE_KEY);
   } catch {
     // ignore
+  }
+}
+
+// Server-first hydration helper: pulls the recent bus tail from the QO
+// backend ring buffer (cap 200, populated by a background subscriber).
+// Falls back to the localStorage snapshot if the network call fails so
+// the cockpit still shows *something* on first paint when offline.
+//
+// NOTE: App.tsx still uses the synchronous loadTail() for its initial
+// state — this helper is intended for an async post-mount refresh that
+// a follow-up commit can wire up.
+export async function loadTailFromServer(): Promise<BusMessage[]> {
+  try {
+    return await api.recentMessages(100);
+  } catch {
+    return loadTail();
   }
 }

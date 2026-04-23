@@ -18,11 +18,30 @@ use tokio::sync::broadcast;
 
 use crate::peer_discovery::FederationStatsHandle;
 use crate::routes::dashboard::GraphEvent;
-use std::collections::HashMap;
+use serde::Serialize;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
+
+/// Snapshot of a single bus message stored in the server-side ring buffer.
+/// Mirrors the shape emitted by `/api/messages/stream` so the cockpit can
+/// hydrate its liveTail from `/api/messages/recent` without a separate
+/// adapter. `content` is capped at 4 KB (suffix-elided with `…`).
+#[derive(Debug, Clone, Serialize)]
+pub struct RecentMessage {
+    pub id: u64,
+    pub from: String,
+    pub to: String,
+    pub intent: String,
+    pub graph_name: String,
+    pub timestamp: u64,
+    pub content: String,
+    pub is_reply: bool,
+    pub auto_triggered: bool,
+    pub trigger_kind: String,
+}
 
 pub struct AppState {
     pub llm: Arc<LlmRouter>,
@@ -54,6 +73,10 @@ pub struct AppState {
     /// Mutated by `/api/presence/*` handlers; swept by a background
     /// task that removes expired entries every 30s.
     pub presence: Mutex<HashMap<String, routes::presence::PresenceEntry>>,
+    /// Bounded ring buffer of recent bus messages (cap 200) — populated by
+    /// a background task that subscribes to `message_bus`. Read by
+    /// `/api/messages/recent` for cross-machine cockpit hydration.
+    pub recent_messages: Mutex<VecDeque<RecentMessage>>,
 }
 
 pub struct QoConfig {
@@ -209,7 +232,67 @@ pub async fn build_app(
         graph_events_tx: broadcast::channel::<GraphEvent>(256).0,
         gossip_stats: peer_discovery::new_stats_handle(std::time::Duration::from_secs(10)),
         presence: Mutex::new(HashMap::new()),
+        recent_messages: Mutex::new(VecDeque::new()),
     });
+
+    // Background drain: subscribe to the bus and append every message to
+    // the bounded ring (cap 200). Lets `/api/messages/recent` hydrate the
+    // cockpit on a fresh machine where localStorage is empty. The task
+    // exits only when the bus is dropped (i.e. process shutdown).
+    {
+        let recent_state = state.clone();
+        tokio::spawn(async move {
+            let mut rx = recent_state.message_bus.subscribe().await;
+            while let Some(msg) = rx.recv().await {
+                let intent = format!("{:?}", msg.intent);
+                let is_reply = intent.starts_with("Result");
+                let content = msg
+                    .graph
+                    .metadata
+                    .get("content")
+                    .map(|c| {
+                        if c.len() > 4096 {
+                            format!("{}…", &c[..4096])
+                        } else {
+                            c.clone()
+                        }
+                    })
+                    .unwrap_or_default();
+                let auto_triggered = msg
+                    .graph
+                    .metadata
+                    .get("auto_triggered")
+                    .map(|v| v == "true" || v == "1")
+                    .unwrap_or(false);
+                let trigger_kind = msg
+                    .graph
+                    .metadata
+                    .get("trigger_kind")
+                    .cloned()
+                    .unwrap_or_default();
+                let entry = RecentMessage {
+                    id: msg.id,
+                    from: msg.from.name.clone(),
+                    to: msg.to.name.clone(),
+                    intent,
+                    graph_name: msg.graph.id.clone(),
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                    content,
+                    is_reply,
+                    auto_triggered,
+                    trigger_kind,
+                };
+                let mut buf = recent_state.recent_messages.lock().await;
+                buf.push_back(entry);
+                while buf.len() > 200 {
+                    buf.pop_front();
+                }
+            }
+        });
+    }
 
     // Spawn the presence sweeper — evicts expired IDE/agent entries
     // every 30s. Runs for the life of the process.
@@ -667,6 +750,7 @@ pub async fn build_app(
         .route("/api/messages/agents", get(routes::messages::bus_agents))
         .route("/api/messages/conversations", get(routes::messages::bus_conversations))
         .route("/api/messages/stream", get(routes::messages::bus_stream))
+        .route("/api/messages/recent", get(routes::messages::recent_messages))
         .route("/api/supervisor/state", get(routes::supervisor::state))
         .route("/api/supervisor/logs", get(routes::supervisor::logs))
         .route("/api/supervisor/console", get(routes::supervisor::console))
