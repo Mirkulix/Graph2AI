@@ -5,13 +5,13 @@ import AgentsPane from './cockpit/AgentsPane';
 import ConversationPane from './cockpit/ConversationPane';
 import DetailPane, { type DetailContext } from './cockpit/DetailPane';
 import ProfileMenu, { type SecondaryView } from './cockpit/ProfileMenu';
-import FederationView from './cockpit/secondary/FederationView';
-import WerteRadar from './cockpit/secondary/WerteRadar';
 import HardwareView from './cockpit/secondary/HardwareView';
-import Knowledge3DView from './cockpit/secondary/Knowledge3DView';
+import KnowledgeView from './cockpit/secondary/KnowledgeView';
 import SettingsView from './cockpit/secondary/SettingsView';
+import AutonomousRunsView from './cockpit/secondary/AutonomousRunsView';
+import SwarmPane from './cockpit/SwarmPane';
 import { subscribeSSE, throttle } from './lib/sse';
-import { api, type BusMessage, nameOf } from './lib/api';
+import { api, type BusMessage, type AutonomousState, nameOf } from './lib/api';
 import { loadTail, saveTail } from './lib/history';
 
 const TAIL_CAP = 200;
@@ -39,6 +39,49 @@ export default function App() {
 
   // Agents list (passed to composer for picker)
   const [agentNames, setAgentNames] = useState<string[]>([]);
+
+  // Autonomous mode global state — polled here for the safety banner
+  const [autonomous, setAutonomous] = useState<AutonomousState | null>(null);
+  const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
+
+  // ─── Open Knowledge view via custom event (from IDE detail) ─────
+  useEffect(() => {
+    function onOpenKnowledge() {
+      setSecondary('knowledge3d');
+      setMenuOpen(false);
+    }
+    window.addEventListener('orbit:open-knowledge', onOpenKnowledge as EventListener);
+    return () => window.removeEventListener('orbit:open-knowledge', onOpenKnowledge as EventListener);
+  }, []);
+
+  // ─── Autonomous mode poll (every 5s) for global banner ─────────
+  useEffect(() => {
+    let alive = true;
+    const load = () => {
+      api.autonomousStatus()
+        .then(s => { if (alive) setAutonomous(s); })
+        .catch(() => { if (alive) setAutonomous(null); });
+    };
+    load();
+    const t = setInterval(load, 5000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
+
+  // 1Hz tick so the banner countdown ticks
+  useEffect(() => {
+    if (!autonomous?.enabled) return;
+    const t = setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 1000);
+    return () => clearInterval(t);
+  }, [autonomous?.enabled]);
+
+  async function stopAutonomous() {
+    try {
+      const s = await api.autonomousStop();
+      setAutonomous(s);
+    } catch {
+      // best-effort; the panel inside SwarmPane will surface errors
+    }
+  }
 
   // ─── Health ping ─────────────────────────────────────────────────
   useEffect(() => {
@@ -132,6 +175,10 @@ export default function App() {
         BUILD · SWISS-V1 · 2026-04-22
       </div>
 
+      {autonomous?.enabled && (
+        <AutonomousBanner state={autonomous} nowSec={nowSec} onStop={() => void stopAutonomous()} />
+      )}
+
       <TopBar
         online={online}
         onProfileClick={() => setMenuOpen(o => !o)}
@@ -194,11 +241,11 @@ function SecondaryHost({ view, onBack }: { view: SecondaryView; onBack: () => vo
         <span className="eyebrow" style={{ marginLeft: 8 }}>secondary view · {view}</span>
       </div>
       <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-        {view === 'federation'  && <FederationView />}
-        {view === 'werte'       && <WerteRadar />}
-        {view === 'hardware'    && <HardwareView />}
-        {view === 'knowledge3d' && <Knowledge3DView />}
-        {view === 'settings'    && <SettingsView />}
+        {view === 'hardware'        && <HardwareView />}
+        {view === 'knowledge3d'     && <KnowledgeView />}
+        {view === 'swarm'           && <SwarmPane />}
+        {view === 'autonomous-runs' && <AutonomousRunsView />}
+        {view === 'settings'        && <SettingsView />}
       </div>
     </div>
   );
@@ -218,4 +265,96 @@ const bodyStyle: React.CSSProperties = {
   display: 'flex',
   minHeight: 0,
   overflow: 'hidden',
+};
+
+// ─── Global autonomous-mode banner ──────────────────────────────────
+
+function AutonomousBanner({ state, nowSec, onStop }: { state: AutonomousState; nowSec: number; onStop: () => void }) {
+  const paused = !!state.paused_reason;
+  const remaining = state.next_swarm_at != null ? Math.max(0, state.next_swarm_at - nowSec) : null;
+  const countdown = remaining != null ? formatBannerCountdown(remaining) : '—';
+  const spent = state.spent_today_usd ?? 0;
+  const cap = state.config?.daily_budget_usd ?? 0;
+
+  return (
+    <div style={paused ? bannerPausedStyle : bannerActiveStyle} role="alert" aria-live="polite">
+      <span style={{
+        width: 8, height: 8, borderRadius: '50%',
+        background: paused ? 'var(--danger)' : 'var(--ok)',
+        boxShadow: paused ? '0 0 8px var(--danger)' : '0 0 8px var(--ok)',
+        animation: paused ? 'none' : 'banner-pulse 1.4s ease-in-out infinite',
+        flexShrink: 0,
+      }} />
+      <span style={{ fontWeight: 700, letterSpacing: 0.04 }}>
+        {paused ? 'AUTONOMOUS PAUSED' : 'AUTONOMOUS MODE ACTIVE'}
+      </span>
+      {paused ? (
+        <span style={{ marginLeft: 4 }}>— {state.paused_reason}</span>
+      ) : (
+        <>
+          <span style={{ color: 'var(--ink-muted)' }}>—</span>
+          <span>next swarm in <strong style={{ color: 'var(--ink-bright)' }}>{countdown}</strong></span>
+          <span style={{ color: 'var(--ink-muted)' }}>—</span>
+          <span>spent today <strong style={{ color: 'var(--ink-bright)' }}>${spent.toFixed(4)} / ${cap.toFixed(2)}</strong></span>
+          {state.current_swarm_id != null && (
+            <>
+              <span style={{ color: 'var(--ink-muted)' }}>—</span>
+              <span>active <strong style={{ color: 'var(--ink-bright)' }}>#{state.current_swarm_id}</strong></span>
+            </>
+          )}
+        </>
+      )}
+      <button
+        type="button"
+        onClick={onStop}
+        style={bannerStopStyle}
+        title="stop autonomous mode"
+      >
+        STOP
+      </button>
+      <style>{`@keyframes banner-pulse { 0%,100% { opacity:1 } 50% { opacity:0.4 } }`}</style>
+    </div>
+  );
+}
+
+function formatBannerCountdown(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+}
+
+const bannerActiveStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 10,
+  padding: '8px 16px',
+  background: 'var(--accent-soft)',
+  borderBottom: '2px solid var(--accent)',
+  color: 'var(--ink-bright)',
+  fontFamily: 'var(--font-mono)',
+  fontSize: 12,
+  flexShrink: 0,
+  zIndex: 40,
+};
+
+const bannerPausedStyle: React.CSSProperties = {
+  ...bannerActiveStyle,
+  background: 'var(--danger-soft)',
+  borderBottom: '2px solid var(--danger)',
+  color: 'var(--danger)',
+};
+
+const bannerStopStyle: React.CSSProperties = {
+  marginLeft: 'auto',
+  padding: '4px 14px',
+  fontFamily: 'var(--font-mono)',
+  fontSize: 11,
+  fontWeight: 700,
+  letterSpacing: 0.08,
+  color: 'white',
+  background: 'var(--danger)',
+  border: '1px solid var(--danger)',
+  borderRadius: 3,
+  cursor: 'pointer',
+  flexShrink: 0,
 };

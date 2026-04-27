@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { SecondaryFrame } from './FederationView';
+import { SecondaryFrame } from './SecondaryFrame';
 
 export default function SettingsView() {
   const [token, setToken] = useState(() => localStorage.getItem('qo_auth_token') ?? '');

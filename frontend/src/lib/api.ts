@@ -140,6 +140,96 @@ export interface ConsensusResponse {
   summary: ConsensusSummary;
 }
 
+// ─── Swarm (autonomous multi-agent runs) ────────────────────────────
+
+export type SwarmStatus =
+  | 'planning'
+  | 'dispatching'
+  | 'evaluating'
+  | 'done'
+  | 'stopped'
+  | 'error';
+
+export type SubtaskStatus = 'pending' | 'running' | 'done' | 'error';
+
+export interface SwarmSubtask {
+  id: string;
+  assigned_to: string;
+  prompt: string;
+  response?: string;
+  status: SubtaskStatus;
+  started_at?: number;
+  finished_at?: number;
+}
+
+export interface SwarmRound {
+  round_number: number;
+  plan: string;
+  subtasks: SwarmSubtask[];
+  eval?: string;
+}
+
+export interface SwarmState {
+  id: number;
+  goal: string;
+  status: SwarmStatus;
+  rounds: SwarmRound[];
+  tokens_used: number;
+  cost_usd: number;
+  started_at: number;
+  finished_at?: number;
+  stop_requested: boolean;
+}
+
+// ─── Autonomous mode (always-on swarm scheduler) ────────────────────
+
+export interface AutonomousConfig {
+  interval_seconds: number;
+  daily_budget_usd: number;
+  max_swarms_per_hour: number;
+  goals_queue: string[];
+  meta_agent_enabled: boolean;
+  swarm_max_rounds: number;
+  swarm_max_tokens: number;
+}
+
+export interface AutonomousRun {
+  swarm_id: number;
+  goal: string;
+  goal_source: 'queue' | 'meta-agent';
+  started_at: number;
+  finished_at?: number;
+  cost_usd: number;
+  status: string;
+}
+
+export interface AutonomousState {
+  enabled: boolean;
+  config: AutonomousConfig;
+  started_at?: number;
+  paused_reason?: string;
+  swarms_today: number;
+  spent_today_usd: number;
+  last_swarm_at?: number;
+  next_swarm_at?: number;
+  current_swarm_id?: number;
+  history: AutonomousRun[];
+}
+
+// ─── Git (auto-branches created by overnight swarms) ────────────────
+
+export interface AutoBranchInfo {
+  name: string;             // e.g. "auto/fix-correlation-1745234567"
+  sha: string;              // last commit SHA, short
+  message: string;          // commit subject
+  date: string;             // ISO
+  diff?: { files_changed: number; insertions: number; deletions: number };
+  // Optional: backend may report whether tests passed for this branch.
+  // 'passed' | 'failed' | 'unknown' (or omit). Treated as unknown if missing.
+  tests?: 'passed' | 'failed' | 'unknown';
+  tests_detail?: string;    // short note, e.g. "cargo build: linker error"
+}
+
 async function jsonRequest<T>(method: string, path: string, body?: unknown): Promise<T> {
   const resp = await fetch(path, {
     method,
@@ -246,6 +336,34 @@ export const api = {
 
   // Hardware (Neo legacy — useful endpoint)
   hardware:        () => get<{ cpu?: { model?: string; cores?: number; load?: number }; memory?: { total_mb?: number; used_mb?: number }; gpu?: Array<{ name?: string; temp_c?: number; util?: number; mem_mb?: number }> }>('/api/neo/hardware'),
+
+  // Swarm — autonomous multi-agent orchestration
+  swarmStart:      (goal: string, opts?: { maxRounds?: number; maxTokens?: number }) =>
+                     post<{ swarm_id: number }>('/api/swarm/start', {
+                       goal,
+                       max_rounds: opts?.maxRounds,
+                       max_tokens: opts?.maxTokens,
+                     }),
+  swarmGet:        (id: number) => get<SwarmState>(`/api/swarm/${id}`),
+  swarmStop:       (id: number) => post<{ stopped: boolean }>(`/api/swarm/${id}/stop`),
+  swarmActive:     () => get<SwarmState[]>('/api/swarm/active'),
+
+  // Autonomous mode — long-running scheduler that drives swarms automatically
+  autonomousStatus:   () => get<AutonomousState>('/api/autonomous/status'),
+  autonomousStart:    (config: Partial<AutonomousConfig>) =>
+                        post<AutonomousState>('/api/autonomous/start', config),
+  autonomousStop:     () => post<AutonomousState>('/api/autonomous/stop'),
+  autonomousSetQueue: (goals: string[]) =>
+                        put<AutonomousState>('/api/autonomous/queue', { goals }),
+
+  // Git — branches created automatically by overnight swarms
+  gitBranches: () => get<AutoBranchInfo[]>('/api/git/branches'),
+  gitDiff:     (branch: string) =>
+                 get<{ diff: string; truncated: boolean }>(`/api/git/diff/${encodeURIComponent(branch)}`),
+  gitMerge:    (branch: string) =>
+                 post<{ merged: boolean; conflict?: string }>('/api/git/merge', { branch }),
+  gitDiscard:  (branch: string) =>
+                 post<{ discarded: boolean }>('/api/git/discard', { branch }),
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────

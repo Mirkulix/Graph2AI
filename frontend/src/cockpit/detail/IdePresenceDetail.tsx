@@ -1,12 +1,17 @@
-import { useEffect, useState } from 'react';
-import { Cpu, Network, Clock, Sparkles } from 'lucide-react';
-import { api, type PresenceEntry } from '../../lib/api';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Cpu, Network, Clock, Sparkles, MessageSquare, ChevronRight, ChevronDown } from 'lucide-react';
+import { api, intentOf, nameOf, type BusMessage, type PresenceEntry } from '../../lib/api';
 
 interface Props {
   identity: string;
   // If the parent already has the presence list cached, can pass to skip a fetch.
   presenceCache?: PresenceEntry[];
 }
+
+const MSG_POLL_MS = 4000;
+const MSG_TAIL = 30;
+const MSG_FETCH_N = 200;
+const SNIPPET_LEN = 140;
 
 export default function IdePresenceDetail({ identity, presenceCache }: Props) {
   const [entry, setEntry] = useState<PresenceEntry | null>(
@@ -127,6 +132,9 @@ export default function IdePresenceDetail({ identity, presenceCache }: Props) {
         Send a handover to <code style={{ color: 'var(--cta)' }}>{entry.identity}</code> from any IDE
         — this instance will auto-answer using <strong>{entry.llm_provider ?? 'its configured provider'}</strong>.
       </div>
+
+      {/* Recent messages — every bus message touching this identity */}
+      <RecentMessages identity={entry.identity} />
     </div>
   );
 }
@@ -145,3 +153,309 @@ function Row({ label, value, mono }: { label: string; value: string; mono?: bool
     </div>
   );
 }
+
+// ─── Recent messages section ────────────────────────────────────────
+
+function RecentMessages({ identity }: { identity: string }) {
+  const [all, setAll] = useState<BusMessage[]>([]);
+  const [totalMatches, setTotalMatches] = useState(0);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [loaded, setLoaded] = useState(false);
+  const aliveRef = useRef(true);
+
+  useEffect(() => {
+    aliveRef.current = true;
+    setExpanded(new Set());
+    setLoaded(false);
+    const load = async () => {
+      try {
+        const list = await api.recentMessages(MSG_FETCH_N);
+        if (!aliveRef.current) return;
+        const filtered = (list ?? []).filter(m => touches(m, identity));
+        setTotalMatches(filtered.length);
+        setAll(filtered.slice(-MSG_TAIL).reverse());
+        setLoaded(true);
+      } catch {
+        if (!aliveRef.current) return;
+        setLoaded(true);
+        // keep prior state on transient errors
+      }
+    };
+    void load();
+    const t = setInterval(load, MSG_POLL_MS);
+    return () => {
+      aliveRef.current = false;
+      clearInterval(t);
+    };
+  }, [identity]);
+
+  const toggle = (id: string) => {
+    const next = new Set(expanded);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    setExpanded(next);
+  };
+
+  const showCount = all.length;
+
+  function openInKnowledge() {
+    // The Knowledge view uses a search input. We can't deep-link without
+    // adding a router; the simplest, honest behavior is to drop a hint
+    // into sessionStorage and open the menu manually. For now, just emit
+    // a custom event the App can pick up later. Fallback: alert-free no-op
+    // so the button is never broken.
+    window.dispatchEvent(new CustomEvent('orbit:open-knowledge', { detail: { search: identity } }));
+  }
+
+  return (
+    <div style={{ marginTop: 24 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
+        <MessageSquare size={11} strokeWidth={1.6} style={{ color: 'var(--ink-muted)' }} />
+        <span className="eyebrow">
+          recent messages
+        </span>
+        <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink-faint)' }}>
+          {showCount} of {totalMatches}
+        </span>
+      </div>
+
+      {!loaded ? (
+        <div style={msgEmptyStyle}>loading…</div>
+      ) : showCount === 0 ? (
+        <div style={msgEmptyStyle}>
+          No bus messages involving this IDE in the last {MSG_FETCH_N}.
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {all.map((m, idx) => (
+            <MessageRow
+              key={messageKey(m, idx)}
+              message={m}
+              identity={identity}
+              expanded={expanded.has(messageKey(m, idx))}
+              onToggle={() => toggle(messageKey(m, idx))}
+            />
+          ))}
+        </div>
+      )}
+
+      <button
+        type="button"
+        onClick={openInKnowledge}
+        style={knowledgeLinkStyle}
+      >
+        view all in Knowledge →
+      </button>
+    </div>
+  );
+}
+
+interface MsgRowProps {
+  message: BusMessage;
+  identity: string;
+  expanded: boolean;
+  onToggle: () => void;
+}
+
+function MessageRow({ message, identity, expanded, onToggle }: MsgRowProps) {
+  const fromName = nameOf(message.from);
+  const toName = nameOf(message.to);
+  const incoming = toName === identity;
+  const counterpart = incoming ? fromName : toName;
+  const intent = intentOf(message.intent);
+  const auto = !!message.auto_triggered;
+  const content = message.content ?? '';
+  const snippet = useMemo(() => {
+    if (!content) return '';
+    return content.length <= SNIPPET_LEN ? content : content.slice(0, SNIPPET_LEN - 1) + '…';
+  }, [content]);
+  const time = formatMsgTime(message.ts);
+  const expandable = content.length > SNIPPET_LEN;
+
+  return (
+    <div style={msgRowStyle}>
+      <button
+        type="button"
+        onClick={onToggle}
+        style={msgHeaderBtn}
+        aria-expanded={expanded}
+        disabled={!expandable && !content}
+      >
+        {expandable
+          ? (expanded
+              ? <ChevronDown size={11} style={{ color: 'var(--ink-faint)', flexShrink: 0 }} />
+              : <ChevronRight size={11} style={{ color: 'var(--ink-faint)', flexShrink: 0 }} />)
+          : <span style={{ width: 11, flexShrink: 0 }} />}
+        <span style={msgTimeStyle}>{time}</span>
+        <span style={msgArrowStyle(incoming)}>{incoming ? '←' : '→'}</span>
+        <span style={msgCounterpartStyle} title={counterpart}>{truncateName(counterpart)}</span>
+        {intent && <span style={intentBadgeStyle}>{intent}</span>}
+        {auto && <span style={autoBadgeStyle}>AUTO</span>}
+        {snippet && (
+          <span style={msgSnippetStyle} title={content}>"{snippet}"</span>
+        )}
+      </button>
+      {expanded && content && (
+        <pre style={msgFullStyle}>{content}</pre>
+      )}
+    </div>
+  );
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────
+
+function touches(m: BusMessage, identity: string): boolean {
+  return nameOf(m.from) === identity || nameOf(m.to) === identity;
+}
+
+function messageKey(m: BusMessage, idx: number): string {
+  if (m.id != null) return `id-${m.id}`;
+  return `idx-${idx}-${m.ts ?? ''}`;
+}
+
+function truncateName(s: string): string {
+  if (!s) return '?';
+  if (s.length <= 18) return s;
+  return s.slice(0, 8) + '…' + s.slice(-6);
+}
+
+function formatMsgTime(ts: string | undefined): string {
+  if (!ts) return '--:--:--';
+  const d = new Date(ts);
+  if (!Number.isFinite(d.getTime())) return ts.slice(0, 8);
+  const h = d.getHours().toString().padStart(2, '0');
+  const m = d.getMinutes().toString().padStart(2, '0');
+  const s = d.getSeconds().toString().padStart(2, '0');
+  return `${h}:${m}:${s}`;
+}
+
+// ─── Styles for messages section ────────────────────────────────────
+
+const msgEmptyStyle: React.CSSProperties = {
+  padding: '12px 14px',
+  fontSize: 11,
+  color: 'var(--ink-faint)',
+  background: 'var(--bg-raised)',
+  border: '1px dashed var(--rule-faint)',
+  borderRadius: 4,
+  textAlign: 'center',
+};
+
+const msgRowStyle: React.CSSProperties = {
+  background: 'var(--bg-panel)',
+  border: '1px solid var(--rule-faint)',
+  borderRadius: 3,
+  overflow: 'hidden',
+};
+
+const msgHeaderBtn: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  width: '100%',
+  padding: '5px 8px',
+  background: 'transparent',
+  border: 'none',
+  cursor: 'pointer',
+  textAlign: 'left',
+  minHeight: 24,
+};
+
+const msgTimeStyle: React.CSSProperties = {
+  fontFamily: 'var(--font-mono)',
+  fontSize: 10,
+  color: 'var(--ink-faint)',
+  flexShrink: 0,
+  minWidth: 56,
+};
+
+function msgArrowStyle(incoming: boolean): React.CSSProperties {
+  return {
+    fontFamily: 'var(--font-mono)',
+    fontSize: 12,
+    fontWeight: 700,
+    color: incoming ? 'var(--cta)' : 'var(--ok)',
+    flexShrink: 0,
+    width: 12,
+    textAlign: 'center',
+  };
+}
+
+const msgCounterpartStyle: React.CSSProperties = {
+  fontFamily: 'var(--font-mono)',
+  fontSize: 10,
+  color: 'var(--ink-bright)',
+  fontWeight: 600,
+  flexShrink: 0,
+  minWidth: 100,
+  maxWidth: 130,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+};
+
+const intentBadgeStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  padding: '0 5px',
+  fontFamily: 'var(--font-mono)',
+  fontSize: 9,
+  fontWeight: 600,
+  color: 'var(--accent)',
+  background: 'var(--accent-soft)',
+  borderRadius: 2,
+  letterSpacing: 0.04,
+  textTransform: 'uppercase',
+  flexShrink: 0,
+};
+
+const autoBadgeStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  padding: '0 5px',
+  fontFamily: 'var(--font-mono)',
+  fontSize: 9,
+  fontWeight: 700,
+  color: 'var(--cta)',
+  background: 'var(--cta-soft)',
+  borderRadius: 2,
+  letterSpacing: 0.06,
+  flexShrink: 0,
+};
+
+const msgSnippetStyle: React.CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+  fontSize: 11,
+  color: 'var(--ink-muted)',
+  fontStyle: 'italic',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+};
+
+const msgFullStyle: React.CSSProperties = {
+  margin: 0,
+  padding: '8px 10px',
+  fontFamily: 'var(--font-mono)',
+  fontSize: 11,
+  lineHeight: 1.5,
+  color: 'var(--ink-bright)',
+  background: 'var(--bg-raised)',
+  borderTop: '1px solid var(--rule-faint)',
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-word',
+  maxHeight: 240,
+  overflowY: 'auto',
+};
+
+const knowledgeLinkStyle: React.CSSProperties = {
+  marginTop: 8,
+  padding: '4px 10px',
+  fontFamily: 'var(--font-mono)',
+  fontSize: 11,
+  color: 'var(--cta)',
+  background: 'transparent',
+  border: '1px solid var(--cta)',
+  borderRadius: 3,
+  cursor: 'pointer',
+};

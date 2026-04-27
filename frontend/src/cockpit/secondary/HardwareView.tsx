@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Cpu, HardDrive } from 'lucide-react';
 import { api } from '../../lib/api';
-import { SecondaryFrame, Stat, Empty } from './FederationView';
+import { SecondaryFrame, Stat, Empty } from './SecondaryFrame';
 
 interface HardwareData {
   cpu?: { model?: string; cores?: number; load?: number };

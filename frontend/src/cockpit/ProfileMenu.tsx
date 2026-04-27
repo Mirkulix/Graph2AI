@@ -1,7 +1,13 @@
 import { useEffect, useRef } from 'react';
-import { Cable, Compass, Cpu, Globe, Settings as SettingsIcon, Shield } from 'lucide-react';
+import { Cable, Compass, Cpu, GitBranch, Network, Settings as SettingsIcon } from 'lucide-react';
 
-export type SecondaryView = 'providers' | 'federation' | 'werte' | 'hardware' | 'knowledge3d' | 'settings';
+export type SecondaryView =
+  | 'providers'
+  | 'hardware'
+  | 'knowledge3d'
+  | 'swarm'
+  | 'autonomous-runs'
+  | 'settings';
 
 interface Item {
   id: SecondaryView;
@@ -11,12 +17,12 @@ interface Item {
 }
 
 const ITEMS: Item[] = [
-  { id: 'providers',  label: 'Providers',     hint: 'configure LLMs (DeepSeek, Claude, OpenAI…)', icon: Cable },
-  { id: 'federation', label: 'Federation',    hint: 'peer map · ternary consensus',               icon: Globe },
-  { id: 'werte',      label: 'Werte',         hint: 'Guardian-agent compass',                     icon: Shield },
-  { id: 'hardware',   label: 'Hardware',      hint: 'CPU · GPU · memory',                         icon: Cpu },
-  { id: 'knowledge3d',label: 'Knowledge 3D',  hint: 'spatial graph corpus',                       icon: Compass },
-  { id: 'settings',   label: 'Settings',      hint: 'token · seed · about',                       icon: SettingsIcon },
+  { id: 'providers',       label: 'Providers',       hint: 'configure LLMs (DeepSeek, Claude, OpenAI…)',      icon: Cable },
+  { id: 'hardware',        label: 'Hardware',        hint: 'CPU · GPU · memory',                              icon: Cpu },
+  { id: 'knowledge3d',     label: 'Knowledge',       hint: 'conversation ledger · timeline · drill-down',     icon: Compass },
+  { id: 'swarm',           label: 'Swarm',           hint: 'autonomous multi-agent runs',                     icon: Network },
+  { id: 'autonomous-runs', label: 'Autonomous Runs', hint: 'review branches created by overnight swarms',     icon: GitBranch },
+  { id: 'settings',        label: 'Settings',        hint: 'token · seed · about',                            icon: SettingsIcon },
 ];
 
 interface Props {
