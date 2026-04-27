@@ -1,13 +1,27 @@
 // Auto-respond LLM client. Uses Node 18+ native fetch. No third-party deps.
 //
 // Wired providers:
-//   - deepseek  (OpenAI-compatible chat-completions shape)
-//   - openai    (OpenAI-compatible chat-completions shape)
-//   - groq      (OpenAI-compatible chat-completions shape)
-//   - anthropic (/v1/messages — x-api-key + anthropic-version headers)
-//   - ollama    (local /api/chat — no auth, stream:false)
+//   - deepseek   (OpenAI-compatible chat-completions shape)
+//   - openai     (OpenAI-compatible chat-completions shape)
+//   - groq       (OpenAI-compatible chat-completions shape)
+//   - anthropic  (/v1/messages — x-api-key + anthropic-version headers)
+//   - ollama     (local /api/chat — no auth, stream:false)
+//   - vscode-lm  (vscode.lm.selectChatModels — uses the IDE's bundled
+//                 LLM access: Copilot in VS Code, etc. No API key.)
+//   - server     (delegates to the qo server's /api/llm/proxy — qo holds
+//                 the API keys, the IDE only needs baseUrl. The actual
+//                 backend is picked via autoRespond.preferredProvider.)
 
-export type ProviderType = 'deepseek' | 'openai' | 'anthropic' | 'ollama' | 'groq';
+import * as vscode from 'vscode';
+
+export type ProviderType =
+    | 'deepseek'
+    | 'openai'
+    | 'anthropic'
+    | 'ollama'
+    | 'groq'
+    | 'vscode-lm'
+    | 'server';
 
 export interface LlmCallOptions {
     providerType: ProviderType;
@@ -54,8 +68,146 @@ export async function callLlm(opts: LlmCallOptions): Promise<string> {
                 ...opts,
                 baseUrl: opts.baseUrl || 'http://localhost:11434',
             });
+        case 'vscode-lm':
+            return callVscodeLm(opts);
+        case 'server':
+            return callServerProxy(opts);
         default:
             throw new Error(`Unknown provider type: ${String(opts.providerType)}`);
+    }
+}
+
+/**
+ * Routes the auto-respond call through the qo server's /api/llm/proxy
+ * endpoint. The server holds the actual API keys; the IDE only needs the
+ * qo URL (qlang.qlms.baseUrl) and an optional bearer token
+ * (qlang.qlms.authToken). The "preferred backend" — which real LLM the
+ * server should hit — is taken from qlang.qlms.autoRespond.preferredProvider
+ * (defaults to 'claude-cli').
+ */
+async function callServerProxy(opts: LlmCallOptions): Promise<string> {
+    const cfg = vscode.workspace.getConfiguration('qlang.qlms');
+    const baseUrl = (cfg.get<string>('baseUrl') || 'http://localhost:4646').replace(/\/$/, '');
+    const authToken = cfg.get<string>('authToken') || '';
+    const preferred = cfg.get<string>('autoRespond.preferredProvider') || 'claude-cli';
+
+    const url = `${baseUrl}/api/llm/proxy`;
+    const sys = opts.systemPrompt && opts.systemPrompt.trim().length > 0
+        ? opts.systemPrompt
+        : DEFAULT_SYSTEM_PROMPT;
+    const messages = [
+        { role: 'system', content: sys },
+        { role: 'user', content: opts.userContent },
+    ];
+
+    const ac = new AbortController();
+    const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const timeout = setTimeout(() => ac.abort(), timeoutMs);
+    try {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+        const resp = await fetch(url, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                provider: preferred,
+                model: opts.model || undefined,
+                messages,
+            }),
+            signal: ac.signal,
+        });
+        if (!resp.ok) {
+            const text = await resp.text().catch(() => '');
+            throw new Error(`server proxy HTTP ${resp.status}: ${text.slice(0, 300)}`);
+        }
+        const json = (await resp.json()) as { content?: string; error?: string };
+        if (json.error) throw new Error(`server proxy: ${json.error}`);
+        if (typeof json.content !== 'string' || json.content.length === 0) {
+            throw new Error('server proxy returned empty content');
+        }
+        return json.content;
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+/**
+ * Use the IDE's bundled language-model access. The `model` field is matched
+ * against vscode.lm chat-model identifiers — empty matches the first
+ * available, otherwise we look for a substring/family/id match. Cursor /
+ * Antigravity / Trae / Kiro do NOT expose this API in practice — only
+ * stock VS Code with Copilot installed does. Verified via the
+ * `qlang.qlms.probeLmModels` command.
+ */
+async function callVscodeLm(opts: LlmCallOptions): Promise<string> {
+    if (!('lm' in vscode) || typeof vscode.lm?.selectChatModels !== 'function') {
+        throw new Error(
+            'vscode-lm provider: this IDE does not expose vscode.lm — ' +
+            'requires VS Code 1.90+ or a fork that bundled the LM API.',
+        );
+    }
+    const wanted = (opts.model || '').trim().toLowerCase();
+    const all = await vscode.lm.selectChatModels({});
+    if (!all || all.length === 0) {
+        throw new Error(
+            'vscode-lm: no chat models available. ' +
+            'In VS Code: install GitHub Copilot. In Cursor/Antigravity: ' +
+            'no extension-facing LM API is exposed — use a different provider.',
+        );
+    }
+    const picked = wanted.length === 0
+        ? all[0]
+        : all.find((m) => {
+            const id = (m.id || '').toLowerCase();
+            const family = (m.family || '').toLowerCase();
+            const name = (m.name || '').toLowerCase();
+            return id === wanted ||
+                family === wanted ||
+                id.includes(wanted) ||
+                family.includes(wanted) ||
+                name.includes(wanted);
+        }) || all[0];
+
+    const sys = opts.systemPrompt && opts.systemPrompt.trim().length > 0
+        ? opts.systemPrompt
+        : DEFAULT_SYSTEM_PROMPT;
+    const messages = [
+        vscode.LanguageModelChatMessage.User(`${sys}\n\n${opts.userContent}`),
+    ];
+
+    const ac = new AbortController();
+    const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const timeout = setTimeout(() => ac.abort(), timeoutMs);
+    try {
+        const response = await picked.sendRequest(messages, {}, new vscode.CancellationTokenSource().token);
+        let buffer = '';
+        for await (const fragment of response.text) {
+            buffer += fragment;
+        }
+        if (buffer.length === 0) {
+            throw new Error(`vscode-lm '${picked.id}' returned empty response`);
+        }
+        return buffer;
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+/** Probe what models the current IDE exposes via vscode.lm. */
+export async function listVscodeLmModels(): Promise<Array<{ id: string; family: string; name: string; vendor: string }>> {
+    if (!('lm' in vscode) || typeof vscode.lm?.selectChatModels !== 'function') {
+        return [];
+    }
+    try {
+        const all = await vscode.lm.selectChatModels({});
+        return (all ?? []).map((m) => ({
+            id: m.id,
+            family: m.family,
+            name: m.name,
+            vendor: m.vendor,
+        }));
+    } catch {
+        return [];
     }
 }
 

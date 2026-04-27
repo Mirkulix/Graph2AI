@@ -1,5 +1,7 @@
+pub mod agent_models;
 pub mod auth;
 pub mod config;
+pub mod git_ops;
 pub mod peer_discovery;
 pub mod routes;
 pub mod tools;
@@ -20,6 +22,7 @@ use crate::peer_discovery::FederationStatsHandle;
 use crate::routes::dashboard::GraphEvent;
 use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
@@ -77,6 +80,22 @@ pub struct AppState {
     /// a background task that subscribes to `message_bus`. Read by
     /// `/api/messages/recent` for cross-machine cockpit hydration.
     pub recent_messages: Mutex<VecDeque<RecentMessage>>,
+    /// Live swarm state, keyed by swarm id. Inserted by
+    /// `POST /api/swarm/start`, mutated by the background orchestrator
+    /// task, read by `/api/swarm/{id}` and `/api/swarm/active`. Bounded
+    /// only by user behavior — no automatic eviction yet (each entry is
+    /// ~a few KB so this is fine for the initial demo).
+    pub swarms:
+        Arc<tokio::sync::RwLock<std::collections::HashMap<u64, routes::swarm::SwarmState>>>,
+    /// Autonomous swarm scheduler state. Mutated by `/api/autonomous/*`
+    /// handlers and the single global scheduler task spawned at first
+    /// `/api/autonomous/start`.
+    pub autonomous: Arc<tokio::sync::RwLock<routes::autonomous::AutonomousState>>,
+    /// Idempotency guard for the autonomous scheduler — flipped to `true`
+    /// the first time `/api/autonomous/start` spawns the loop. Subsequent
+    /// `/start` calls just update the config without spawning a second
+    /// task.
+    pub autonomous_loop_started: Arc<AtomicBool>,
 }
 
 pub struct QoConfig {
@@ -233,6 +252,11 @@ pub async fn build_app(
         gossip_stats: peer_discovery::new_stats_handle(std::time::Duration::from_secs(10)),
         presence: Mutex::new(HashMap::new()),
         recent_messages: Mutex::new(VecDeque::new()),
+        swarms: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+        autonomous: Arc::new(tokio::sync::RwLock::new(
+            routes::autonomous::AutonomousState::default(),
+        )),
+        autonomous_loop_started: Arc::new(AtomicBool::new(false)),
     });
 
     // Background drain: subscribe to the bus and append every message to
@@ -317,18 +341,6 @@ pub async fn build_app(
         use qlang_agent::protocol::{AgentId, Capability, MessageIntent};
         use qlang_core::graph::Graph;
         use std::collections::HashMap as StdHashMap;
-
-        /// Map an agent role to the DeepSeek model best suited for its job.
-        /// Used only when the DeepSeek tier is actually available; otherwise
-        /// `chat_with_model` falls back to auto-routing on other tiers and
-        /// the override is ignored.
-        fn deepseek_model_for(role: &str) -> &'static str {
-            match role {
-                "developer"  => "deepseek-coder",
-                "researcher" => "deepseek-reasoner",
-                _            => "deepseek-chat",
-            }
-        }
 
         fn system_prompt_for(role: &str) -> &'static str {
             match role {
@@ -424,10 +436,14 @@ pub async fn build_app(
                                 ("user".to_string(), user_prompt),
                             ];
 
-                            // Per-agent model picks (developer→coder,
-                            // researcher→reasoner, others→chat). Prefer
-                            // DeepSeek explicitly — auto-router never picks it.
-                            let model = deepseek_model_for(&agent_name).to_string();
+                            // Per-agent (tier, model) mapping. Some agents
+                            // run on local Ollama (guardian, artisan), others
+                            // on DeepSeek with a role-specific model. The
+                            // router falls back to auto-routing if the
+                            // preferred tier is offline, so this is safe even
+                            // when Ollama isn't running.
+                            let (agent_tier, agent_model) =
+                                agent_models::model_for_agent(&agent_name);
                             const MAX_ITERATIONS: usize = 3;
                             let mut reply_text = String::new();
                             let mut tools_used: Vec<String> = Vec::new();
@@ -435,8 +451,8 @@ pub async fn build_app(
                             for _iter in 0..MAX_ITERATIONS {
                                 let response = match llm
                                     .chat_with_model(
-                                        Some(qo_llm::Tier::DeepSeek),
-                                        Some(model.clone()),
+                                        Some(agent_tier),
+                                        agent_model.clone(),
                                         messages.clone(),
                                     )
                                     .await
@@ -729,6 +745,28 @@ pub async fn build_app(
         .route("/api/chat", post(routes::chat::chat))
         .route("/api/chat/history", get(routes::chat::chat_history))
         .route("/api/consensus", post(routes::consensus::consensus))
+        // IDE-side LLM delegation: extensions POST chat requests here so
+        // qo can use its centrally-stored API keys instead of every IDE
+        // shipping its own credentials.
+        .route("/api/llm/proxy", post(routes::llm_proxy::proxy_chat))
+        // Host telemetry — CPU + RAM via sysinfo crate.
+        .route("/api/hardware", get(routes::hardware::hardware))
+        // Autonomous multi-agent swarm orchestrator.
+        .route("/api/swarm/start", post(routes::swarm::start_swarm))
+        .route("/api/swarm/active", get(routes::swarm::list_active))
+        .route("/api/swarm/{id}", get(routes::swarm::get_swarm))
+        .route("/api/swarm/{id}/stop", post(routes::swarm::stop_swarm))
+        // Autonomous swarm scheduler — runs swarms on a timer with
+        // a hard daily USD budget cap.
+        .route("/api/autonomous/start", post(routes::autonomous::start_autonomous))
+        .route("/api/autonomous/stop", post(routes::autonomous::stop_autonomous))
+        .route("/api/autonomous/status", get(routes::autonomous::get_status))
+        .route("/api/autonomous/queue", put(routes::autonomous::set_queue))
+        // Git auto-improver branches produced by autonomous swarms.
+        .route("/api/git/branches", get(routes::git::list_auto_branches))
+        .route("/api/git/diff/{branch}", get(routes::git::diff_branch))
+        .route("/api/git/merge", post(routes::git::merge_branch))
+        .route("/api/git/discard", post(routes::git::discard_branch))
 
         .route("/api/history", get(routes::history::get_history))
         .route("/api/goals/{id}/graph", get(routes::goals::get_goal_graph))

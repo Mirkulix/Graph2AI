@@ -67,6 +67,11 @@
         "command": "qlang.qlms.showInbox",
         "title": "QLMS: Show Inbox (replies addressed to this IDE)",
         "icon": "$(inbox)"
+      },
+      {
+        "command": "qlang.qlms.probeLmModels",
+        "title": "QLMS: Probe IDE-internal LLM access (vscode.lm)",
+        "icon": "$(search)"
       }
     ],
     "keybindings": [
@@ -132,9 +137,15 @@
         },
         "qlang.qlms.autoRespond.providerType": {
           "type": "string",
-          "enum": ["deepseek", "openai", "anthropic", "ollama", "groq"],
-          "default": "deepseek",
-          "description": "Which LLM provider to use for auto-responses. The API key comes from the corresponding *.apiKey setting below."
+          "enum": ["deepseek", "openai", "anthropic", "ollama", "groq", "vscode-lm", "server"],
+          "default": "server",
+          "description": "Which LLM provider to use for auto-responses. 'server' (recommended) delegates the call to qo's /api/llm/proxy — qo holds all API keys, the IDE only needs qlang.qlms.baseUrl. Pick the actual backend via qlang.qlms.autoRespond.preferredProvider. 'vscode-lm' uses the IDE's bundled model access (Copilot in VS Code; not exposed by Cursor/Antigravity/Trae/Kiro). All others use the corresponding *.apiKey setting locally."
+        },
+        "qlang.qlms.autoRespond.preferredProvider": {
+          "type": "string",
+          "enum": ["claude-cli", "claude-cli-agent", "anthropic", "deepseek", "groq", "ollama", "openai"],
+          "default": "claude-cli",
+          "description": "When providerType is 'server', tells qo which backend to call. 'claude-cli' uses your logged-in Claude Code CLI (Max subscription, $0 per call, ~10s latency). 'claude-cli-agent' is the same but with Read/Edit/Write/Bash tools enabled (~30s+, real agentic). 'anthropic' uses qo's stored Anthropic API key. The qo server holds the API keys for all providers — this is just the routing hint."
         },
         "qlang.qlms.autoRespond.apiKey": {
           "type": "string",

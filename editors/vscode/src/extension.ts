@@ -317,6 +317,37 @@ function registerDashboard(context: vscode.ExtensionContext): void {
             await vscode.env.openExternal(vscode.Uri.parse(`${baseUrl}/supervisor`));
         }),
     );
+
+    // Probe what LLMs the current IDE exposes via vscode.lm. Lets the user
+    // verify whether 'vscode-lm' as autoRespond.providerType is viable in
+    // their IDE (works in VS Code with Copilot; not exposed by Cursor /
+    // Antigravity / Trae / Kiro per testing).
+    context.subscriptions.push(
+        vscode.commands.registerCommand('qlang.qlms.probeLmModels', async () => {
+            const { listVscodeLmModels } = await import('./llm');
+            const models = await listVscodeLmModels();
+            if (models.length === 0) {
+                await vscode.window.showWarningMessage(
+                    `vscode.lm: 0 models available in '${vscode.env.appName}'. ` +
+                    `This IDE does not expose extension-facing LLM access — ` +
+                    `use providerType='server' (recommended) to delegate to qo, ` +
+                    `or a direct API provider (deepseek/anthropic/...) instead.`,
+                    { modal: false },
+                );
+                return;
+            }
+            const lines = models.map((m) =>
+                `  ${m.vendor || '?'} / ${m.family || '?'} / ${m.id}  (${m.name})`,
+            ).join('\n');
+            const channel = vscode.window.createOutputChannel('QLANG · vscode.lm probe');
+            channel.appendLine(`vscode.lm exposes ${models.length} model(s) in '${vscode.env.appName}':`);
+            channel.appendLine('');
+            channel.appendLine(lines);
+            channel.appendLine('');
+            channel.appendLine('Use any of the IDs above as qlang.qlms.autoRespond.model with providerType=vscode-lm.');
+            channel.show(true);
+        }),
+    );
 }
 
 // ---------------------------------------------------------------------------

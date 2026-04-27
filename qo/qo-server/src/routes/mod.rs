@@ -17,3 +17,8 @@ pub mod mcp_qlms;
 pub mod dashboard;
 pub mod workspace;
 pub mod mcp_server;
+pub mod swarm;
+pub mod autonomous;
+pub mod llm_proxy;
+pub mod hardware;
+pub mod git;
