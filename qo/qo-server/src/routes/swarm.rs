@@ -663,7 +663,22 @@ async fn run_subtask(
     .await;
 
     let assigned = subtask.assigned_to.clone();
-    let prompt = subtask.prompt.clone();
+
+    // Enrich the subtask prompt with the original goal so the agent has
+    // the full picture even when it can't see other parallel subtasks'
+    // output. This was a real failure mode: subtasks like "use the result
+    // from subtask 1" hallucinated because the agent had no idea what
+    // subtask 1 was. Now every subtask is self-contained.
+    let goal = goal_of(&state.swarms, swarm_id).await;
+    let prompt = format!(
+        "ORIGINAL SWARM GOAL: {}\n\n\
+         YOUR SUBTASK: {}\n\n\
+         You have full access to the OrbitQLang repo via Read / Edit / Write / Bash / \
+         Grep / Glob tools. You can explore, modify, and execute files freely. \
+         If your subtask is one part of a larger goal, just do YOUR part — other \
+         agents handle their own parts in parallel and you cannot see their work.",
+        goal, subtask.prompt,
+    );
 
     // Decide route: known server agent → direct LLM; otherwise treat as
     // an IDE identity registered in presence and round-trip via the bus.
@@ -997,14 +1012,26 @@ fn build_plan_prompt(
         ide_list.join(", ")
     };
     format!(
-        "You are the strategist. The goal is: {goal}\n\n\
+        "You are the strategist for an autonomous codebase-improvement swarm.\n\n\
+         GOAL: {goal}\n\n\
          Prior round results:\n{prior}\n\n\
-         Break this into 3-5 concrete subtasks. Output STRICT JSON in this exact shape, \
-         and NOTHING else (no markdown fences, no commentary):\n\
+         === PLANNING RULES (read carefully — past failures came from violating these) ===\n\
+         1. Plan the MINIMUM number of subtasks needed. For a single file write/edit/read \
+            task, plan EXACTLY ONE subtask. For a multi-file refactor or independent \
+            investigations, plan 2-5. NEVER plan more than 5.\n\
+         2. Subtasks run IN PARALLEL with NO shared context. They cannot see each \
+            other's output. NEVER plan a subtask that depends on a previous one's result.\n\
+         3. Each subtask must be SELF-CONTAINED — readable and executable with no \
+            knowledge of other subtasks. Spell out everything the agent needs.\n\
+         4. The selected agent has full Read/Edit/Write/Bash/Grep/Glob tools scoped to \
+            the OrbitQLang repo. Tell it explicitly which tool to use and which files \
+            to touch.\n\n\
+         Output STRICT JSON in this exact shape, and NOTHING else (no markdown fences, \
+         no commentary):\n\
          {{ \"subtasks\": [ {{ \"assigned_to\": \"developer\", \"prompt\": \"...\" }} ] }}\n\n\
          Available server agents: {agents}.\n\
          Available IDE identities (live): {ides}.\n\
-         Pick wisely — match the subtask to the agent's strength.",
+         Pick the agent whose role best matches the subtask.",
         goal = goal,
         prior = prior_summary,
         agents = known_agents.join(", "),
