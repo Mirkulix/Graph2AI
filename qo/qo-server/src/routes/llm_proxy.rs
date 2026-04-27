@@ -37,10 +37,18 @@ pub(crate) async fn call_claude_cli_agent(
     model: &str,
     system_prompt: Option<&str>,
     user_content: &str,
+    workspace_override: Option<String>,
 ) -> Result<String, String> {
     let bin = std::env::var("CLAUDE_CLI_PATH").unwrap_or_else(|_| "claude".to_string());
-    let workspace = std::env::var("ORBITQ_REPO")
-        .unwrap_or_else(|_| "c:/Users/a.b/Graph/OrbitQLang".to_string());
+    // Per-IDE workspace mapping: when the caller (typically `proxy_chat`)
+    // identifies the requesting IDE, it passes that IDE's `workspace_path`
+    // here so the Claude Code session is scoped to the IDE's open repo.
+    // Server-side callers (swarm orchestrator, CLI tools) pass `None` and
+    // fall back to the legacy `ORBITQ_REPO` env var.
+    let workspace = workspace_override.unwrap_or_else(|| {
+        std::env::var("ORBITQ_REPO")
+            .unwrap_or_else(|_| "c:/Users/a.b/Graph/OrbitQLang".to_string())
+    });
 
     let mut cmd = Command::new(&bin);
     cmd.arg("-p")
@@ -217,6 +225,13 @@ pub struct LlmProxyRequest {
     pub model: Option<String>,
     /// OpenAI-style messages: `[{role: "system"|"user"|"assistant", content: "..."}]`
     pub messages: Vec<ProxyMessage>,
+    /// Identity of the calling IDE (matches a key in the presence registry).
+    /// When present and the provider is `claude-cli-agent`, the proxy looks
+    /// up the IDE's `workspace_path` and scopes the spawned Claude Code
+    /// session to that directory instead of the qo server's default repo.
+    /// Optional and ignored for all other providers.
+    #[serde(default)]
+    pub requester_identity: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -264,6 +279,16 @@ pub async fn proxy_chat(
     let start = std::time::Instant::now();
     let provider_lc = req.provider.to_lowercase();
 
+    // Per-IDE workspace lookup: if the caller identified itself, resolve
+    // its registered `workspace_path` from the presence map. This is only
+    // consumed by `claude-cli-agent` below; other providers ignore it.
+    let workspace_override: Option<String> = if let Some(id) = &req.requester_identity {
+        let presence = state.presence.lock().await;
+        presence.get(id).and_then(|e| e.workspace_path.clone())
+    } else {
+        None
+    };
+
     // claude-cli-agent: spawn a FULL Claude Code session with Read/Edit/
     // Write/Bash/Grep/Glob tools scoped to the OrbitQLang repo. Each call
     // is a real agentic investigation, not a pure chat. ~30s+ latency,
@@ -278,7 +303,7 @@ pub async fn proxy_chat(
         }
         let sys = if sys_parts.is_empty() { None } else { Some(sys_parts.join("\n\n")) };
         let user = user_parts.join("\n\n");
-        call_claude_cli_agent(&model, sys.as_deref(), &user).await
+        call_claude_cli_agent(&model, sys.as_deref(), &user, workspace_override).await
     }
     // claude-cli: shell out to the user's logged-in Claude Code CLI.
     // No API credits needed — uses the Max subscription.

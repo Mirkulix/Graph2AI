@@ -202,6 +202,7 @@ export class QlmsInbox {
                 baseUrl: baseUrlOverride || undefined,
                 systemPrompt: systemPrompt || undefined,
                 userContent,
+                requesterIdentity: this.opts.identity,
             });
         } catch (err) {
             void vscode.window.showWarningMessage(

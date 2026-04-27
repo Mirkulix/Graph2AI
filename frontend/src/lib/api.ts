@@ -79,6 +79,11 @@ export interface PresenceEntry {
   registered_at?: string;
   last_seen_at?: string;
   expires_at?: string;
+  // Absolute path of the IDE's currently-open workspace.
+  workspace_path?: string;
+  // Whether the QO supervisor may dispatch swarm subtasks to this IDE.
+  // Defaults to true when the field is missing.
+  eligible_for_swarms?: boolean;
 }
 
 export interface GraphSummary {
@@ -333,6 +338,11 @@ export const api = {
 
   // Presence (online IDE clients)
   presence:        () => get<PresenceEntry[]>('/api/presence'),
+  presenceSetEligibility: (identity: string, eligible: boolean) =>
+                     post<PresenceEntry>(
+                       `/api/presence/${encodeURIComponent(identity)}/eligibility`,
+                       { eligible_for_swarms: eligible },
+                     ),
 
   // Hardware (Neo legacy — useful endpoint)
   hardware:        () => get<{ cpu?: { model?: string; cores?: number; load?: number }; memory?: { total_mb?: number; used_mb?: number }; gpu?: Array<{ name?: string; temp_c?: number; util?: number; mem_mb?: number }> }>('/api/neo/hardware'),

@@ -117,6 +117,7 @@ async function registerPresence(
         capabilities: string[];
         llmProvider?: string;
         llmModel?: string;
+        workspacePath?: string;
     },
     authToken?: string,
 ): Promise<void> {
@@ -128,6 +129,7 @@ async function registerPresence(
         capabilities: extras.capabilities,
         llm_provider: extras.llmProvider,
         llm_model: extras.llmModel,
+        workspace_path: extras.workspacePath,
     };
     await presencePost(url, body, authToken);
 }
@@ -204,6 +206,14 @@ function startPresence(context: vscode.ExtensionContext, identity: string): void
 
     const ideName = vscode.env.appName ?? 'Code';
     const host = os.hostname();
+    // Per-IDE workspace mapping: registry says which folder this IDE is
+    // working in. Lets qo's swarm dispatcher run claude-cli-agent in the
+    // right repo when the subtask is sent to this identity. User can
+    // override via qlang.qlms.workspaceOverride if multiple folders open.
+    const workspaceOverride = cfg.get<string>('workspaceOverride', '').trim();
+    const workspacePath = workspaceOverride.length > 0
+        ? workspaceOverride
+        : (vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath ?? '');
 
     let presenceAvailable = true;
 
@@ -212,7 +222,7 @@ function startPresence(context: vscode.ExtensionContext, identity: string): void
             await registerPresence(
                 baseUrl,
                 identity,
-                { ideName, host, capabilities, llmProvider, llmModel },
+                { ideName, host, capabilities, llmProvider, llmModel, workspacePath },
                 authToken,
             );
         } catch (err) {
@@ -242,7 +252,7 @@ function startPresence(context: vscode.ExtensionContext, identity: string): void
                 await registerPresence(
                     baseUrl,
                     identity,
-                    { ideName, host, capabilities, llmProvider, llmModel },
+                    { ideName, host, capabilities, llmProvider, llmModel, workspacePath },
                     authToken,
                 );
             } catch {

@@ -167,6 +167,11 @@
           "default": "",
           "description": "Optional system prompt prepended to every auto-response. Empty = a generic helpful-assistant prompt."
         },
+        "qlang.qlms.workspaceOverride": {
+          "type": "string",
+          "default": "",
+          "description": "Override the workspace path this IDE registers as. Empty = uses vscode.workspace.workspaceFolders[0]. The qo swarm dispatcher uses this folder when running claude-cli-agent for subtasks targeted at this IDE identity. Set to an absolute path to pin the IDE to a specific repo."
+        },
         "qlang.qlms.triggers.enabled": {
           "type": "boolean",
           "default": false,

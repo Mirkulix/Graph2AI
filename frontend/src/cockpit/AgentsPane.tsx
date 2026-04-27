@@ -143,6 +143,33 @@ export default function AgentsPane({ selectedAgent, onSelectAgent, liveTail }: P
           filteredPresence.map(p => {
             const active = selectedAgent === p.identity;
             const autoRespond = p.capabilities?.includes('auto-respond') === true;
+            const eligible = p.eligible_for_swarms !== false;
+            const workspaceShort = truncateMiddlePath(p.workspace_path);
+
+            const toggleEligibility = async (e: React.MouseEvent) => {
+              e.stopPropagation();
+              const next = !eligible;
+              // Optimistic update
+              setPresence(prev => prev.map(entry =>
+                entry.identity === p.identity
+                  ? { ...entry, eligible_for_swarms: next }
+                  : entry,
+              ));
+              try {
+                const updated = await api.presenceSetEligibility(p.identity, next);
+                setPresence(prev => prev.map(entry =>
+                  entry.identity === p.identity ? updated : entry,
+                ));
+              } catch {
+                // Revert on failure
+                setPresence(prev => prev.map(entry =>
+                  entry.identity === p.identity
+                    ? { ...entry, eligible_for_swarms: eligible }
+                    : entry,
+                ));
+              }
+            };
+
             return (
               <button
                 key={p.identity}
@@ -152,7 +179,7 @@ export default function AgentsPane({ selectedAgent, onSelectAgent, liveTail }: P
                   background: active ? 'var(--signal-soft)' : 'transparent',
                   borderLeft: active ? '2px solid var(--signal)' : '2px solid transparent',
                 }}
-                title={`${p.identity}\n${p.ide_name ?? ''} · ${p.host ?? ''}\n${p.llm_provider ? `${p.llm_provider}/${p.llm_model ?? ''}` : 'no auto-respond'}`}
+                title={`${p.identity}\n${p.ide_name ?? ''} · ${p.host ?? ''}\n${p.workspace_path ?? ''}\n${p.llm_provider ? `${p.llm_provider}/${p.llm_model ?? ''}` : 'no auto-respond'}`}
               >
                 <div style={{
                   width: 8, height: 8, borderRadius: 4,
@@ -175,21 +202,73 @@ export default function AgentsPane({ selectedAgent, onSelectAgent, liveTail }: P
                       {[p.ide_name, p.host].filter(Boolean).join(' · ')}
                     </div>
                   )}
+                  {workspaceShort && (
+                    <div
+                      style={{
+                        fontSize: 10,
+                        color: 'var(--ink-muted)',
+                        fontFamily: 'var(--font-mono)',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        marginTop: 1,
+                      }}
+                      title={p.workspace_path}
+                    >
+                      {workspaceShort}
+                    </div>
+                  )}
                 </div>
-                {autoRespond && (
-                  <span style={{
-                    fontSize: 9,
-                    fontFamily: 'var(--font-mono)',
-                    color: 'var(--cta)',
-                    background: 'var(--cta-soft)',
-                    padding: '1px 6px',
-                    borderRadius: 8,
-                    letterSpacing: 0.04,
-                    textTransform: 'uppercase',
-                  }}>
-                    auto
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0 }}>
+                  {autoRespond && (
+                    <span style={{
+                      fontSize: 9,
+                      fontFamily: 'var(--font-mono)',
+                      color: 'var(--cta)',
+                      background: 'var(--cta-soft)',
+                      padding: '1px 6px',
+                      borderRadius: 8,
+                      letterSpacing: 0.04,
+                      textTransform: 'uppercase',
+                    }}>
+                      auto
+                    </span>
+                  )}
+                  <span
+                    onClick={toggleEligibility}
+                    role="button"
+                    aria-label={eligible
+                      ? 'Eligible for swarm dispatch — click to exclude'
+                      : 'Excluded from swarm dispatch — click to include'}
+                    title={eligible
+                      ? 'Eligible for swarm dispatch — click to exclude'
+                      : 'Excluded from swarm dispatch — click to include'}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      fontSize: 9,
+                      fontFamily: 'var(--font-mono)',
+                      color: eligible ? 'var(--ok)' : 'var(--ink-muted)',
+                      background: eligible ? 'var(--ok-soft)' : 'var(--bg-raised)',
+                      padding: '1px 6px',
+                      borderRadius: 8,
+                      letterSpacing: 0.04,
+                      textTransform: 'uppercase',
+                      cursor: 'pointer',
+                      border: '1px solid var(--rule-faint)',
+                    }}
+                  >
+                    <span style={{
+                      width: 6,
+                      height: 6,
+                      borderRadius: 3,
+                      background: eligible ? 'var(--ok)' : 'var(--ink-muted)',
+                      flexShrink: 0,
+                    }} />
+                    {eligible ? 'eligible' : 'excluded'}
                   </span>
-                )}
+                </div>
               </button>
             );
           })
@@ -239,6 +318,24 @@ function LiveRow({ msg }: { msg: BusMessage }) {
       <span style={{ color: 'var(--process-bright)', marginLeft: 'auto', fontSize: 9 }}>{intent}</span>
     </div>
   );
+}
+
+// Truncate a long absolute path by collapsing the middle, e.g.
+// "c:/Users/a.b/Graph/OrbitQLang/frontend" -> "c:/Users/.../frontend".
+function truncateMiddlePath(p: string | undefined, max = 38): string {
+  if (!p) return '';
+  if (p.length <= max) return p;
+  // Normalize separators just for display.
+  const norm = p.replace(/\\/g, '/');
+  const parts = norm.split('/').filter(Boolean);
+  if (parts.length <= 2) return norm;
+  const head = parts[0];
+  const tail = parts[parts.length - 1];
+  const candidate = `${head}/.../${tail}`;
+  // If even the candidate is too long, hard-truncate the tail.
+  if (candidate.length <= max) return candidate;
+  const room = Math.max(4, max - head.length - 6); // " /.../ " ~ 6 chars
+  return `${head}/.../${tail.slice(-room)}`;
 }
 
 const paneStyle: React.CSSProperties = {

@@ -844,6 +844,10 @@ pub async fn build_app(
             post(routes::presence::heartbeat),
         )
         .route(
+            "/api/presence/{identity}/eligibility",
+            post(routes::presence::set_eligibility),
+        )
+        .route(
             "/api/presence/{identity}",
             delete(routes::presence::deregister),
         )

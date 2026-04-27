@@ -31,6 +31,10 @@ export interface LlmCallOptions {
     systemPrompt?: string;
     userContent: string;
     timeoutMs?: number;
+    /** This IDE's bus identity. Sent to the qo server-proxy provider so qo
+     *  can scope claude-cli-agent to this IDE's registered workspace_path
+     *  instead of the default ORBITQ_REPO. Only used when providerType='server'. */
+    requesterIdentity?: string;
 }
 
 const DEFAULT_TIMEOUT_MS = 60_000;
@@ -113,6 +117,7 @@ async function callServerProxy(opts: LlmCallOptions): Promise<string> {
                 provider: preferred,
                 model: opts.model || undefined,
                 messages,
+                requester_identity: opts.requesterIdentity || undefined,
             }),
             signal: ac.signal,
         });

@@ -8,6 +8,7 @@ import {
   type SwarmSubtask,
   type SubtaskStatus,
   type SwarmStatus,
+  type PresenceEntry,
 } from '../lib/api';
 import { SecondaryFrame } from './secondary/SecondaryFrame';
 import AutonomousPanel from './AutonomousPanel';
@@ -22,7 +23,21 @@ export default function SwarmPane() {
   const [maxTokens, setMaxTokens] = useState(20000);
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const [eligibleIdes, setEligibleIdes] = useState<PresenceEntry[]>([]);
+  const [targetIde, setTargetIde] = useState<string>('');
   const aliveRef = useRef(true);
+
+  // ─── Load eligible IDE list once on mount ───────────────────────────
+  useEffect(() => {
+    let alive = true;
+    api.presence()
+      .then(list => {
+        if (!alive) return;
+        setEligibleIdes((list ?? []).filter(p => p.eligible_for_swarms !== false));
+      })
+      .catch(() => { if (alive) setEligibleIdes([]); });
+    return () => { alive = false; };
+  }, []);
 
   // ─── Poll active swarms every 2s ────────────────────────────────────
   useEffect(() => {
@@ -47,10 +62,14 @@ export default function SwarmPane() {
   async function startSwarm() {
     const trimmed = goal.trim();
     if (!trimmed || busy) return;
+    // Optionally prefix the goal so the strategist scopes the swarm to one IDE.
+    const finalGoal = targetIde
+      ? `[ Dispatch to IDE: ${targetIde} ] ${trimmed}`
+      : trimmed;
     setBusy(true);
     setFeedback(null);
     try {
-      const res = await api.swarmStart(trimmed, { maxRounds, maxTokens });
+      const res = await api.swarmStart(finalGoal, { maxRounds, maxTokens });
       setFeedback({ kind: 'ok', text: `swarm #${res.swarm_id} started` });
       setGoal('');
       // Optimistic refresh — don't wait for poll
@@ -116,6 +135,9 @@ export default function SwarmPane() {
         busy={busy}
         feedback={feedback}
         onStart={() => void startSwarm()}
+        eligibleIdes={eligibleIdes}
+        targetIde={targetIde}
+        setTargetIde={setTargetIde}
       />
 
       <h3 className="eyebrow" style={{ margin: '24px 0 10px' }}>
@@ -149,6 +171,9 @@ interface StarterProps {
   busy: boolean;
   feedback: { kind: 'ok' | 'err'; text: string } | null;
   onStart: () => void;
+  eligibleIdes: PresenceEntry[];
+  targetIde: string;
+  setTargetIde: (s: string) => void;
 }
 
 function SwarmStarter(p: StarterProps) {
@@ -206,6 +231,22 @@ function SwarmStarter(p: StarterProps) {
             onChange={e => p.setMaxTokens(clampInt(e.target.value, 1000, 1_000_000, 20000))}
             style={{ ...numberInputStyle, width: 110 }}
           />
+        </label>
+        <label style={labelStyle}>
+          <span className="eyebrow">target ide</span>
+          <select
+            value={p.targetIde}
+            onChange={e => p.setTargetIde(e.target.value)}
+            style={selectInputStyle}
+            title="Optionally scope the swarm to a single IDE — adds a dispatch hint to the goal."
+          >
+            <option value="">(any agent)</option>
+            {p.eligibleIdes.map(ide => (
+              <option key={ide.identity} value={ide.identity}>
+                {ide.identity}
+              </option>
+            ))}
+          </select>
         </label>
 
         <button
@@ -571,6 +612,18 @@ const labelStyle: React.CSSProperties = {
 
 const numberInputStyle: React.CSSProperties = {
   width: 80,
+  background: 'var(--bg-panel)',
+  border: '1px solid var(--rule-default)',
+  borderRadius: 4,
+  color: 'var(--ink-bright)',
+  fontFamily: 'var(--font-mono)',
+  fontSize: 12,
+  padding: '6px 8px',
+};
+
+const selectInputStyle: React.CSSProperties = {
+  minWidth: 160,
+  maxWidth: 240,
   background: 'var(--bg-panel)',
   border: '1px solid var(--rule-default)',
   borderRadius: 4,

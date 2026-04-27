@@ -780,7 +780,9 @@ async fn run_server_agent_via_claude_cli(
     agent: &str,
     user_prompt: &str,
 ) -> Result<String, String> {
-    let res = call_claude_cli_agent("sonnet", None, user_prompt).await?;
+    // Server agents have no IDE workspace — pass None so the CLI falls
+    // back to ORBITQ_REPO (the qo server's own repo).
+    let res = call_claude_cli_agent("sonnet", None, user_prompt, None).await?;
 
     // Charge an estimated token count so the swarm token-cap still bites
     // even though we no longer route through the LlmRouter. Cost is left
@@ -952,8 +954,15 @@ async fn summarize_prior_rounds(
 }
 
 async fn collect_ide_list(state: &Arc<AppState>) -> Vec<String> {
+    // Only IDEs with `eligible_for_swarms = true` are visible to the
+    // strategist. The cockpit toggles this per-IDE; an excluded IDE
+    // stays registered (so direct handovers still work) but is never
+    // assigned a subtask.
     let map = state.presence.lock().await;
-    map.keys().cloned().collect()
+    map.values()
+        .filter(|e| e.eligible_for_swarms)
+        .map(|e| e.identity.clone())
+        .collect()
 }
 
 async fn push_error_round(

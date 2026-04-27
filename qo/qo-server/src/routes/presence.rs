@@ -43,6 +43,9 @@ pub const SWEEPER_INTERVAL: Duration = Duration::from_secs(30);
 // Types
 // ---------------------------------------------------------------------------
 
+/// Default for `eligible_for_swarms`: new entries opt-in by default.
+fn default_eligible() -> bool { true }
+
 /// Public, frontend-visible record of one registered IDE/agent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PresenceEntry {
@@ -59,6 +62,16 @@ pub struct PresenceEntry {
     pub registered_at: String,
     pub last_seen_at: String,
     pub expires_at: String,
+    /// Filesystem path to the IDE's open workspace/repo. Used by the
+    /// LLM proxy to scope `claude-cli-agent` calls to the caller's repo
+    /// instead of the qo server's hardcoded default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_path: Option<String>,
+    /// Whether this IDE may be selected by the swarm strategist when
+    /// planning subtasks. False = the IDE stays registered and visible
+    /// in the cockpit but is filtered out of swarm dispatch.
+    #[serde(default = "default_eligible")]
+    pub eligible_for_swarms: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -74,6 +87,22 @@ pub struct RegisterRequest {
     pub llm_provider: Option<String>,
     #[serde(default)]
     pub llm_model: Option<String>,
+    #[serde(default)]
+    pub workspace_path: Option<String>,
+}
+
+/// Body for the optional heartbeat — heartbeats are usually empty,
+/// but if the client sends one we let it refresh `workspace_path`
+/// without a full re-register.
+#[derive(Debug, Default, Deserialize)]
+pub struct HeartbeatRequest {
+    #[serde(default)]
+    pub workspace_path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EligibilityRequest {
+    pub eligible_for_swarms: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -146,7 +175,9 @@ fn expires_iso() -> String {
 ///
 /// Re-registering the same `identity` overwrites the previous record
 /// (lets a VS Code extension `activate` cleanly after a reload without
-/// orphaning the old entry).
+/// orphaning the old entry). The `eligible_for_swarms` flag is preserved
+/// across a re-register if one already exists, so a cockpit toggle
+/// survives an IDE reload.
 pub async fn register(
     State(state): State<Arc<AppState>>,
     Json(req): Json<RegisterRequest>,
@@ -161,6 +192,13 @@ pub async fn register(
     let now = now_iso();
     let exp = expires_iso();
 
+    // Preserve the operator-set eligibility flag across re-registers so a
+    // toggle in the cockpit isn't reset when the IDE reloads.
+    let prior_eligible = {
+        let map = state.presence.lock().await;
+        map.get(&req.identity).map(|e| e.eligible_for_swarms)
+    };
+
     let entry = PresenceEntry {
         identity: req.identity.clone(),
         ide_name: req.ide_name,
@@ -171,6 +209,8 @@ pub async fn register(
         registered_at: now.clone(),
         last_seen_at: now.clone(),
         expires_at: exp.clone(),
+        workspace_path: req.workspace_path,
+        eligible_for_swarms: prior_eligible.unwrap_or(true),
     };
 
     {
@@ -194,9 +234,14 @@ pub async fn register(
 ///
 /// Returns 404 if the identity is unknown (e.g. swept after a long
 /// network glitch). Clients should react by re-registering.
+///
+/// The body is optional: clients that send `{"workspace_path": "..."}`
+/// will refresh that field without a full re-register. Backward compat:
+/// an empty/missing body leaves the existing fields untouched.
 pub async fn heartbeat(
     State(state): State<Arc<AppState>>,
     Path(identity): Path<String>,
+    body: Option<Json<HeartbeatRequest>>,
 ) -> Result<Json<HeartbeatResponse>, (StatusCode, String)> {
     let now = now_iso();
     let exp = expires_iso();
@@ -206,8 +251,44 @@ pub async fn heartbeat(
         Some(entry) => {
             entry.last_seen_at = now;
             entry.expires_at = exp.clone();
+            if let Some(Json(req)) = body {
+                if let Some(ws) = req.workspace_path {
+                    entry.workspace_path = Some(ws);
+                }
+            }
             tracing::debug!(identity = %identity, "presence: heartbeat");
             Ok(Json(HeartbeatResponse { ok: true, expires_at: exp }))
+        }
+        None => Err((
+            StatusCode::NOT_FOUND,
+            format!("unknown identity: {}", identity),
+        )),
+    }
+}
+
+/// `POST /api/presence/{identity}/eligibility` — flip the
+/// `eligible_for_swarms` flag for a registered IDE.
+///
+/// Used by the cockpit's per-IDE toggle: an operator can keep an IDE
+/// connected (visible in the presence list, able to receive direct
+/// handovers) while excluding it from swarm subtask dispatch.
+///
+/// Returns the updated entry on success, 404 if the identity is unknown.
+pub async fn set_eligibility(
+    State(state): State<Arc<AppState>>,
+    Path(identity): Path<String>,
+    Json(req): Json<EligibilityRequest>,
+) -> Result<Json<PresenceEntry>, (StatusCode, String)> {
+    let mut map = state.presence.lock().await;
+    match map.get_mut(&identity) {
+        Some(entry) => {
+            entry.eligible_for_swarms = req.eligible_for_swarms;
+            tracing::info!(
+                identity = %identity,
+                eligible = req.eligible_for_swarms,
+                "presence: eligibility updated"
+            );
+            Ok(Json(entry.clone()))
         }
         None => Err((
             StatusCode::NOT_FOUND,

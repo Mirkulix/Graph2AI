@@ -54,6 +54,25 @@ export default function IdePresenceDetail({ identity, presenceCache }: Props) {
   const isAuto = entry.capabilities?.includes('auto-respond') === true;
   const lastSeen = entry.last_seen_at ? new Date(entry.last_seen_at).toLocaleString() : '—';
   const expiresAt = entry.expires_at ? new Date(entry.expires_at).toLocaleString() : '—';
+  const eligible = entry.eligible_for_swarms !== false;
+
+  const toggleEligibility = async () => {
+    const next = !eligible;
+    if (!next) {
+      // Confirm before excluding — this changes swarm dispatch behavior.
+      const ok = window.confirm('Stop dispatching swarm subtasks to this IDE?');
+      if (!ok) return;
+    }
+    // Optimistic update
+    setEntry(prev => prev ? { ...prev, eligible_for_swarms: next } : prev);
+    try {
+      const updated = await api.presenceSetEligibility(identity, next);
+      setEntry(updated);
+    } catch {
+      // Revert on failure
+      setEntry(prev => prev ? { ...prev, eligible_for_swarms: eligible } : prev);
+    }
+  };
 
   return (
     <div style={{ padding: 16 }}>
@@ -71,9 +90,59 @@ export default function IdePresenceDetail({ identity, presenceCache }: Props) {
         )}
       </div>
 
-      {/* IDE + Host */}
+      {/* IDE + Host + Workspace */}
       <Row label="ide"  value={entry.ide_name ?? '—'} mono />
       <Row label="host" value={entry.host ?? '—'} mono />
+      <Row label="workspace" value={entry.workspace_path ?? '—'} mono />
+
+      {/* Swarm eligibility — large, deliberate toggle */}
+      <div style={{
+        marginTop: 16,
+        padding: 12,
+        background: eligible ? 'var(--ok-soft)' : 'var(--bg-raised)',
+        border: '1px solid var(--rule-faint)',
+        borderLeft: `3px solid ${eligible ? 'var(--ok)' : 'var(--ink-muted)'}`,
+        borderRadius: 8,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+      }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="eyebrow" style={{ marginBottom: 4 }}>swarm eligibility</div>
+          <div style={{
+            fontSize: 13,
+            fontWeight: 600,
+            color: eligible ? 'var(--ok)' : 'var(--ink-muted)',
+          }}>
+            {eligible ? 'Eligible for swarm dispatch' : 'Excluded from swarm dispatch'}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--ink-muted)', marginTop: 2 }}>
+            {eligible
+              ? 'The strategist may assign subtasks to this IDE.'
+              : 'The strategist will skip this IDE when planning subtasks.'}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => void toggleEligibility()}
+          style={{
+            padding: '8px 14px',
+            fontFamily: 'var(--font-mono)',
+            fontSize: 11,
+            fontWeight: 700,
+            letterSpacing: 0.06,
+            textTransform: 'uppercase',
+            color: eligible ? 'var(--danger)' : 'var(--ok)',
+            background: 'var(--bg-panel)',
+            border: `1px solid ${eligible ? 'var(--danger)' : 'var(--ok)'}`,
+            borderRadius: 4,
+            cursor: 'pointer',
+            flexShrink: 0,
+          }}
+        >
+          {eligible ? 'exclude' : 'include'}
+        </button>
+      </div>
 
       {/* LLM provider — the killer info */}
       <div style={{
