@@ -325,6 +325,11 @@ async fn run_swarm(
 ) {
     let known_agents = ["developer", "researcher", "guardian", "strategist", "artisan", "ceo"];
 
+    // Diff-bloat fix: snapshot dirty files BEFORE the agent touches anything,
+    // so the post-swarm pipeline can compute exactly which files the agent
+    // changed (vs. pre-existing dirty workspace state) and commit only those.
+    let dirty_before: Vec<String> = git_ops::capture_status().await.unwrap_or_default();
+
     for round_no in 1..=max_rounds {
         // ── Cap checks ────────────────────────────────────────────
         if !precheck_continue(&state.swarms, swarm_id, max_tokens).await {
@@ -497,7 +502,7 @@ async fn run_swarm(
         }
     };
     if auto_originated {
-        run_post_swarm_git_pipeline(&state, swarm_id, &goal_for_git).await;
+        run_post_swarm_git_pipeline(&state, swarm_id, &goal_for_git, &dirty_before).await;
     }
 
     // ── Finalize ────────────────────────────────────────────────
@@ -533,7 +538,7 @@ async fn run_swarm(
 // and folded back to a no-op for that step. We never panic the swarm.
 // ---------------------------------------------------------------------------
 
-async fn run_post_swarm_git_pipeline(state: &Arc<AppState>, swarm_id: u64, goal: &str) {
+async fn run_post_swarm_git_pipeline(state: &Arc<AppState>, swarm_id: u64, goal: &str, dirty_before: &[String]) {
     // Step 1 — anything to commit?
     let dirty = match git_ops::has_changes().await {
         Ok(b) => b,
@@ -566,7 +571,18 @@ async fn run_post_swarm_git_pipeline(state: &Arc<AppState>, swarm_id: u64, goal:
     }
     let goal_short: String = goal.chars().take(60).collect();
     let commit_msg = format!("auto: {} (swarm #{})", goal_short, swarm_id);
-    let commit_sha = match git_ops::commit_all(&commit_msg).await {
+    // Diff-bloat fix: only commit files the agent actually touched during
+    // this swarm — diff against the snapshot taken at run_swarm start.
+    let dirty_after = git_ops::capture_status().await.unwrap_or_default();
+    let agent_files = git_ops::diff_status(dirty_before, &dirty_after);
+    tracing::info!(
+        swarm_id,
+        before = dirty_before.len(),
+        after = dirty_after.len(),
+        agent = agent_files.len(),
+        "post-swarm: file diff snapshot"
+    );
+    let commit_sha = match git_ops::commit_all(&commit_msg, &agent_files).await {
         Ok(s) => s,
         Err(e) => {
             tracing::warn!(swarm_id, "post-swarm: commit failed: {}", e);

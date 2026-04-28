@@ -282,11 +282,55 @@ pub async fn proxy_chat(
                 .unwrap_or_default()
         });
 
-    let msgs: Vec<(String, String)> = req
+    // Memory recall: find semantically-related prior chats from any source
+    // (cockpit /api/chat, IDE sidebar, swarm subtasks — all feed mesh_history's
+    // memory hookup). Inject the top matches as a synthetic system context
+    // before the user prompt so the LLM has the conversation history of the
+    // mesh available even though it's stateless per-call.
+    let recall_context: Option<String> = if !last_user_prompt.is_empty() {
+        let mem = state.memory.lock().await;
+        let hits = mem.recall(&last_user_prompt, 3);
+        drop(mem);
+        if hits.is_empty() {
+            None
+        } else {
+            let mut parts = Vec::new();
+            for (key, _score) in &hits {
+                if let Ok(Some(text)) = state.store.get(key) {
+                    parts.push(format!("[Recall: {}]", text));
+                }
+            }
+            if parts.is_empty() {
+                None
+            } else {
+                Some(format!(
+                    "Relevant prior mesh conversations (semantic match):\n{}\n",
+                    parts.join("\n")
+                ))
+            }
+        }
+    } else {
+        None
+    };
+
+    let mut msgs: Vec<(String, String)> = req
         .messages
         .into_iter()
         .map(|m| (m.role, m.content))
         .collect();
+
+    // Inject recall as the first system message (or prepend to existing system).
+    if let Some(ctx) = recall_context {
+        if let Some((role, content)) = msgs.first_mut() {
+            if role == "system" {
+                *content = format!("{}\n\n{}", ctx, content);
+            } else {
+                msgs.insert(0, ("system".to_string(), ctx));
+            }
+        } else {
+            msgs.insert(0, ("system".to_string(), ctx));
+        }
+    }
 
     let model = req.model.clone();
     let model_str = model.clone().unwrap_or_else(|| "default".to_string());

@@ -84,9 +84,64 @@ pub async fn has_changes() -> Result<bool, String> {
     Ok(!stdout.trim().is_empty())
 }
 
-/// Stage everything and create one commit. Returns the new commit SHA.
-pub async fn commit_all(message: &str) -> Result<String, String> {
-    let _ = git(&["add", "-A"]).await?;
+/// Capture the current `git status --porcelain HEAD` output as a list
+/// of file paths (rename targets only — the new name).
+///
+/// Used by the autonomous swarm git pipeline to capture the dirty-file
+/// snapshot BEFORE the agent runs, so `commit_all` can later commit only
+/// the files the agent actually touched (instead of dragging in
+/// pre-existing dirty state via `git add -A`).
+pub async fn capture_status() -> Result<Vec<String>, String> {
+    let (stdout, _) = git(&["status", "--porcelain", "HEAD"]).await?;
+    Ok(stdout
+        .lines()
+        .filter_map(|line| {
+            // Porcelain format: "XY path" where XY are status codes.
+            // Path starts at column 3 (0-indexed). For renames "R  old -> new"
+            // we keep only the new path.
+            if line.len() < 4 {
+                return None;
+            }
+            let path_part = &line[3..];
+            let path = if let Some(arrow) = path_part.find(" -> ") {
+                &path_part[arrow + 4..]
+            } else {
+                path_part
+            };
+            Some(path.trim().to_string())
+        })
+        .collect())
+}
+
+/// Files that are dirty NOW but were not dirty BEFORE — i.e. the set of
+/// files the agent touched during the swarm run.
+pub fn diff_status(before: &[String], after: &[String]) -> Vec<String> {
+    let before_set: std::collections::HashSet<&String> = before.iter().collect();
+    after
+        .iter()
+        .filter(|f| !before_set.contains(f))
+        .cloned()
+        .collect()
+}
+
+/// Stage specific files (or everything if `files` is empty) and create
+/// one commit. Returns the new commit SHA.
+///
+/// Pass an explicit file list from `diff_status` for autonomous swarm
+/// runs so the commit only contains the agent's changes, not whatever
+/// dirty state existed before. Pass `&[]` for legacy `git add -A`
+/// behaviour.
+pub async fn commit_all(message: &str, files: &[String]) -> Result<String, String> {
+    if files.is_empty() {
+        let _ = git(&["add", "-A"]).await?;
+    } else {
+        let mut args = vec!["add".to_string(), "--".to_string()];
+        for f in files {
+            args.push(f.clone());
+        }
+        let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let _ = git(&arg_refs).await?;
+    }
     let _ = git(&["commit", "-m", message]).await?;
     let (sha, _) = git(&["rev-parse", "HEAD"]).await?;
     Ok(sha.trim().to_string())
