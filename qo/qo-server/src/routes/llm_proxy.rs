@@ -59,8 +59,28 @@ pub(crate) async fn call_claude_cli_agent(
         .arg("--allow-dangerously-skip-permissions")
         .arg("--max-budget-usd").arg("0.50")
         .arg("--add-dir").arg(&workspace)
-        .arg("--tools").arg("Read,Edit,Write,Bash,Grep,Glob")
+        .arg("--tools").arg("Read,Edit,Write,Bash,Grep,Glob,mcp__playwright,mcp__context7")
         .current_dir(&workspace);
+
+    // MCP integration: give the agent web-research powers via Playwright
+    // (browse/scrape any page) and Context7 (live library docs). Both run
+    // as npx-spawned MCP servers so no qo-side install is needed.
+    // Disable via QO_MCP_DISABLE=1 if a session needs to run offline.
+    if std::env::var("QO_MCP_DISABLE").is_err() {
+        let mcp_config = r#"{
+            "mcpServers": {
+                "playwright": {
+                    "command": "npx",
+                    "args": ["-y", "@playwright/mcp@latest"]
+                },
+                "context7": {
+                    "command": "npx",
+                    "args": ["-y", "@upstash/context7-mcp"]
+                }
+            }
+        }"#;
+        cmd.arg("--mcp-config").arg(mcp_config);
+    }
 
     if let Some(sys) = system_prompt {
         if !sys.trim().is_empty() {
