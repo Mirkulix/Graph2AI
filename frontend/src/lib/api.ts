@@ -309,6 +309,23 @@ export const api = {
                        timeout_ms: opts?.timeoutMs,
                      } satisfies ConsensusRequest),
 
+  // Broadcast — fire-and-forget mesh fan-out. Sends one prompt to every
+  // selected IDE identity; replies (if any) trickle back through the
+  // standard SSE stream. Use when you want every IDE to react in
+  // parallel without the cockpit blocking on completion.
+  broadcast:       (prompt: string, targets: string[], opts?: { from?: string }) =>
+                     post<{
+                       sent: number;
+                       from: string;
+                       targets: string[];
+                       message_ids: number[];
+                       failures: Array<{ target: string; error: string }>;
+                     }>('/api/broadcast', {
+                       prompt,
+                       targets,
+                       from: opts?.from,
+                     }),
+
   // Providers — /api/providers/configured returns the array; /api/providers wraps it
   providers:       () => get<ProviderConfig[]>('/api/providers/configured'),
   providerTemplates: () => get<ProviderTemplate[]>('/api/providers/templates'),

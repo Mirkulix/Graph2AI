@@ -25,6 +25,11 @@ export default function SwarmPane() {
   const [feedback, setFeedback] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const [eligibleIdes, setEligibleIdes] = useState<PresenceEntry[]>([]);
   const [targetIde, setTargetIde] = useState<string>('');
+  // Broadcast (fan-out) state — separate from swarm flow.
+  const [bcPrompt, setBcPrompt] = useState('');
+  const [bcSelected, setBcSelected] = useState<Set<string>>(new Set());
+  const [bcBusy, setBcBusy] = useState(false);
+  const [bcFeedback, setBcFeedback] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const aliveRef = useRef(true);
 
   // ─── Load eligible IDE list once on mount ───────────────────────────
@@ -87,6 +92,28 @@ export default function SwarmPane() {
     }
   }
 
+  async function runBroadcast() {
+    const trimmed = bcPrompt.trim();
+    const targets = Array.from(bcSelected);
+    if (!trimmed || targets.length === 0 || bcBusy) return;
+    setBcBusy(true);
+    setBcFeedback(null);
+    try {
+      const res = await api.broadcast(trimmed, targets);
+      const failedCount = res.failures.length;
+      const text = failedCount === 0
+        ? `broadcast → ${res.sent} IDE${res.sent === 1 ? '' : 's'}`
+        : `broadcast → ${res.sent} ok, ${failedCount} failed`;
+      setBcFeedback({ kind: failedCount === 0 ? 'ok' : 'err', text });
+      if (failedCount === 0) setBcPrompt('');
+    } catch (e) {
+      setBcFeedback({ kind: 'err', text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBcBusy(false);
+      setTimeout(() => setBcFeedback(null), 4000);
+    }
+  }
+
   async function stopSwarm(id: number) {
     try {
       await api.swarmStop(id);
@@ -138,6 +165,17 @@ export default function SwarmPane() {
         eligibleIdes={eligibleIdes}
         targetIde={targetIde}
         setTargetIde={setTargetIde}
+      />
+
+      <BroadcastStarter
+        prompt={bcPrompt}
+        setPrompt={setBcPrompt}
+        eligibleIdes={eligibleIdes}
+        selected={bcSelected}
+        setSelected={setBcSelected}
+        busy={bcBusy}
+        feedback={bcFeedback}
+        onSend={() => void runBroadcast()}
       />
 
       <h3 className="eyebrow" style={{ margin: '24px 0 10px' }}>
@@ -262,6 +300,178 @@ function SwarmStarter(p: StarterProps) {
           }}
         >
           {p.busy ? 'starting…' : 'START SWARM'}
+        </button>
+      </div>
+
+      {p.feedback && (
+        <div style={{
+          marginTop: 10,
+          padding: '6px 10px',
+          fontSize: 11,
+          fontFamily: 'var(--font-mono)',
+          color: p.feedback.kind === 'ok' ? 'var(--verified-bright)' : 'var(--alert-bright)',
+          background: p.feedback.kind === 'ok' ? 'var(--verified-soft)' : 'var(--alert-soft)',
+          borderRadius: 4,
+        }}>
+          {p.feedback.text}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ─── Broadcast starter (mesh fan-out) ───────────────────────────────
+
+interface BroadcastProps {
+  prompt: string;
+  setPrompt: (s: string) => void;
+  eligibleIdes: PresenceEntry[];
+  selected: Set<string>;
+  setSelected: (s: Set<string>) => void;
+  busy: boolean;
+  feedback: { kind: 'ok' | 'err'; text: string } | null;
+  onSend: () => void;
+}
+
+function BroadcastStarter(p: BroadcastProps) {
+  const canSend = !p.busy && p.prompt.trim().length > 0 && p.selected.size > 0;
+  const allSelected = p.eligibleIdes.length > 0 && p.selected.size === p.eligibleIdes.length;
+
+  function toggle(identity: string) {
+    const next = new Set(p.selected);
+    if (next.has(identity)) next.delete(identity);
+    else next.add(identity);
+    p.setSelected(next);
+  }
+  function selectAll() {
+    p.setSelected(new Set(p.eligibleIdes.map(e => e.identity)));
+  }
+  function selectNone() {
+    p.setSelected(new Set());
+  }
+
+  return (
+    <section style={{ ...starterStyle, marginTop: 16 }} aria-label="broadcast to selected IDEs">
+      <div className="eyebrow" style={{ marginBottom: 10 }}>
+        broadcast — fan out one prompt to selected IDEs
+      </div>
+
+      <textarea
+        value={p.prompt}
+        onChange={e => p.setPrompt(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            if (canSend) p.onSend();
+          }
+        }}
+        placeholder="Prompt — every selected IDE receives this and (with auto-respond enabled) starts working autonomously…"
+        rows={3}
+        style={{
+          width: '100%',
+          background: 'var(--bg-panel)',
+          border: '1px solid var(--rule-default)',
+          borderRadius: 4,
+          color: 'var(--ink-bright)',
+          fontFamily: 'var(--font-ui)',
+          fontSize: 13,
+          padding: '10px 12px',
+          resize: 'vertical',
+          minHeight: 64,
+          lineHeight: 1.5,
+        }}
+      />
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 10, flexWrap: 'wrap' }}>
+        <span className="eyebrow">target IDEs · {p.selected.size}/{p.eligibleIdes.length}</span>
+        <button
+          type="button"
+          onClick={allSelected ? selectNone : selectAll}
+          disabled={p.eligibleIdes.length === 0}
+          className="surface-button"
+          style={{ padding: '4px 10px', fontSize: 11 }}
+        >
+          {allSelected ? 'select none' : 'select all'}
+        </button>
+      </div>
+
+      {p.eligibleIdes.length === 0 ? (
+        <div style={{
+          marginTop: 8,
+          padding: '8px 10px',
+          fontSize: 11,
+          fontFamily: 'var(--font-mono)',
+          color: 'var(--ink-faint)',
+          background: 'var(--bg-raised)',
+          border: '1px dashed var(--rule-faint)',
+          borderRadius: 4,
+        }}>
+          no eligible IDEs registered. Open a project in VS Code with the QLang extension to register one.
+        </div>
+      ) : (
+        <div style={{
+          marginTop: 8,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 4,
+          maxHeight: 200,
+          overflowY: 'auto',
+          padding: '8px 10px',
+          background: 'var(--bg-raised)',
+          border: '1px solid var(--rule-faint)',
+          borderRadius: 4,
+        }}>
+          {p.eligibleIdes.map(ide => {
+            const checked = p.selected.has(ide.identity);
+            return (
+              <label
+                key={ide.identity}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '4px 6px',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 12,
+                  color: 'var(--ink-bright)',
+                  cursor: 'pointer',
+                  borderRadius: 3,
+                  background: checked ? 'var(--cta-soft)' : 'transparent',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggle(ide.identity)}
+                  style={{ margin: 0 }}
+                />
+                <span style={{ fontWeight: 600 }}>{ide.identity}</span>
+                {ide.ide_name && (
+                  <span style={{ color: 'var(--ink-faint)' }}>· {ide.ide_name}</span>
+                )}
+                {ide.host && (
+                  <span style={{ color: 'var(--ink-faint)' }}>· {ide.host}</span>
+                )}
+              </label>
+            );
+          })}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', alignItems: 'center', marginTop: 10 }}>
+        <button
+          type="button"
+          onClick={p.onSend}
+          disabled={!canSend}
+          className="surface-button surface-button--primary"
+          style={{
+            marginLeft: 'auto',
+            padding: '8px 16px',
+            opacity: canSend ? 1 : 0.4,
+            cursor: canSend ? 'pointer' : 'not-allowed',
+          }}
+        >
+          {p.busy ? 'sending…' : `BROADCAST → ${p.selected.size}`}
         </button>
       </div>
 

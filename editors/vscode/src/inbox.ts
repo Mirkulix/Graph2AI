@@ -193,11 +193,21 @@ export class QlmsInbox {
     /**
      * If auto-respond is enabled and this message is NOT itself a reply,
      * call the configured LLM and ship the answer back as a Result frame.
+     *
+     * Special-case: cockpit-initiated broadcasts (trigger_kind === 'broadcast')
+     * always run, regardless of the user's `autoRespond.enabled` flag. The
+     * user already consented by clicking BROADCAST in the cockpit; making
+     * them flip a per-IDE setting on every machine defeats the whole point
+     * of the fan-out. The provider stack (default 'server' → qo's LLM
+     * router) is reused as-is, so the IDE uses whatever LLM is bundled
+     * into the qo distribution without needing per-IDE API keys.
      */
     private async maybeAutoRespond(msg: InboxMessage): Promise<void> {
-        const cfg = vscode.workspace.getConfiguration(QLMS_CONFIG_SECTION);
-        if (!cfg.get<boolean>('autoRespond.enabled', false)) return;
         if (msg.is_reply === true) return;
+        const cfg = vscode.workspace.getConfiguration(QLMS_CONFIG_SECTION);
+        const enabled = cfg.get<boolean>('autoRespond.enabled', false);
+        const isBroadcast = (msg as { trigger_kind?: unknown }).trigger_kind === 'broadcast';
+        if (!enabled && !isBroadcast) return;
 
         const fromName = labelOf(msg.from);
         if (!fromName) return;

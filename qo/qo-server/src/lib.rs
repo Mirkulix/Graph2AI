@@ -746,6 +746,9 @@ pub async fn build_app(
         .route("/api/chat", post(routes::chat::chat))
         .route("/api/chat/history", get(routes::chat::chat_history))
         .route("/api/consensus", post(routes::consensus::consensus))
+        // Mesh fan-out — push one prompt to N IDE identities at once. Fire
+        // and forget; replies trickle in through the existing SSE stream.
+        .route("/api/broadcast", post(routes::broadcast::broadcast))
         // IDE-side LLM delegation: extensions POST chat requests here so
         // qo can use its centrally-stored API keys instead of every IDE
         // shipping its own credentials.
