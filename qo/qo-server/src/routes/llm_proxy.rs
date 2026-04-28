@@ -267,6 +267,21 @@ pub async fn proxy_chat(
         ));
     }
 
+    // Capture the last user prompt BEFORE the move so mesh_history can
+    // record the (prompt, response) pair after the provider returns.
+    let last_user_prompt: String = req
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == "user")
+        .map(|m| m.content.clone())
+        .unwrap_or_else(|| {
+            req.messages
+                .last()
+                .map(|m| m.content.clone())
+                .unwrap_or_default()
+        });
+
     let msgs: Vec<(String, String)> = req
         .messages
         .into_iter()
@@ -367,6 +382,35 @@ pub async fn proxy_chat(
             .map_err(|e| e.to_string())
     };
     let latency_ms = start.elapsed().as_millis() as u64;
+
+    // Mesh-history fanout — runs only on success so failed calls don't
+    // pollute the unified history with empty responses.
+    if let Ok(content) = &result {
+        // Sidebar callers always send their identity; manual cockpit-side
+        // pokes (curl, browser devtools) fall back to "cockpit-user".
+        let requester = req
+            .requester_identity
+            .as_deref()
+            .unwrap_or("cockpit-user");
+        let responder = match provider_lc.as_str() {
+            "claude-cli-agent" | "claude-agent" => "claude-cli-agent",
+            "claude-cli" | "claude" => "claude-cli",
+            "anthropic" => "anthropic",
+            other => other,
+        };
+        crate::mesh_history::record_chat_pair(
+            &state,
+            crate::mesh_history::ChatPair {
+                requester,
+                responder,
+                prompt: &last_user_prompt,
+                response: content,
+                provider: &provider_lc,
+                duration_ms: latency_ms,
+            },
+        )
+        .await;
+    }
 
     match result {
         Ok(content) => {

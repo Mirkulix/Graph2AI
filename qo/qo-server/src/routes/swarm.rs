@@ -710,6 +710,31 @@ async fn run_subtask(
         s.finished_at = Some(now_secs());
     })
     .await;
+
+    // Mirror successful subtask exchanges into the unified mesh history so
+    // the cockpit Conversation Pane / Knowledge Ledger / future-recall
+    // memory all see swarm activity. Skip errors so retries don't pollute
+    // the recall corpus with `[error] ...` strings.
+    if status == "done" {
+        let provider = if is_server_agent {
+            "claude-cli-agent"
+        } else {
+            "ide-mediated"
+        };
+        let requester = format!("swarm-{}", swarm_id);
+        crate::mesh_history::record_chat_pair(
+            &state,
+            crate::mesh_history::ChatPair {
+                requester: &requester,
+                responder: &assigned,
+                prompt: &subtask.prompt,
+                response: &response_text,
+                provider,
+                duration_ms: 0,
+            },
+        )
+        .await;
+    }
 }
 
 // ---------------------------------------------------------------------------

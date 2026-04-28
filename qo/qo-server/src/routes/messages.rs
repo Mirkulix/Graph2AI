@@ -147,3 +147,125 @@ pub async fn recent_messages(
     let slice: Vec<_> = buf.iter().skip(start).cloned().collect();
     Json(slice)
 }
+
+/// One row in the cross-source unified-history feed. The cockpit reads
+/// this from `/api/history/unified` to populate the Conversation Pane
+/// with everything that happened across IDE sidebars, /api/chat, and
+/// swarm subtasks in a single chronological list.
+#[derive(Serialize)]
+pub struct UnifiedEvent {
+    /// Source bucket — "bus" | "chat" | "swarm".
+    pub kind: String,
+    /// Unix seconds.
+    pub ts: u64,
+    pub from: String,
+    pub to: String,
+    pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+}
+
+/// GET /api/history/unified?n=50 — merges three history sources
+/// (recent bus messages, persisted chat history, live swarm subtask
+/// responses) into one chronological stream, newest first. Single
+/// endpoint that the cockpit can hit to see "everything anywhere".
+pub async fn unified_history(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<RecentQuery>,
+) -> Json<Vec<UnifiedEvent>> {
+    let n = q.n.clamp(1, 500);
+    let mut events: Vec<UnifiedEvent> = Vec::new();
+
+    // Source 1 — bus ring buffer (covers /api/llm/proxy + native bus traffic).
+    {
+        let buf = state.recent_messages.lock().await;
+        for m in buf.iter() {
+            events.push(UnifiedEvent {
+                kind: "bus".to_string(),
+                ts: m.timestamp,
+                from: m.from.clone(),
+                to: m.to.clone(),
+                content: m.content.clone(),
+                provider: None,
+                duration_ms: None,
+            });
+        }
+    }
+
+    // Source 2 — persisted /api/chat history. Each redb row holds a JSON
+    // {id, user, assistant, timestamp} blob; we expand it into two
+    // logical events (user prompt, QO reply) so the timeline reads
+    // naturally next to bus traffic.
+    if let Ok(rows) = state.store.chat_history(n.min(200)) {
+        for (_id, json) in rows {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json) {
+                let ts = v.get("timestamp").and_then(|x| x.as_u64()).unwrap_or(0);
+                let user = v
+                    .get("user")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let assistant = v
+                    .get("assistant")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if !user.is_empty() {
+                    events.push(UnifiedEvent {
+                        kind: "chat".to_string(),
+                        ts,
+                        from: "user".to_string(),
+                        to: "qo".to_string(),
+                        content: user,
+                        provider: None,
+                        duration_ms: None,
+                    });
+                }
+                if !assistant.is_empty() {
+                    events.push(UnifiedEvent {
+                        kind: "chat".to_string(),
+                        ts,
+                        from: "qo".to_string(),
+                        to: "user".to_string(),
+                        content: assistant,
+                        provider: None,
+                        duration_ms: None,
+                    });
+                }
+            }
+        }
+    }
+
+    // Source 3 — live swarm subtasks. We surface each completed subtask
+    // as a single event labeled with the swarm id, so the cockpit can
+    // group them or filter them out.
+    {
+        let swarms = state.swarms.read().await;
+        for s in swarms.values() {
+            for round in &s.rounds {
+                for st in &round.subtasks {
+                    let Some(resp) = st.response.as_deref() else {
+                        continue;
+                    };
+                    let ts = st.finished_at.or(st.started_at).unwrap_or(s.started_at);
+                    events.push(UnifiedEvent {
+                        kind: "swarm".to_string(),
+                        ts,
+                        from: format!("swarm-{}", s.id),
+                        to: st.assigned_to.clone(),
+                        content: resp.to_string(),
+                        provider: Some(st.status.clone()),
+                        duration_ms: None,
+                    });
+                }
+            }
+        }
+    }
+
+    // Newest first, then trim to `n`.
+    events.sort_by(|a, b| b.ts.cmp(&a.ts));
+    events.truncate(n);
+    Json(events)
+}

@@ -2,6 +2,7 @@ pub mod agent_models;
 pub mod auth;
 pub mod config;
 pub mod git_ops;
+pub mod mesh_history;
 pub mod peer_discovery;
 pub mod routes;
 pub mod tools;
@@ -789,6 +790,7 @@ pub async fn build_app(
         .route("/api/messages/conversations", get(routes::messages::bus_conversations))
         .route("/api/messages/stream", get(routes::messages::bus_stream))
         .route("/api/messages/recent", get(routes::messages::recent_messages))
+        .route("/api/history/unified", get(routes::messages::unified_history))
         .route("/api/supervisor/state", get(routes::supervisor::state))
         .route("/api/supervisor/logs", get(routes::supervisor::logs))
         .route("/api/supervisor/console", get(routes::supervisor::console))
