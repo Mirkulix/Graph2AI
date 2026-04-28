@@ -215,6 +215,10 @@ async fn call_anthropic_direct(
         .header("Content-Type", "application/json")
         .header("x-api-key", api_key)
         .header("anthropic-version", "2023-06-01")
+        // Enable prompt-caching so repeated system prompts don't get
+        // billed at full rate. Discovered by an autonomous research swarm
+        // (see docs/ANTHROPIC-CACHE-HEADERS.md).
+        .header("anthropic-beta", "prompt-caching-2024-07-31")
         .json(&body)
         .send()
         .await
