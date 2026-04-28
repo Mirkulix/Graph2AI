@@ -235,7 +235,17 @@ function Composer({
         id: Math.floor(Math.random() * 1_000_000),
         from: { name: 'cockpit', capabilities: ['Execute'] },
         to: { name: target, capabilities: ['Execute'] },
-        graph: { type: 'prompt', source: text },
+        // Rust `Graph` requires id/version/nodes/edges/constraints/metadata —
+        // a `{type, source}` object decodes to HTTP 422.
+        graph: {
+          id: `cockpit-send-${Date.now()}`,
+          version: '1.0',
+          nodes: [], edges: [], constraints: [],
+          metadata: {
+            source: 'cockpit-send',
+            content: text,
+          },
+        },
         inputs: {},
         intent: 'Execute',
         in_reply_to: null,
