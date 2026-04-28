@@ -218,9 +218,40 @@ pub async fn register(
         map.insert(req.identity.clone(), entry);
     }
 
+    // Mesh-integration: also register a bus mailbox for this IDE so
+    // /api/consensus and /api/swarm can call `bus.send_and_wait` against
+    // the IDE identity. Without this the bus returns AgentNotFound and
+    // server-side aggregators can't collect IDE replies even though the
+    // IDE auto-respond fires via SSE.
+    //
+    // We then spawn a drain task that consumes (and drops) the mailbox
+    // forever. IDEs receive their messages via /api/messages/stream SSE
+    // (the bus also forwards to listeners), not by consuming the mailbox.
+    // Without the drain the mailbox would fill up and `bus.send` would
+    // block; with the drain the channel stays open so `send` resolves
+    // immediately and the reply path (which targets the requester's own
+    // mailbox, NOT this IDE's) works as expected.
+    //
+    // Re-register naturally evicts the prior AgentEntry (bus.register
+    // overwrites by name), which drops its tx and ends the prior drain
+    // task on its own — no leak across reloads.
+    {
+        use qlang_agent::protocol::{AgentId, Capability};
+        let agent_id = AgentId {
+            name: req.identity.clone(),
+            capabilities: vec![Capability::Execute],
+        };
+        let mut mailbox = state.message_bus.register(agent_id).await;
+        tokio::spawn(async move {
+            while mailbox.recv().await.is_some() {
+                // discard — IDE consumes via SSE, not via the mailbox
+            }
+        });
+    }
+
     tracing::info!(
         identity = %req.identity,
-        "presence: registered"
+        "presence: registered (presence + bus mailbox)"
     );
 
     Ok(Json(RegisterResponse {

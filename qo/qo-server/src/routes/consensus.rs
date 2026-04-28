@@ -6,12 +6,90 @@
 //! lexically compared to estimate how much the agents agree.
 
 use axum::{extract::State, http::StatusCode, Json};
+use qlang_agent::protocol::{AgentId, Capability, GraphMessage, MessageIntent};
+use qlang_core::graph::Graph;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap as StdHashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::AppState;
+
+/// True for the 6 built-in server agents. Anything else is treated as an
+/// IDE identity from the presence registry and dispatched via QLMS bus.
+const SERVER_AGENTS: &[&str] = &[
+    "developer", "researcher", "guardian", "strategist", "artisan", "ceo",
+];
+
+fn is_server_agent(name: &str) -> bool {
+    SERVER_AGENTS.contains(&name)
+}
+
+/// Bus-dispatch helper for IDE identities — sends an Execute envelope and
+/// awaits a Result reply correlated by `in_reply_to`. Mirrors the same
+/// pattern as `swarm::ide_dispatch`.
+async fn dispatch_to_ide(
+    state: &Arc<AppState>,
+    ide_identity: &str,
+    prompt: &str,
+    timeout: Duration,
+) -> Result<String, String> {
+    let bus = state.message_bus.clone();
+    let requester_name = format!(
+        "consensus-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0)
+    );
+    let requester = AgentId {
+        name: requester_name.clone(),
+        capabilities: vec![Capability::Execute],
+    };
+    let mut mailbox = bus.register(requester.clone()).await;
+
+    let mut metadata = StdHashMap::new();
+    metadata.insert("source".to_string(), "consensus".to_string());
+    metadata.insert("content".to_string(), prompt.to_string());
+
+    let msg_id = qlang_agent::protocol::next_msg_id();
+    let exec = GraphMessage {
+        id: msg_id,
+        from: requester.clone(),
+        to: AgentId {
+            name: ide_identity.to_string(),
+            capabilities: vec![Capability::Execute],
+        },
+        graph: Graph {
+            id: format!("consensus-task-{}", msg_id),
+            version: "1.0".to_string(),
+            nodes: vec![],
+            edges: vec![],
+            constraints: vec![],
+            metadata,
+        },
+        inputs: StdHashMap::new(),
+        intent: MessageIntent::Execute,
+        in_reply_to: None,
+        signature: None,
+        signer_pubkey: None,
+        graph_hash: None,
+    };
+
+    let result = bus.send_and_wait(exec, &mut mailbox, timeout).await;
+    bus.unregister(&requester_name).await;
+
+    match result {
+        Ok(reply) => Ok(reply
+            .graph
+            .metadata
+            .get("content")
+            .cloned()
+            .unwrap_or_else(|| "(no content)".to_string())),
+        Err(e) => Err(format!("ide '{}' no response: {}", ide_identity, e)),
+    }
+}
 
 /// Inbound request — one prompt, a list of agent personas to ask.
 #[derive(Debug, Deserialize)]
@@ -97,9 +175,15 @@ pub async fn consensus(
     let llm = state.llm.clone();
 
     // 2. Fan-out: spawn one task per requested agent.
+    //    Server agents go through the LLM router; IDE identities (anything
+    //    not in SERVER_AGENTS) get dispatched via QLMS bus and we wait for
+    //    a Result envelope. This is what makes /api/consensus mesh-aware:
+    //    you can ask "developer + cursor-01-... + trae-01-..." in one call
+    //    and get N parallel perspectives.
     let mut handles = Vec::with_capacity(req.agents.len());
     for agent_name in &req.agents {
         let llm = llm.clone();
+        let state_for_task = state.clone();
         let prompt = req.prompt.clone();
         let system = req
             .system_prompt
@@ -108,39 +192,41 @@ pub async fn consensus(
         let agent_name = agent_name.clone();
         handles.push(tokio::spawn(async move {
             let start = Instant::now();
-            let messages = vec![
-                ("system".to_string(), system),
-                ("user".to_string(), prompt),
-            ];
-            // Force DeepSeek tier explicitly — auto-router never selects it.
-            // model: None lets DeepSeek use its configured default.
-            let result = tokio::time::timeout(
-                timeout,
-                llm.chat_with_model(Some(qo_llm::Tier::DeepSeek), None, messages),
-            )
-            .await;
+            let result_text: Result<String, String> = if is_server_agent(&agent_name) {
+                // Server-agent path: direct LLM call.
+                let messages = vec![
+                    ("system".to_string(), system),
+                    ("user".to_string(), prompt.clone()),
+                ];
+                match tokio::time::timeout(
+                    timeout,
+                    llm.chat_with_model(Some(qo_llm::Tier::DeepSeek), None, messages),
+                )
+                .await
+                {
+                    Ok(Ok((text, _tier))) => Ok(text),
+                    Ok(Err(e)) => Err(e.to_string()),
+                    Err(_) => Err("timeout".to_string()),
+                }
+            } else {
+                // IDE-identity path: dispatch via bus, wait for Result.
+                dispatch_to_ide(&state_for_task, &agent_name, &prompt, timeout).await
+            };
             let latency_ms = start.elapsed().as_millis() as u64;
-            match result {
-                Ok(Ok((text, _tier))) => AgentReply {
+            match result_text {
+                Ok(text) => AgentReply {
                     agent: agent_name,
                     content: text,
                     latency_ms,
                     ok: true,
                     error: None,
                 },
-                Ok(Err(e)) => AgentReply {
+                Err(e) => AgentReply {
                     agent: agent_name,
                     content: String::new(),
                     latency_ms,
                     ok: false,
-                    error: Some(e.to_string()),
-                },
-                Err(_) => AgentReply {
-                    agent: agent_name,
-                    content: String::new(),
-                    latency_ms,
-                    ok: false,
-                    error: Some("timeout".to_string()),
+                    error: Some(e),
                 },
             }
         }));
