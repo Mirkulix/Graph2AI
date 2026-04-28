@@ -358,11 +358,30 @@ function formatAsComment(style: CommentStyle, header: string, body: string): str
 
 async function insertAsComment(msg: InboxMessage): Promise<void> {
     const editor = vscode.window.activeTextEditor;
+    // No editor open → fall back to opening the reply in a side-by-side
+    // markdown view instead of erroring out. This is what the user
+    // actually meant when they clicked the action; "no active editor"
+    // popups are useless and the inbox should never silently lose data.
     if (!editor) {
-        void vscode.window.showWarningMessage('No active editor — open a file first to insert the reply as a comment.');
-        return;
+        void vscode.window.showInformationMessage(
+            'No active editor — opening reply as markdown side-by-side instead.'
+        );
+        return openSideBySide(msg);
     }
+    // Refuse to insert into source files of common code languages —
+    // a QLMS reply as a comment in the middle of qo-server/lib.rs is
+    // pollution. Fall back to side-by-side markdown for those.
     const languageId = editor.document.languageId;
+    const NON_CODE_LANGS = new Set([
+        'plaintext', 'markdown', 'log', 'restructuredtext', 'asciidoc',
+        'tex', 'latex', 'bibtex', 'org',
+    ]);
+    if (!NON_CODE_LANGS.has(languageId)) {
+        void vscode.window.showInformationMessage(
+            `Active editor is a ${languageId} file — opening reply as markdown side-by-side to avoid polluting source code.`
+        );
+        return openSideBySide(msg);
+    }
     const style = commentStyleFor(languageId);
     const fromName = labelOf(msg.from) ?? '?';
     const intent = intentLabel(msg.intent);
