@@ -72,8 +72,31 @@
         "command": "qlang.qlms.probeLmModels",
         "title": "QLMS: Probe IDE-internal LLM access (vscode.lm)",
         "icon": "$(search)"
+      },
+      {
+        "command": "qlang.qlms.openAgentChat",
+        "title": "QLMS: Open Agent Chat Sidebar",
+        "icon": "$(comment-discussion)"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "qlang-mesh",
+          "title": "OrbitQO Mesh",
+          "icon": "$(comment-discussion)"
+        }
+      ]
+    },
+    "views": {
+      "qlang-mesh": [
+        {
+          "id": "qlang.agentChat",
+          "name": "Agent Chat",
+          "type": "webview"
+        }
+      ]
+    },
     "keybindings": [
       {
         "command": "qlang.run",

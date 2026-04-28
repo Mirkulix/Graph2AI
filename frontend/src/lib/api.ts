@@ -225,10 +225,10 @@ export interface AutonomousState {
 
 export interface AutoBranchInfo {
   name: string;             // e.g. "auto/fix-correlation-1745234567"
-  sha: string;              // last commit SHA, short
-  message: string;          // commit subject
-  date: string;             // ISO
-  diff?: { files_changed: number; insertions: number; deletions: number };
+  last_commit_sha: string;          // backend field name
+  last_commit_message: string;
+  last_commit_date: string;
+  diff?: { files_changed: number; insertions: number; deletions: number } | null;
   // Optional: backend may report whether tests passed for this branch.
   // 'passed' | 'failed' | 'unknown' (or omit). Treated as unknown if missing.
   tests?: 'passed' | 'failed' | 'unknown';

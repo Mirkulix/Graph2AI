@@ -5,6 +5,7 @@ import { QlmsClient, QlmsConnectionReport } from './qlms-client';
 import { QlmsInbox, openAsJson, labelOf } from './inbox';
 import { startLanguageServer, QlangLspHandle } from './lsp';
 import { startTriggers } from './triggers';
+import { AgentChatViewProvider } from './agentChatPanel';
 
 const QLMS_CONFIG_SECTION = 'qlang.qlms';
 const QLANG_CONFIG_SECTION = 'qlang';
@@ -29,6 +30,7 @@ export function activate(context: vscode.ExtensionContext) {
     registerStartServer(context);
     registerStatusBars(context);
     registerQlmsCheck(context);
+    registerAgentChat(context, identity);
     startLspIfEnabled(context);
     startInboxIfEnabled(context, identity);
     startTriggersIfEnabled(context, identity);
@@ -379,6 +381,32 @@ function registerStatusBars(context: vscode.ExtensionContext): void {
     bridgeStatus.tooltip = 'Handover current graph to OrbitQLang Agent Bus';
     bridgeStatus.show();
     context.subscriptions.push(bridgeStatus);
+
+    const chatStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 96);
+    chatStatus.text = '$(comment-discussion) Agent Chat';
+    chatStatus.command = 'qlang.qlms.openAgentChat';
+    chatStatus.tooltip = 'Open the OrbitQO Mesh chat sidebar';
+    chatStatus.show();
+    context.subscriptions.push(chatStatus);
+}
+
+/**
+ * Registers the WebviewView provider for the OrbitQO Mesh sidebar plus the
+ * `qlang.qlms.openAgentChat` command that focuses it from the status bar.
+ */
+function registerAgentChat(context: vscode.ExtensionContext, identity: string): void {
+    const provider = new AgentChatViewProvider(context, identity);
+    context.subscriptions.push(
+        vscode.window.registerWebviewViewProvider(
+            AgentChatViewProvider.viewType,
+            provider,
+        ),
+    );
+    context.subscriptions.push(
+        vscode.commands.registerCommand('qlang.qlms.openAgentChat', () => {
+            void vscode.commands.executeCommand('qlang.agentChat.focus');
+        }),
+    );
 }
 
 // ---------------------------------------------------------------------------

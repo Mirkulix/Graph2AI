@@ -206,9 +206,9 @@ function BranchRow({ branch, expanded, onToggle, onMerge, onDiscard, busy, diffE
       </button>
 
       <div style={metaRowStyle}>
-        <span style={shaStyle}>{branch.sha.slice(0, 7)}</span>
-        <span style={dateStyle}>{formatDate(branch.date)}</span>
-        <span style={messageStyle} title={branch.message}>"{truncate(branch.message, 64)}"</span>
+        <span style={shaStyle}>{(branch.last_commit_sha ?? '').slice(0, 7)}</span>
+        <span style={dateStyle}>{formatDate(branch.last_commit_date ?? '')}</span>
+        <span style={messageStyle} title={branch.last_commit_message ?? ''}>"{truncate(branch.last_commit_message ?? '', 64)}"</span>
       </div>
 
       {branch.diff && (
