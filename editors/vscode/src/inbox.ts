@@ -156,6 +156,25 @@ export class QlmsInbox {
         const fromLabel = labelOf(msg.from) ?? '?';
         const intent = typeof msg.intent === 'string' ? msg.intent : (msg.intent ? JSON.stringify(msg.intent) : '?');
         const cfg = vscode.workspace.getConfiguration(QLMS_CONFIG_SECTION);
+
+        // Replies (Result envelopes) are what the user actually wants to
+        // SEE — they sent a handover, they want the answer right now, no
+        // extra click needed. Auto-open as side-by-side markdown unless
+        // the user explicitly turned auto-action off via the new setting
+        // qlang.qlms.inbox.replyAutoAction.
+        if (msg.is_reply === true) {
+            const autoAction = cfg.get<string>('inbox.replyAutoAction', 'side-by-side');
+            if (autoAction === 'side-by-side') {
+                void openSideBySide(msg);
+                return;
+            }
+            if (autoAction === 'silent') {
+                // record but don't surface
+                return;
+            }
+            // 'prompt' falls through to the legacy 4-action popup
+        }
+
         const autoRespondActive = cfg.get<boolean>('autoRespond.enabled', false) && msg.is_reply !== true;
         const label = autoRespondActive
             ? `Reply from ${fromLabel} (intent: ${intent}, auto-responded as ${this.opts.identity})`

@@ -148,6 +148,12 @@
           "default": true,
           "description": "Subscribe to /api/messages/stream and surface incoming QLMS messages addressed to this IDE as VS Code notifications with an 'Open in editor' action."
         },
+        "qlang.qlms.inbox.replyAutoAction": {
+          "type": "string",
+          "enum": ["side-by-side", "silent", "prompt"],
+          "default": "side-by-side",
+          "description": "What to do when a reply (Result envelope) arrives in the inbox. 'side-by-side' (default) auto-opens the reply as markdown next to the editor — no click needed. 'silent' records it but suppresses the popup entirely (use the cockpit Knowledge view to see it later). 'prompt' falls back to the legacy 4-action notification popup."
+        },
         "qlang.qlms.inbox.identity": {
           "type": "string",
           "default": "",
