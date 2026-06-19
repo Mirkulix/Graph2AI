@@ -102,7 +102,11 @@ mod tests {
             vec![],
             vec![TensorType::f32_matrix(28, 28)],
         );
-        g.add_node(Op::ToTernary, vec![TensorType::f32_matrix(28, 28)], vec![TensorType::ternary_matrix(28, 28)]);
+        g.add_node(
+            Op::Relu,
+            vec![TensorType::f32_matrix(28, 28)],
+            vec![TensorType::f32_matrix(28, 28)],
+        );
         g.add_edge(0, 0, 1, 0, TensorType::f32_matrix(28, 28));
 
         let binary = to_binary(&g).unwrap();

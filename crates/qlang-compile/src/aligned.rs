@@ -261,34 +261,26 @@ mod tests {
     }
 
     #[test]
-    fn simd_ternary_aligned() {
+    fn simd_sigmoid_aligned() {
         use qlang_core::graph::Graph;
         use qlang_core::ops::Op;
         use qlang_core::tensor::TensorType;
         use inkwell::context::Context;
 
-        let mut g = Graph::new("ternary_aligned");
+        let mut g = Graph::new("sigmoid_aligned");
         let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![TensorType::f32_vector(16)]);
-        let _b = g.add_node(Op::Input { name: "b".into() }, vec![], vec![TensorType::f32_vector(16)]);
-        let ternary = g.add_node(Op::ToTernary, vec![TensorType::f32_vector(16)], vec![TensorType::f32_vector(16)]);
+        let sigmoid = g.add_node(Op::Sigmoid, vec![TensorType::f32_vector(16)], vec![TensorType::f32_vector(16)]);
         let out = g.add_node(Op::Output { name: "y".into() }, vec![TensorType::f32_vector(16)], vec![]);
-        g.add_edge(a, 0, ternary, 0, TensorType::f32_vector(16));
-        g.add_edge(ternary, 0, out, 0, TensorType::f32_vector(16));
+        g.add_edge(a, 0, sigmoid, 0, TensorType::f32_vector(16));
+        g.add_edge(sigmoid, 0, out, 0, TensorType::f32_vector(16));
 
         let context = Context::create();
-        let compiled = crate::simd::compile_graph_simd(&context, &g).unwrap();
-
-        let input: Vec<f32> = vec![
-            0.5, -0.5, 0.1, -0.1, 0.8, -0.8, 0.0, 0.25,
-            -0.25, 0.4, -0.4, 0.05, -0.05, 1.0, -1.0, 0.29,
-        ];
-        let dummy = vec![0.0f32; 16];
-        let result = execute_aligned(&compiled, &input, &dummy).unwrap();
-
-        // Values > 0.3 → +1, < -0.3 → -1, else → 0
-        let expected: Vec<f32> = input.iter().map(|&x| {
-            if x > 0.3 { 1.0 } else if x < -0.3 { -1.0 } else { 0.0 }
-        }).collect();
-        assert_eq!(result, expected);
+        match crate::simd::compile_graph_simd(&context, &g) {
+            Err(crate::codegen::CodegenError::UnsupportedOp(op)) => {
+                assert_eq!(op, "SIMD: sigmoid");
+            }
+            Err(other) => panic!("expected SIMD sigmoid to be unsupported, got {other}"),
+            Ok(_) => panic!("SIMD sigmoid should remain unsupported"),
+        };
     }
 }

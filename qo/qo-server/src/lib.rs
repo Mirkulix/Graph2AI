@@ -27,7 +27,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
-use tower_http::services::ServeDir;
+use tower_http::services::{ServeDir, ServeFile};
 
 /// Snapshot of a single bus message stored in the server-side ring buffer.
 /// Mirrors the shape emitted by `/api/messages/stream` so the cockpit can
@@ -97,6 +97,16 @@ pub struct AppState {
     /// `/start` calls just update the config without spawning a second
     /// task.
     pub autonomous_loop_started: Arc<AtomicBool>,
+    /// Multi-agent run snapshots, keyed by run id. Populated by
+    /// `/api/multi-agent/run` and `/api/multi-agent/runs/start`,
+    /// updated while runs execute, listed by `/api/multi-agent/runs`,
+    /// read by `/api/multi-agent/runs/{id}`.
+    pub multi_agent_runs: Arc<
+        tokio::sync::RwLock<std::collections::HashMap<u64, routes::multi_agent::StoredMultiAgentRun>>,
+    >,
+    /// Broadcast channel for live multi-agent run snapshots. Consumed by
+    /// `/api/multi-agent/stream` so the cockpit can update without polling.
+    pub multi_agent_events_tx: broadcast::Sender<routes::multi_agent::MultiAgentRunEvent>,
 }
 
 pub struct QoConfig {
@@ -258,6 +268,8 @@ pub async fn build_app(
             routes::autonomous::AutonomousState::default(),
         )),
         autonomous_loop_started: Arc::new(AtomicBool::new(false)),
+        multi_agent_runs: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+        multi_agent_events_tx: broadcast::channel::<routes::multi_agent::MultiAgentRunEvent>(256).0,
     });
 
     // Background drain: subscribe to the bus and append every message to
@@ -755,6 +767,11 @@ pub async fn build_app(
         .route("/api/llm/proxy", post(routes::llm_proxy::proxy_chat))
         // Host telemetry — CPU + RAM via sysinfo crate.
         .route("/api/hardware", get(routes::hardware::hardware))
+        .route("/api/multi-agent/run", post(routes::multi_agent::run_multi_agent))
+        .route("/api/multi-agent/runs/start", post(routes::multi_agent::start_run))
+        .route("/api/multi-agent/runs", get(routes::multi_agent::list_runs))
+        .route("/api/multi-agent/runs/{id}", get(routes::multi_agent::get_run))
+        .route("/api/multi-agent/stream", get(routes::multi_agent::stream_runs))
         // Autonomous multi-agent swarm orchestrator.
         .route("/api/swarm/start", post(routes::swarm::start_swarm))
         .route("/api/swarm/active", get(routes::swarm::list_active))
@@ -869,7 +886,11 @@ pub async fn build_app(
         .with_state(state.clone());
 
     let router = if let Some(static_dir) = config.static_dir {
-        api_router.fallback_service(ServeDir::new(static_dir))
+        let index_html = static_dir.join("index.html");
+        api_router
+            .nest_service("/assets", ServeDir::new(static_dir.join("assets")))
+            .route_service("/favicon.svg", ServeFile::new(static_dir.join("favicon.svg")))
+            .fallback_service(ServeFile::new(index_html))
     } else {
         api_router
     };

@@ -2390,6 +2390,13 @@ mod tests {
         run_qlang_script(src).expect_err("script should fail")
     }
 
+    fn temp_path(file_name: &str) -> String {
+        std::env::temp_dir()
+            .join(file_name)
+            .to_string_lossy()
+            .replace('\\', "/")
+    }
+
     #[test]
     fn test_variable_binding_and_arithmetic() {
         let (_, out) = run(r#"
@@ -3084,41 +3091,57 @@ mod tests {
         assert_eq!(out, vec!["[1.0,2.0,3.0]"]);
         // Test json_parse with object via read_file (avoids escape issues)
         // Write JSON with proper quotes from Rust side
-        std::fs::write("/tmp/qlang_test_json.json", r#"{"name": "qlang", "version": 1}"#).unwrap();
-        let (_, out) = run(r#"
-            let text = read_file("/tmp/qlang_test_json.json")
+        let path = temp_path("qlang_test_json.json");
+        std::fs::write(&path, r#"{"name": "qlang", "version": 1}"#).unwrap();
+        let script = format!(
+            r#"
+            let text = read_file("{path}")
             let obj = json_parse(text)
             print(obj["name"])
             print(obj["version"])
-        "#);
+        "#
+        );
+        let (_, out) = run(&script);
         assert_eq!(out, vec!["qlang", "1"]);
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
     fn test_stdlib_io_file_roundtrip() {
-        let (_, out) = run(r#"
-            write_file("/tmp/qlang_test_stdlib.txt", "hello qlang")
-            let content = read_file("/tmp/qlang_test_stdlib.txt")
+        let path = temp_path("qlang_test_stdlib.txt");
+        let missing = temp_path("nonexistent_qlang_xyz.txt");
+        let script = format!(
+            r#"
+            write_file("{path}", "hello qlang")
+            let content = read_file("{path}")
             print(content)
-            print(file_exists("/tmp/qlang_test_stdlib.txt"))
-            print(file_exists("/tmp/nonexistent_qlang_xyz.txt"))
-        "#);
+            print(file_exists("{path}"))
+            print(file_exists("{missing}"))
+        "#
+        );
+        let (_, out) = run(&script);
         assert_eq!(out, vec!["hello qlang", "true", "false"]);
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
     fn test_stdlib_io_read_lines() {
         // Use \n literally in write_file
-        let (_, out) = run(r#"
-            write_file("/tmp/qlang_test_lines.txt", "line1
+        let path = temp_path("qlang_test_lines.txt");
+        let script = format!(
+            r#"
+            write_file("{path}", "line1
 line2
 line3")
-            let lines = read_lines("/tmp/qlang_test_lines.txt")
+            let lines = read_lines("{path}")
             print(lines["0"])
             print(lines["1"])
             print(lines["2"])
-        "#);
+        "#
+        );
+        let (_, out) = run(&script);
         assert_eq!(out, vec!["line1", "line2", "line3"]);
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
@@ -3132,10 +3155,14 @@ line3")
 
     #[test]
     fn test_stdlib_system_env() {
-        let (_, out) = run(r#"
-            let home = env("HOME")
+        let var_name = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+        let script = format!(
+            r#"
+            let home = env("{var_name}")
             print(is_null(home))
-        "#);
+        "#
+        );
+        let (_, out) = run(&script);
         assert_eq!(out, vec!["false"]);
     }
 

@@ -482,9 +482,8 @@ graph demo {
 
   node h = matmul(x, W)
   node a = relu(h)
-  node c = to_ternary(a) @proof theorem_5_2
 
-  output y = c
+  output y = a
 }
 "#;
 

@@ -800,13 +800,13 @@ mod tests {
                 assert_eq!(original_id, id);
                 assert_ne!(compressed_id, id);
 
-                // The compressed graph should have metadata about its origin
+                // Compression is currently stubbed out after the system purge.
                 let info = store.get_info(compressed_id).unwrap();
                 assert_eq!(info.name, "compress_me");
                 let compressed_graph = store.get(compressed_id).unwrap();
                 assert_eq!(
-                    compressed_graph.metadata.get("compressed_from").unwrap(),
-                    &id.to_string()
+                    compressed_graph.metadata.get("compression").unwrap(),
+                    "disabled (system purge)"
                 );
             }
             other => panic!("expected GraphCompressed, got {other:?}"),
@@ -921,10 +921,10 @@ mod tests {
 
         // 4. Get Info
         let info = client.get_graph_info(comp_id).await.unwrap();
-        assert_eq!(info.metadata.get("compressed_from").unwrap(), "0");
-        assert_eq!(info.metadata.get("compression_method").unwrap(), "Ternary");
-        assert!(info.metadata.contains_key("compressed_weights"));
-        assert!(info.metadata.contains_key("compression_distortion"));
+        assert_eq!(
+            info.metadata.get("compression").unwrap(),
+            "disabled (system purge)"
+        );
 
         handle.await.unwrap();
     }

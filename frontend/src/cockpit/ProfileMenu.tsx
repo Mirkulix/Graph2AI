@@ -1,10 +1,11 @@
 import { useEffect, useRef } from 'react';
-import { Cable, Compass, Cpu, GitBranch, Network, Settings as SettingsIcon } from 'lucide-react';
+import { Bot, Cable, Compass, Cpu, GitBranch, Network, Settings as SettingsIcon } from 'lucide-react';
 
 export type SecondaryView =
   | 'providers'
   | 'hardware'
   | 'knowledge3d'
+  | 'multi-agent'
   | 'swarm'
   | 'autonomous-runs'
   | 'settings';
@@ -20,6 +21,7 @@ const ITEMS: Item[] = [
   { id: 'providers',       label: 'Providers',       hint: 'configure LLMs (DeepSeek, Claude, OpenAI…)',      icon: Cable },
   { id: 'hardware',        label: 'Hardware',        hint: 'CPU · GPU · memory',                              icon: Cpu },
   { id: 'knowledge3d',     label: 'Knowledge',       hint: 'conversation ledger · timeline · drill-down',     icon: Compass },
+  { id: 'multi-agent',     label: 'Multi-Agent',     hint: 'local planner → worker → reviewer product path',  icon: Bot },
   { id: 'swarm',           label: 'Swarm',           hint: 'autonomous multi-agent runs',                     icon: Network },
   { id: 'autonomous-runs', label: 'Autonomous Runs', hint: 'review branches created by overnight swarms',     icon: GitBranch },
   { id: 'settings',        label: 'Settings',        hint: 'token · seed · about',                            icon: SettingsIcon },

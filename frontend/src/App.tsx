@@ -7,6 +7,7 @@ import DetailPane, { type DetailContext } from './cockpit/DetailPane';
 import ProfileMenu, { type SecondaryView } from './cockpit/ProfileMenu';
 import HardwareView from './cockpit/secondary/HardwareView';
 import KnowledgeView from './cockpit/secondary/KnowledgeView';
+import MultiAgentRunsView from './cockpit/secondary/MultiAgentRunsView';
 import SettingsView from './cockpit/secondary/SettingsView';
 import AutonomousRunsView from './cockpit/secondary/AutonomousRunsView';
 import SwarmPane from './cockpit/SwarmPane';
@@ -31,7 +32,7 @@ export default function App() {
 
   // Profile menu + secondary view
   const [menuOpen, setMenuOpen] = useState(false);
-  const [secondary, setSecondary] = useState<SecondaryView | null>(null);
+  const [secondary, setSecondary] = useState<SecondaryView | null>(() => readSecondaryFromUrl());
 
   // Pulse animation key — bumps to retrigger animation on each beat
   const [pulseKey, setPulseKey] = useState(0);
@@ -53,6 +54,10 @@ export default function App() {
     window.addEventListener('orbit:open-knowledge', onOpenKnowledge as EventListener);
     return () => window.removeEventListener('orbit:open-knowledge', onOpenKnowledge as EventListener);
   }, []);
+
+  useEffect(() => {
+    writeSecondaryToUrl(secondary);
+  }, [secondary]);
 
   // ─── Autonomous mode poll (every 5s) for global banner ─────────
   useEffect(() => {
@@ -224,6 +229,32 @@ export default function App() {
   );
 }
 
+function readSecondaryFromUrl(): SecondaryView | null {
+  const raw = new URLSearchParams(window.location.search).get('secondary');
+  switch (raw) {
+    case 'providers':
+    case 'hardware':
+    case 'knowledge3d':
+    case 'multi-agent':
+    case 'swarm':
+    case 'autonomous-runs':
+    case 'settings':
+      return raw;
+    default:
+      return null;
+  }
+}
+
+function writeSecondaryToUrl(view: SecondaryView | null) {
+  const url = new URL(window.location.href);
+  if (view) {
+    url.searchParams.set('secondary', view);
+  } else {
+    url.searchParams.delete('secondary');
+  }
+  window.history.replaceState({}, '', url);
+}
+
 function SecondaryHost({ view, onBack }: { view: SecondaryView; onBack: () => void }) {
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg-void)' }}>
@@ -243,6 +274,7 @@ function SecondaryHost({ view, onBack }: { view: SecondaryView; onBack: () => vo
       <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
         {view === 'hardware'        && <HardwareView />}
         {view === 'knowledge3d'     && <KnowledgeView />}
+        {view === 'multi-agent'     && <MultiAgentRunsView />}
         {view === 'swarm'           && <SwarmPane />}
         {view === 'autonomous-runs' && <AutonomousRunsView />}
         {view === 'settings'        && <SettingsView />}

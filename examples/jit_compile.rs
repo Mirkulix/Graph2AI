@@ -115,14 +115,13 @@ fn run() {
         println!("  Results MATCH — JIT produces identical output to interpreter.");
     }
 
-    // ─── 6. IGQK Ternary Compression via JIT ───
-    println!("\n[6] IGQK Ternary Compression (JIT)...");
+    // ─── 6. Activation pass via JIT ───
+    println!("\n[6] ReLU Activation (JIT)...");
 
-    let mut ternary_emitter = qlang_agent::emitter::GraphEmitter::new("jit_ternary");
+    let mut ternary_emitter = qlang_agent::emitter::GraphEmitter::new("jit_relu");
     let w = ternary_emitter.input("weights", Dtype::F32, Shape::vector(1024));
-    let _dummy = ternary_emitter.input("dummy", Dtype::F32, Shape::vector(1024));
-    let compressed = ternary_emitter.to_ternary(w, TT::f32_vector(1024));
-    ternary_emitter.output("ternary", compressed, TT::f32_vector(1024));
+    let activated = ternary_emitter.relu(w, TT::f32_vector(1024));
+    ternary_emitter.output("activated", activated, TT::f32_vector(1024));
     let ternary_graph = ternary_emitter.build();
 
     let ternary_compiled = qlang_compile::codegen::compile_graph(
@@ -130,23 +129,18 @@ fn run() {
         &ternary_graph,
         OptimizationLevel::Aggressive,
     )
-    .expect("Ternary JIT failed");
+    .expect("ReLU JIT failed");
 
-    let weights: Vec<f32> = (0..1024).map(|i| (i as f32 * 0.01).sin()).collect();
-    let dummy = vec![0.0f32; 1024];
+    let weights: Vec<f32> = (0..1024).map(|i| (i as f32 * 0.01).sin() - 0.3).collect();
     let ternary_result =
-        qlang_compile::codegen::execute_compiled(&ternary_compiled, &weights, &dummy).unwrap();
+        qlang_compile::codegen::execute_compiled(&ternary_compiled, &weights, &[]).unwrap();
 
-    let count_pos = ternary_result.iter().filter(|&&v| v == 1.0).count();
-    let count_neg = ternary_result.iter().filter(|&&v| v == -1.0).count();
+    let count_pos = ternary_result.iter().filter(|&&v| v > 0.0).count();
     let count_zero = ternary_result.iter().filter(|&&v| v == 0.0).count();
 
-    println!("  Ternary distribution:");
-    println!("    +1: {} ({:.1}%)", count_pos, count_pos as f64 / 1024.0 * 100.0);
+    println!("  Activation distribution:");
+    println!("    >0: {} ({:.1}%)", count_pos, count_pos as f64 / 1024.0 * 100.0);
     println!("     0: {} ({:.1}%)", count_zero, count_zero as f64 / 1024.0 * 100.0);
-    println!("    -1: {} ({:.1}%)", count_neg, count_neg as f64 / 1024.0 * 100.0);
-    println!("  Compression: f32 → ternary = {:.0}x (with 2-bit packing: {:.0}x)",
-        4.0, 4.0 * 8.0 / 2.0);
 
     // ─── 7. Show DOT output ───
     println!("\n[7] Graphviz DOT output (pipe to 'dot -Tpng > graph.png'):");

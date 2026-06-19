@@ -8,6 +8,7 @@ pub mod health;
 pub mod history;
 pub mod memory;
 pub mod messages;
+pub mod multi_agent;
 pub mod neo;
 pub mod presence;
 pub mod providers;

@@ -381,11 +381,16 @@ mod tests {
     }
 
     #[test]
-    fn bench_ternary_compression_runs() {
-        let result = bench_ternary_compression(256);
-        assert_eq!(result.name, "Ternary[256]");
-        assert_eq!(result.input_size, 256);
-        assert!(result.interpreter_ns > 0);
+    fn suite_no_longer_emits_removed_ternary_benchmarks() {
+        let suite = BenchmarkSuite {
+            element_wise_sizes: vec![],
+            matmul_sizes: vec![],
+            ternary_sizes: vec![256],
+            warmup_iters: 1,
+            bench_iters: 1,
+        };
+        let results = suite.run();
+        assert!(results.is_empty(), "legacy ternary benchmarks should stay disabled");
     }
 
     #[test]
@@ -417,8 +422,8 @@ mod tests {
             bench_iters: 3,
         };
         let results = suite.run();
-        // 4 element-wise ops * 1 size + 1 matmul + 1 ternary = 6
-        assert_eq!(results.len(), 6);
+        // 4 element-wise ops * 1 size + 1 matmul = 5
+        assert_eq!(results.len(), 5);
         for r in &results {
             assert!(r.interpreter_ns > 0, "all benchmarks should have timing: {}", r.name);
         }

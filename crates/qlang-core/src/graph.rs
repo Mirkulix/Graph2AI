@@ -338,11 +338,11 @@ mod tests {
     fn display_graph() {
         let mut g = Graph::new("display_test");
         g.add_node(Op::Input { name: "x".into() }, vec![], vec![f32_vec(784)]);
-        g.add_node(Op::ToTernary, vec![f32_vec(784)], vec![TensorType::new(Dtype::Ternary, Shape::vector(784))]);
+        g.add_node(Op::Relu, vec![f32_vec(784)], vec![f32_vec(784)]);
         g.add_edge(0, 0, 1, 0, f32_vec(784));
 
         let display = format!("{g}");
         assert!(display.contains("input(x)"));
-        assert!(display.contains("to_ternary"));
+        assert!(display.contains("relu"));
     }
 }

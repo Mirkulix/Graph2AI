@@ -186,6 +186,111 @@ export interface SwarmState {
   stop_requested: boolean;
 }
 
+// ─── Local Multi-Agent runs (Planner -> Worker -> Reviewer) ─────────
+
+export interface MultiAgentRunRequest {
+  goal: string;
+  max_revisions?: number;
+  write_artifacts?: boolean;
+}
+
+export interface MultiAgentPlan {
+  goal_summary: string;
+  deliverable: string;
+  acceptance_criteria: string[];
+  worker_instructions: string;
+}
+
+export interface MultiAgentAgentOutput {
+  agent: string;
+  tier: string;
+  output: string;
+}
+
+export interface MultiAgentArtifact {
+  path: string;
+  content: string;
+}
+
+export interface MultiAgentArtifactWriteResult {
+  path: string;
+  written: boolean;
+  resolved_path?: string | null;
+  error?: string | null;
+}
+
+export interface MultiAgentWorkerRound {
+  iteration: number;
+  tier: string;
+  output: string;
+  artifacts: MultiAgentArtifact[];
+  artifact_writes: MultiAgentArtifactWriteResult[];
+}
+
+export interface MultiAgentReviewerRound {
+  iteration: number;
+  tier: string;
+  approved: boolean;
+  feedback: string;
+  final_answer: string;
+  output: string;
+}
+
+export interface MultiAgentRunResponse {
+  run_id: number;
+  started_at: number;
+  finished_at: number;
+  mode: string;
+  goal: string;
+  status: string;
+  plan: MultiAgentPlan;
+  planner: MultiAgentAgentOutput;
+  worker_rounds: MultiAgentWorkerRound[];
+  reviewer_rounds: MultiAgentReviewerRound[];
+  deliverable: string;
+  final_answer: string;
+}
+
+export interface MultiAgentRunStartedResponse {
+  run_id: number;
+}
+
+export interface StoredMultiAgentRun {
+  run_id: number;
+  started_at: number;
+  finished_at?: number | null;
+  request: MultiAgentRunRequest;
+  goal: string;
+  mode: string;
+  status: string;
+  phase: string;
+  plan?: MultiAgentPlan | null;
+  planner?: MultiAgentAgentOutput | null;
+  worker_rounds: MultiAgentWorkerRound[];
+  reviewer_rounds: MultiAgentReviewerRound[];
+  deliverable?: string | null;
+  final_answer?: string | null;
+  error?: string | null;
+}
+
+export interface MultiAgentRunSummary {
+  run_id: number;
+  started_at: number;
+  finished_at?: number | null;
+  mode: string;
+  goal: string;
+  status: string;
+  worker_rounds: number;
+  reviewer_rounds: number;
+  artifacts_detected: number;
+  artifacts_written: number;
+}
+
+export interface MultiAgentRunEvent {
+  kind: string;
+  run: StoredMultiAgentRun;
+}
+
 // ─── Autonomous mode (always-on swarm scheduler) ────────────────────
 
 export interface AutonomousConfig {
@@ -374,6 +479,14 @@ export const api = {
   swarmGet:        (id: number) => get<SwarmState>(`/api/swarm/${id}`),
   swarmStop:       (id: number) => post<{ stopped: boolean }>(`/api/swarm/${id}/stop`),
   swarmActive:     () => get<SwarmState[]>('/api/swarm/active'),
+
+  // Local multi-agent product path
+  multiAgentRun:   (req: MultiAgentRunRequest) =>
+                     post<MultiAgentRunResponse>('/api/multi-agent/run', req),
+  multiAgentStart: (req: MultiAgentRunRequest) =>
+                     post<MultiAgentRunStartedResponse>('/api/multi-agent/runs/start', req),
+  multiAgentRuns:  () => get<MultiAgentRunSummary[]>('/api/multi-agent/runs'),
+  multiAgentRunGet:(id: number) => get<StoredMultiAgentRun>(`/api/multi-agent/runs/${id}`),
 
   // Autonomous mode — long-running scheduler that drives swarms automatically
   autonomousStatus:   () => get<AutonomousState>('/api/autonomous/status'),

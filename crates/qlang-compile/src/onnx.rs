@@ -789,6 +789,9 @@ fn qlang_custom_op(
         let gid = get_string_attr(attrs, "graph_id", node_name)?;
         return Ok(Op::SubGraph { graph_id: gid });
     }
+    if tag == "argmax" {
+        return Ok(Op::ArgMax);
+    }
     Err(ConversionError::UnsupportedOp(format!(
         "com.qlang.{tag}"
     )))
@@ -1391,28 +1394,28 @@ mod tests {
     }
 
     #[test]
-    fn test_quantum_op_roundtrip() {
-        let mut g = Graph::new("quantum");
-        let inp = g.add_node(Op::Input { name: "rho".into() }, vec![], vec![f32_mat(4, 4)]);
+    fn test_custom_op_roundtrip() {
+        let mut g = Graph::new("custom");
+        let inp = g.add_node(Op::Input { name: "scores".into() }, vec![], vec![f32_mat(4, 10)]);
         let ent = g.add_node(
-            Op::Entropy,
-            vec![f32_mat(4, 4)],
-            vec![TensorType::f32_scalar()],
+            Op::ArgMax,
+            vec![f32_mat(4, 10)],
+            vec![TensorType::f32_vector(4)],
         );
         let out = g.add_node(
-            Op::Output { name: "s".into() },
-            vec![TensorType::f32_scalar()],
+            Op::Output { name: "pred".into() },
+            vec![TensorType::f32_vector(4)],
             vec![],
         );
-        g.add_edge(inp, 0, ent, 0, f32_mat(4, 4));
-        g.add_edge(ent, 0, out, 0, TensorType::f32_scalar());
+        g.add_edge(inp, 0, ent, 0, f32_mat(4, 10));
+        g.add_edge(ent, 0, out, 0, TensorType::f32_vector(4));
 
         let onnx = to_onnx(&g);
         assert_eq!(onnx.nodes.len(), 1);
         assert!(onnx.nodes[0].op_type.starts_with("com.qlang."));
 
         let g2 = from_onnx(&onnx).expect("roundtrip");
-        assert!(g2.nodes.iter().any(|n| n.op == Op::Entropy));
+        assert!(g2.nodes.iter().any(|n| n.op == Op::ArgMax));
     }
 
     #[test]

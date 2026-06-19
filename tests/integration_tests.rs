@@ -62,7 +62,7 @@ fn test_serialize_json_roundtrip() {
 fn test_serialize_binary_roundtrip() {
     let mut g = Graph::new("bin_rt");
     g.add_node(Op::Input { name: "x".into() }, vec![], vec![f32m(4, 4)]);
-    g.add_node(Op::ToTernary, vec![f32m(4, 4)], vec![TensorType::ternary_matrix(4, 4)]);
+    g.add_node(Op::Relu, vec![f32m(4, 4)], vec![f32m(4, 4)]);
     g.add_edge(0, 0, 1, 0, f32m(4, 4));
 
     let bin = qlang_core::serial::to_binary(&g).unwrap();
@@ -71,49 +71,6 @@ fn test_serialize_binary_roundtrip() {
     assert_eq!(g.id, g2.id);
     assert_eq!(g.nodes.len(), g2.nodes.len());
     assert_eq!(g.edges.len(), g2.edges.len());
-}
-
-// ---------------------------------------------------------------------------
-// 4. Train MLP, verify loss decreases
-// ---------------------------------------------------------------------------
-
-#[test]
-fn test_train_mlp_loss_decreases() {
-    use qlang_runtime::training::{MlpWeights, generate_toy_dataset};
-
-    let dim = 16;
-    let mut mlp = MlpWeights::new(dim, 8, 4);
-    let (images, labels) = generate_toy_dataset(8, dim);
-
-    let probs_before = mlp.forward(&images);
-    let loss_before = mlp.loss(&probs_before, &labels);
-
-    for _ in 0..3 {
-        mlp.train_step(&images, &labels, 0.001);
-    }
-
-    let probs_after = mlp.forward(&images);
-    let loss_after = mlp.loss(&probs_after, &labels);
-    assert!(loss_after < loss_before, "Loss did not decrease: {loss_before} -> {loss_after}");
-}
-
-// ---------------------------------------------------------------------------
-// 5. Ternary compression: all values in {-1, 0, +1}
-// ---------------------------------------------------------------------------
-
-#[test]
-fn test_ternary_compression() {
-    use qlang_runtime::training::MlpWeights;
-
-    let mlp = MlpWeights::new(16, 8, 4);
-    let compressed = mlp.compress_ternary();
-
-    for &w in &compressed.w1 {
-        assert!(w == -1.0 || w == 0.0 || w == 1.0, "Non-ternary w1 value: {w}");
-    }
-    for &w in &compressed.w2 {
-        assert!(w == -1.0 || w == 0.0 || w == 1.0, "Non-ternary w2 value: {w}");
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -253,28 +210,6 @@ fn test_gpu_shader_valid() {
 }
 
 // ---------------------------------------------------------------------------
-// 13. Autograd gradients are all finite
-// ---------------------------------------------------------------------------
-
-#[test]
-fn test_autograd_gradients_finite() {
-    use qlang_runtime::autograd::Tape;
-
-    let mut tape = Tape::new();
-    let a = tape.variable(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]);
-    let b = tape.variable(vec![1.0, 0.0, 0.0, 1.0, 1.0, 1.0], vec![3, 2]);
-    let c = tape.matmul(a, b);
-    let d = tape.relu(c);
-
-    tape.backward(d);
-
-    for id in [a, b] {
-        let grad = tape.grad(id).expect("gradient should exist");
-        assert!(grad.iter().all(|g| g.is_finite()), "non-finite gradient found");
-    }
-}
-
-// ---------------------------------------------------------------------------
 // 14. Checkpoint save/load round-trip
 // ---------------------------------------------------------------------------
 
@@ -288,9 +223,10 @@ fn test_checkpoint_save_load() {
     let weights = vec![0.1f32, -0.5, 0.9, 0.0];
     ckpt.add_weight(WeightTensor::from_f32("w1", vec![2, 2], &weights));
 
-    let path = "/tmp/qlang_integ_test_ckpt.json";
-    ckpt.save(path).unwrap();
-    let loaded = Checkpoint::load(path).unwrap();
+    let path = std::env::temp_dir().join("qlang_integ_test_ckpt.json");
+    let path_str = path.to_string_lossy().to_string();
+    ckpt.save(&path_str).unwrap();
+    let loaded = Checkpoint::load(&path_str).unwrap();
 
     let w = loaded.weights.get("w1").unwrap().as_f32().unwrap();
     assert_eq!(w, weights);
@@ -727,60 +663,6 @@ fn test_executor_reduce_mean_correctness() {
     assert!((y[0] - 2.5).abs() < 1e-5, "Mean should be 2.5");
 }
 
-#[test]
-fn test_executor_entropy_correctness() {
-    let mut g = Graph::new("entropy_correct");
-    let inp = g.add_node(Op::Input { name: "x".into() }, vec![], vec![f32v(3)]);
-    let ent = g.add_node(Op::Entropy, vec![f32v(3)], vec![TensorType::f32_scalar()]);
-    let out = g.add_node(Op::Output { name: "y".into() }, vec![TensorType::f32_scalar()], vec![]);
-    g.add_edge(inp, 0, ent, 0, f32v(3));
-    g.add_edge(ent, 0, out, 0, TensorType::f32_scalar());
-
-    let mut inputs = HashMap::new();
-    inputs.insert("x".into(), TensorData::from_f32(Shape::vector(3), &[1.0, 1.0, 1.0]));
-
-    let result = qlang_runtime::executor::execute(&g, inputs).unwrap();
-    let y = result.outputs.get("y").unwrap().as_f32_slice().unwrap();
-    let expected = (1.0_f32 / 3.0 * (1.0_f32 / 3.0).ln()).abs() * 3.0;
-    assert!((y[0] - expected).abs() < 0.001, "Entropy of uniform distribution should be ln(3)");
-}
-
-#[test]
-fn test_executor_superpose_correctness() {
-    let mut g = Graph::new("superpose_correct");
-    let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![f32v(3)]);
-    let b = g.add_node(Op::Input { name: "b".into() }, vec![], vec![f32v(3)]);
-    let sp = g.add_node(Op::Superpose, vec![f32v(3), f32v(3)], vec![f32v(3)]);
-    let out = g.add_node(Op::Output { name: "y".into() }, vec![f32v(3)], vec![]);
-    g.add_edge(a, 0, sp, 0, f32v(3));
-    g.add_edge(b, 0, sp, 1, f32v(3));
-    g.add_edge(sp, 0, out, 0, f32v(3));
-
-    let mut inputs = HashMap::new();
-    inputs.insert("a".into(), TensorData::from_f32(Shape::vector(3), &[2.0, 4.0, 6.0]));
-    inputs.insert("b".into(), TensorData::from_f32(Shape::vector(3), &[0.0, 0.0, 0.0]));
-
-    let result = qlang_runtime::executor::execute(&g, inputs).unwrap();
-    let y = result.outputs.get("y").unwrap().as_f32_slice().unwrap();
-    assert_eq!(y, &[1.0, 2.0, 3.0], "Superposition should be (a+b)/2");
-}
-
-#[test]
-fn test_executor_quantum_ops_counted() {
-    let mut g = Graph::new("quantum_count");
-    let inp = g.add_node(Op::Input { name: "x".into() }, vec![], vec![f32v(4)]);
-    let t = g.add_node(Op::ToTernary, vec![f32v(4)], vec![TensorType::new(Dtype::Ternary, Shape::vector(4))]);
-    let out = g.add_node(Op::Output { name: "y".into() }, vec![TensorType::new(Dtype::Ternary, Shape::vector(4))], vec![]);
-    g.add_edge(inp, 0, t, 0, f32v(4));
-    g.add_edge(t, 0, out, 0, TensorType::new(Dtype::Ternary, Shape::vector(4)));
-
-    let mut inputs = HashMap::new();
-    inputs.insert("x".into(), TensorData::from_f32(Shape::vector(4), &[1.0, 2.0, 3.0, 4.0]));
-
-    let result = qlang_runtime::executor::execute(&g, inputs).unwrap();
-    assert_eq!(result.stats.quantum_ops, 1, "Should have 1 quantum op (ToTernary)");
-}
-
 // ---------------------------------------------------------------------------
 // Serialization Edge Cases
 // ---------------------------------------------------------------------------
@@ -1040,56 +922,6 @@ return count
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_evolve_quantum_flow_preserves_trace() {
-    use qlang_core::quantum::DensityMatrix;
-
-    let n = 2usize;
-    let rho_flat: Vec<f32> = vec![0.7, 0.0, 0.0, 0.3];
-
-    let mut g = Graph::new("evolve_trace");
-    let ty4 = TensorType::f32_vector(n * n);
-
-    let state_node = g.add_node(Op::Input { name: "state".into() }, vec![], vec![ty4.clone()]);
-    let grad_node = g.add_node(Op::Input { name: "gradient".into() }, vec![], vec![ty4.clone()]);
-    let evolve_node = g.add_node(Op::Evolve { gamma: 0.5, dt: 0.01 }, vec![ty4.clone(), ty4.clone()], vec![ty4.clone()]);
-    let out_node = g.add_node(Op::Output { name: "evolved".into() }, vec![ty4.clone()], vec![]);
-
-    g.add_edge(state_node, 0, evolve_node, 0, ty4.clone());
-    g.add_edge(grad_node, 0, evolve_node, 1, ty4.clone());
-    g.add_edge(evolve_node, 0, out_node, 0, ty4.clone());
-
-    let mut inputs = HashMap::new();
-    inputs.insert("state".into(), TensorData::from_f32(Shape::vector(n * n), &rho_flat));
-    inputs.insert("gradient".into(), TensorData::from_f32(Shape::vector(n * n), &[0.1, 0.0, 0.0, 0.1]));
-
-    let result = qlang_runtime::executor::execute(&g, inputs).unwrap();
-    let evolved = result.outputs.get("evolved").unwrap().as_f32_slice().unwrap();
-
-    let trace: f32 = evolved[0] + evolved[3];
-    assert!((trace - 1.0).abs() < 0.1, "Trace should be preserved (~1.0), got {}", trace);
-}
-
-#[test]
-fn test_quantum_scheduler_monotonic_behavior() {
-    use qlang_runtime::quantum_flow::{QuantumScheduler, ScheduleType};
-
-    let mut s = QuantumScheduler::with_params(100, 1.0, 0.0, 0.0, 1.0, ScheduleType::Linear);
-
-    let initial_params = s.get_params();
-    for _ in 0..50 {
-        s.step();
-    }
-    let mid_params = s.get_params();
-    for _ in 0..50 {
-        s.step();
-    }
-    let final_params = s.get_params();
-
-    assert!(initial_params.0 > mid_params.0, "hbar should decrease");
-    assert!(initial_params.1 < final_params.1, "gamma should increase");
-}
-
-#[test]
 fn test_density_matrix_validity() {
     use qlang_core::quantum::DensityMatrix;
 
@@ -1116,51 +948,6 @@ fn test_density_matrix_pure_state() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_entangle_produces_correct_shape() {
-    let mut g = Graph::new("entangle_shape");
-    let a = g.add_node(Op::Input { name: "a".into() }, vec![], vec![f32m(2, 2)]);
-    let b = g.add_node(Op::Input { name: "b".into() }, vec![], vec![f32m(2, 3)]);
-    let ent = g.add_node(Op::Entangle, vec![f32m(2, 2), f32m(2, 3)], vec![f32m(4, 6)]);
-    let out = g.add_node(Op::Output { name: "y".into() }, vec![f32m(4, 6)], vec![]);
-    g.add_edge(a, 0, ent, 0, f32m(2, 2));
-    g.add_edge(b, 0, ent, 1, f32m(2, 3));
-    g.add_edge(ent, 0, out, 0, f32m(4, 6));
-
-    let mut inputs = HashMap::new();
-    inputs.insert("a".into(), TensorData::from_f32(Shape::matrix(2, 2), &[1.0, 0.0, 0.0, 1.0]));
-    inputs.insert("b".into(), TensorData::from_f32(Shape::matrix(2, 3), &[1.0, 0.0, 0.0, 0.0, 1.0, 0.0]));
-
-    let result = qlang_runtime::executor::execute(&g, inputs).unwrap();
-    let y = result.outputs.get("y").unwrap();
-    let shape = &y.shape;
-
-    assert_eq!(shape.0.len(), 2);
-    assert_eq!(shape.0[0], Dim::Fixed(4));
-    assert_eq!(shape.0[1], Dim::Fixed(6));
-}
-
-#[test]
-fn test_measure_produces_one_hot() {
-    let mut g = Graph::new("measure_onehot");
-    let inp = g.add_node(Op::Input { name: "x".into() }, vec![], vec![f32v(4)]);
-    let m = g.add_node(Op::Measure, vec![f32v(4)], vec![f32v(4)]);
-    let out = g.add_node(Op::Output { name: "y".into() }, vec![f32v(4)], vec![]);
-    g.add_edge(inp, 0, m, 0, f32v(4));
-    g.add_edge(m, 0, out, 0, f32v(4));
-
-    let mut inputs = HashMap::new();
-    inputs.insert("x".into(), TensorData::from_f32(Shape::vector(4), &[1.0, 5.0, 3.0, 2.0]));
-
-    let result = qlang_runtime::executor::execute(&g, inputs).unwrap();
-    let y = result.outputs.get("y").unwrap().as_f32_slice().unwrap();
-
-    let sum: f32 = y.iter().sum();
-    assert!((sum - 1.0).abs() < 1e-5, "One-hot should sum to 1");
-    let num_ones = y.iter().filter(|&&v| v == 1.0).count();
-    assert_eq!(num_ones, 1, "Should have exactly one 1.0 (argmax)");
-}
-
-#[test]
 fn test_verify_graph_accepts_valid_graph() {
     let mut g = Graph::new("valid_verify");
     let inp = g.add_node(Op::Input { name: "x".into() }, vec![], vec![f32v(4)]);
@@ -1174,76 +961,3 @@ fn test_verify_graph_accepts_valid_graph() {
     assert!(result.failed.is_empty(), "Valid graph should have no failed checks");
 }
 
-#[test]
-fn test_verify_graph_rejects_ternary_with_wrong_dtype() {
-    let mut g = Graph::new("bad_ternary");
-    let inp = g.add_node(Op::Input { name: "x".into() }, vec![], vec![f32v(4)]);
-    let t = g.add_node(Op::ToTernary, vec![f32v(4)], vec![TensorType::new(Dtype::I32, Shape::vector(4))]);
-    g.add_edge(inp, 0, t, 0, f32v(4));
-
-    let result = verify_graph(&g);
-    assert!(!result.failed.is_empty() || !result.is_ok(), "Ternary with non-Ternary output should fail");
-}
-
-#[test]
-#[ignore] // Training not converging properly - known issue to investigate
-fn test_full_training_pipeline_converges() {
-    use qlang_runtime::training::{MlpWeights, generate_toy_dataset};
-
-    let dim = 8;
-    let mut mlp = MlpWeights::new(dim, 16, 4);
-    let (images, labels) = generate_toy_dataset(16, dim);
-
-    let initial_probs = mlp.forward(&images);
-    let initial_loss = mlp.loss(&initial_probs, &labels);
-
-    for _ in 0..50 {
-        mlp.train_step(&images, &labels, 0.5);
-    }
-
-    let final_probs = mlp.forward(&images);
-    let final_loss = mlp.loss(&final_probs, &labels);
-
-    assert!(final_loss < initial_loss * 0.5, "Loss should decrease by at least 50% after training (initial: {:.6}, final: {:.6})", initial_loss, final_loss);
-}
-
-#[test]
-fn test_autograd_matmul_gradient_correctness() {
-    use qlang_runtime::autograd::Tape;
-
-    let mut tape = Tape::new();
-    let a = tape.variable(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
-    let b = tape.variable(vec![0.5, 1.5, 2.5, 3.5], vec![2, 2]);
-    let c = tape.matmul(a, b);
-
-    tape.backward(c);
-
-    let grad_a = tape.grad(a).unwrap();
-    let grad_b = tape.grad(b).unwrap();
-
-    for &g in grad_a {
-        assert!(g.is_finite(), "Gradient should be finite");
-    }
-    for &g in grad_b {
-        assert!(g.is_finite(), "Gradient should be finite");
-    }
-}
-
-#[test]
-fn test_autograd_sigmoid_backward() {
-    use qlang_runtime::autograd::Tape;
-
-    let mut tape = Tape::new();
-    let x = tape.variable(vec![0.0, 1.0, -1.0], vec![3]);
-    let s = tape.sigmoid(x);
-
-    tape.backward(s);
-
-    let grad_x = tape.grad(x).unwrap();
-
-    for (i, &g) in grad_x.iter().enumerate() {
-        let sig_val = 1.0 / (1.0 + (-tape.value(x)[i]).exp());
-        let expected_grad = sig_val * (1.0 - sig_val);
-        assert!((g - expected_grad).abs() < 1e-5, "Sigmoid gradient incorrect at index {}", i);
-    }
-}

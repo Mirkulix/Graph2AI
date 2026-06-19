@@ -544,6 +544,17 @@ fn read_op(data: &[u8], pos: &mut usize) -> Result<Op, BinaryError> {
             let model = read_string(data, pos)?;
             Ok(Op::OllamaChat { model })
         }
+        OP_COND => Ok(Op::Cond),
+        OP_SCAN => {
+            let n_iterations = read_u32(data, pos)? as usize;
+            Ok(Op::Scan { n_iterations })
+        }
+        OP_SUB_GRAPH => {
+            let graph_id = read_string(data, pos)?;
+            Ok(Op::SubGraph { graph_id })
+        }
+        OP_EXP => Ok(Op::Exp),
+        OP_LOG => Ok(Op::Log),
         _ => Err(BinaryError::InvalidOpTag(tag)),
     }
 }

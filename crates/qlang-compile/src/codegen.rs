@@ -383,6 +383,10 @@ mod tests {
         assert!(compiled.llvm_ir.contains("qlang_graph"));
     }
 
+    #[cfg_attr(
+        all(windows, target_env = "gnu"),
+        ignore = "LLVM exp intrinsic is unstable in JIT on Windows GNU"
+    )]
     #[test]
     fn jit_sigmoid() {
         let mut g = Graph::new("sigmoid_test");

@@ -378,9 +378,12 @@ mod tests {
         let text = "the quick brown fox jumps over the lazy dog";
         let tok = BpeTokenizer::train(text, 270);
 
-        let path = "/tmp/qlang_test_tokenizer.qbpe";
-        tok.save(path).expect("save failed");
-        let tok2 = BpeTokenizer::load(path).expect("load failed");
+        let path = std::env::temp_dir()
+            .join("qlang_test_tokenizer.qbpe")
+            .to_string_lossy()
+            .into_owned();
+        tok.save(&path).expect("save failed");
+        let tok2 = BpeTokenizer::load(&path).expect("load failed");
 
         // Verify same encoding
         let enc1 = tok.encode(text);

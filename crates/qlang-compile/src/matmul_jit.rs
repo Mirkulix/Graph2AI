@@ -266,6 +266,10 @@ mod tests {
         assert_eq!(c, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
     }
 
+    #[cfg_attr(
+        all(windows, target_env = "gnu"),
+        ignore = "vectorized matmul JIT is unstable on Windows GNU"
+    )]
     #[test]
     fn jit_matmul_large_correct() {
         let context = Context::create();

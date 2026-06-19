@@ -3,9 +3,9 @@
 //! This demonstrates:
 //! 1. Building a graph programmatically (as an AI agent would)
 //! 2. Executing the graph on concrete tensor data
-//! 3. IGQK ternary compression
+//! 3. Serializing and inspecting the graph
 //!
-//! The graph computes: output = relu(A * B) → ternary compression
+//! The graph computes: output = relu(A * B)
 //!
 //! In the future, an AI agent would emit this graph directly —
 //! no text parsing, no syntax, just structured decisions.
@@ -37,14 +37,11 @@ fn main() {
     // ReLU activation
     let activated = emitter.relu(matmul, qlang_core::tensor::TensorType::f32_matrix(2, 2));
 
-    // IGQK: Compress to ternary weights
-    let compressed = emitter.to_ternary(activated, qlang_core::tensor::TensorType::f32_matrix(2, 2));
-
     // Output
     emitter.output(
         "result",
-        compressed,
-        qlang_core::tensor::TensorType::ternary_matrix(2, 2),
+        activated,
+        qlang_core::tensor::TensorType::f32_matrix(2, 2),
     );
 
     let graph = emitter.build();
@@ -101,7 +98,6 @@ fn main() {
                 println!("    dtype: {}", output.dtype);
                 println!("    shape: {}", output.shape);
                 println!("    data (raw bytes): {:?}", &output.data);
-                println!("\n  Ternary values: -1=0xFF, 0=0x00, +1=0x01");
             }
         }
         Err(e) => {

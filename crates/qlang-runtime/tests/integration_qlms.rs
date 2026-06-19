@@ -5,7 +5,6 @@ use qlang_core::graph::Graph;
 use qlang_core::ops::Op;
 use qlang_core::serial::{from_binary, to_binary, MAGIC};
 use qlang_core::tensor::TensorType;
-use qlang_runtime::mnist::MnistData;
 
 fn f32v(n: usize) -> TensorType {
     TensorType::f32_vector(n)
@@ -31,10 +30,6 @@ fn build_pipeline_graph() -> Graph {
 
 #[test]
 fn integration_qlms_encode_decode_structural_equality() {
-    // Ensure MNIST helper still works (pipeline sanity).
-    let data = MnistData::synthetic(1000, 200);
-    assert_eq!(data.image_size, 784);
-
     let graph = build_pipeline_graph();
     assert_eq!(graph.nodes.len(), 5);
     assert_eq!(graph.edges.len(), 4);

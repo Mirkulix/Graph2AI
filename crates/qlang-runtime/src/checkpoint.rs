@@ -196,6 +196,13 @@ mod tests {
     use super::*;
     use qlang_core::graph::Graph;
 
+    fn temp_path(file_name: &str) -> String {
+        std::env::temp_dir()
+            .join(file_name)
+            .to_string_lossy()
+            .into_owned()
+    }
+
     #[test]
     fn checkpoint_basics() {
         let mut ckpt = Checkpoint::new(Graph::new("test_model"));
@@ -220,11 +227,11 @@ mod tests {
         ckpt.metadata.epochs_trained = 10;
         ckpt.metadata.final_loss = 0.05;
 
-        let path = "/tmp/qlang_test_checkpoint.qlm";
-        let size = ckpt.save_binary(path).unwrap();
+        let path = temp_path("qlang_test_checkpoint.qlm");
+        let size = ckpt.save_binary(&path).unwrap();
         assert!(size > 0);
 
-        let loaded = Checkpoint::load_binary(path).unwrap();
+        let loaded = Checkpoint::load_binary(&path).unwrap();
         assert_eq!(loaded.graph.id, "binary_test");
         assert_eq!(loaded.metadata.epochs_trained, 10);
         assert_eq!(loaded.weights["w"].as_f32().unwrap(), vec![1.0, 2.0, 3.0, 4.0]);
