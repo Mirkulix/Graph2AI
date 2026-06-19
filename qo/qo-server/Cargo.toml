@@ -26,5 +26,5 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 base64 = "0.22"
 toml = "1.1.2"
-sysinfo = { version = "0.32", default-features = false, features = ["system"] }
+sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 
