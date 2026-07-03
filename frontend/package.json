@@ -16,7 +16,7 @@
     "react-force-graph-3d": "^1.29.1",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
-    "three": "^0.183.2"
+    "three": "^0.185.1"
   },
   "devDependencies": {
     "@types/react": "^19.0.0",
