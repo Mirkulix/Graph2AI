@@ -27,10 +27,13 @@ The repository is currently focused on the OrbitQLang control-plane path:
 - **IDE Integration**: VSCode / Trae extensions are functional, providing signed GraphMessage handover to the backend.
 - **Knowledge graph**: `qo-knowledge` persists claims with provenance, evidence
   and append-only revisions in the shared redb database. Exposed over MCP as
-  `orbit_graph_{search,neighbors,add_claim,verify_claim,context}` alongside the
-  existing three tools at `POST /mcp/v1`, plus `GET /api/knowledge/stats`.
-  37 tests pass (`cargo test -p qo-knowledge`), and the five tools were
-  exercised end-to-end against a running `qo` over JSON-RPC.
+  `orbit_graph_{search,neighbors,impact,add_claim,verify_claim,context}` alongside
+  the existing three tools at `POST /mcp/v1`. The local cockpit exposes
+  `GET /api/knowledge/{stats,snapshot}` and a bounded `POST /api/knowledge/index`.
+  The indexer is bound to QO's configured workspace, records deterministic file
+  observations with source evidence, and preserves stale/reobserved revisions
+  when file content changes. A live scan of this repository completed with 377
+  indexed files and no scan errors.
 - Frontend production build currently passes via `cd frontend && npm run build`.
 - All non-deterministic ML training and evolution loops have been purged.
 
