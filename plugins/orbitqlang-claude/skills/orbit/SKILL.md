@@ -33,6 +33,9 @@ Every claim has a status. Only two of them count as reliable:
   rejected.
 - `mcp__orbitqlang__orbit_graph_neighbors`: Traverse relations in both
   directions. Use for dependency and impact questions.
+- `mcp__orbitqlang__orbit_graph_impact`: Traverse only load-bearing relations
+  across up to four hops. Use it before a non-trivial change to identify the
+  bounded downstream impact; proposals and stale claims are excluded.
 - `mcp__orbitqlang__orbit_graph_add_claim`: Record something worth
   remembering. It is always stored as `proposed`.
 - `mcp__orbitqlang__orbit_graph_verify_claim`: Confirm (`supports: true`) or

@@ -22,7 +22,7 @@
 use axum::extract::Query;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::{collections::{HashSet, VecDeque}, sync::Arc};
 
 use crate::AppState;
 use qo_knowledge::{
@@ -56,6 +56,14 @@ pub fn tool_definitions() -> Vec<Value> {
                 },
                 "required": ["kind", "name"]
             }
+        }),
+        json!({
+            "name": "orbit_graph_impact",
+            "description": "Traverse load-bearing dependency relations across multiple bounded hops. Use for impact analysis; proposed, stale and refuted claims are excluded.",
+            "inputSchema": { "type": "object", "properties": {
+                "kind": { "type": "string" }, "name": { "type": "string" },
+                "depth": { "type": "integer", "description": "Traversal depth, 1-4; default 2." }
+            }, "required": ["kind", "name"] }
         }),
         json!({
             "name": "orbit_graph_add_claim",
@@ -117,6 +125,7 @@ pub fn handles(name: &str) -> bool {
         name,
         "orbit_graph_search"
             | "orbit_graph_neighbors"
+            | "orbit_graph_impact"
             | "orbit_graph_add_claim"
             | "orbit_graph_verify_claim"
             | "orbit_graph_context"
@@ -272,6 +281,23 @@ pub async fn call(state: Arc<AppState>, name: &str, args: Value) -> ToolResult {
                 ));
             }
             Ok(out)
+        }
+
+        "orbit_graph_impact" => {
+            let start = entity_arg(&args, "kind", "name")?;
+            let max_depth = args.get("depth").and_then(|v| v.as_u64()).unwrap_or(2).clamp(1, 4) as usize;
+            let mut queue = VecDeque::from([(start.clone(), 0usize)]);
+            let mut seen = HashSet::from([start.clone()]);
+            let mut lines = Vec::new();
+            while let Some((entity, depth)) = queue.pop_front() {
+                if depth >= max_depth || seen.len() > 200 { continue; }
+                for (relation, other, claim) in state.knowledge.neighbors(&entity).map_err(|e| (INTERNAL, e.to_string()))? {
+                    if !claim.status.is_load_bearing() || !seen.insert(other.clone()) { continue; }
+                    lines.push(format!("{} --{}--> {} [via {}]", entity, relation.as_str(), other, claim.id));
+                    queue.push_back((other, depth + 1));
+                }
+            }
+            Ok(if lines.is_empty() { format!("No load-bearing impact relations recorded for {start}.") } else { format!("Impact from {start} (depth ≤ {max_depth}):\n{}", lines.join("\n")) })
         }
 
         "orbit_graph_add_claim" => {
@@ -521,4 +547,11 @@ pub async fn knowledge_snapshot(
         "entities": state.knowledge.list_entities().unwrap_or_default(),
         "claims": claims,
     }))
+}
+
+/// Index only QO's configured workspace; callers cannot choose a path.
+pub async fn index_workspace(
+    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
+) -> axum::Json<crate::repository_indexer::IndexReport> {
+    axum::Json(crate::repository_indexer::index_repository(&state.workspace_root, &state.knowledge))
 }

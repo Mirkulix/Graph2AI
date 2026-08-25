@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CircleDot, Database, FileCheck2, Search, ShieldCheck } from 'lucide-react';
+import { CircleDot, Database, FileCheck2, RefreshCw, Search, ShieldCheck } from 'lucide-react';
 import {
   api,
   type KnowledgeClaim,
@@ -31,6 +31,8 @@ export function KnowledgeGraphPanel() {
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [indexing, setIndexing] = useState(false);
+  const [indexResult, setIndexResult] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -80,6 +82,17 @@ export function KnowledgeGraphPanel() {
     });
   }
 
+  async function indexWorkspace() {
+    setIndexing(true);
+    try {
+      const result = await api.knowledgeIndex();
+      setIndexResult(`${result.indexed} new · ${result.already_known} unchanged · ${result.errors.length} errors`);
+      const [nextStats, nextSnapshot] = await Promise.all([api.knowledgeStats(), api.knowledgeSnapshot(150)]);
+      setStats(nextStats); setSnapshot(nextSnapshot); setError(null);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Indexing failed'); }
+    finally { setIndexing(false); }
+  }
+
   return (
     <section style={panel}>
       <div style={heading}>
@@ -87,8 +100,12 @@ export function KnowledgeGraphPanel() {
           <div className="eyebrow">durable knowledge graph</div>
           <div style={title}><ShieldCheck size={17} /> verified project memory</div>
         </div>
-        <div style={loadBearing}><FileCheck2 size={14} /> {stats.load_bearing} reliable</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          <button onClick={() => void indexWorkspace()} disabled={indexing} style={indexButton}><RefreshCw size={12} /> {indexing ? 'scanning…' : 'scan workspace'}</button>
+          <div style={loadBearing}><FileCheck2 size={14} /> {stats.load_bearing} reliable</div>
+        </div>
       </div>
+      {indexResult && <div style={indexResultStyle}>last scan: {indexResult}</div>}
 
       <div style={metrics}>
         <Metric label="entities" value={stats.entities} icon={<CircleDot size={13} />} />
@@ -249,3 +266,5 @@ const muted: React.CSSProperties = { marginTop: 8, color: 'var(--ink-faint)', fo
 const claimRow: React.CSSProperties = { width: '100%', display: 'flex', alignItems: 'flex-start', gap: 6, padding: '7px 0', background: 'transparent', border: 0, borderBottom: '1px solid var(--rule-faint)', cursor: 'pointer', textAlign: 'left' };
 const claimRowText: React.CSSProperties = { color: 'var(--ink-muted)', fontSize: 10, lineHeight: 1.35 };
 const errorBox: React.CSSProperties = { padding: 10, border: '1px solid var(--danger)', borderRadius: 3, color: 'var(--danger)', fontFamily: 'var(--font-mono)', fontSize: 10 };
+const indexButton: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 4, padding: '4px 7px', color: 'var(--ink-bright)', background: 'var(--bg-raised)', border: '1px solid var(--rule-default)', borderRadius: 3, cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 10 };
+const indexResultStyle: React.CSSProperties = { marginBottom: 9, color: 'var(--ink-faint)', fontFamily: 'var(--font-mono)', fontSize: 10 };

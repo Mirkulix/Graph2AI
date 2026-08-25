@@ -81,6 +81,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .ok()
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("data")),
+        workspace_root: project_root.clone(),
         obsidian_vault: dirs_home().join("Dokumente/Obsidian Vault/QO"),
         static_dir: static_dir.clone(),
         auth_token: std::env::var("QO_AUTH_TOKEN").ok(),

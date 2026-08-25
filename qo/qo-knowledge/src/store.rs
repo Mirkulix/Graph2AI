@@ -194,6 +194,21 @@ impl KnowledgeStore {
         self.advance(id, ClaimStatus::Stale, None, by)
     }
 
+    /// Record a fresh deterministic observation after a source changed. This
+    /// is intentionally separate from `verify_claim`: an indexer may only
+    /// refresh direct source evidence, never promote an LLM proposal.
+    pub fn refresh_observed(
+        &self,
+        id: &ClaimId,
+        evidence: Evidence,
+        by: Provenance,
+    ) -> Result<Claim, Error> {
+        if !evidence.supports {
+            return Err(Error::CounterEvidenceForVerify);
+        }
+        self.advance(id, ClaimStatus::Observed, Some(evidence), by)
+    }
+
     /// Append a new revision with a new status, superseding the previous one.
     fn advance(
         &self,

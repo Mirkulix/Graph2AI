@@ -492,6 +492,7 @@ export const api = {
   // Knowledge graph — read-only cockpit projection of latest claim revisions.
   knowledgeStats:    () => get<KnowledgeStats>('/api/knowledge/stats'),
   knowledgeSnapshot: (limit: number = 100) => get<KnowledgeSnapshot>(`/api/knowledge/snapshot?limit=${Math.max(1, Math.min(500, limit))}`),
+  knowledgeIndex:    () => post<{ scanned: number; indexed: number; already_known: number; skipped: number; errors: string[] }>('/api/knowledge/index'),
 
   // Supervisor
   supervisorState: () => get<{ agents?: AgentInfo[]; tasks?: unknown[]; sessions?: unknown[] }>('/api/supervisor/state'),

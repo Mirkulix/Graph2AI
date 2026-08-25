@@ -4,6 +4,7 @@ pub mod config;
 pub mod git_ops;
 pub mod mesh_history;
 pub mod peer_discovery;
+pub mod repository_indexer;
 pub mod routes;
 pub mod tools;
 use axum::{
@@ -54,6 +55,9 @@ pub struct AppState {
     /// Durable, checkable knowledge layer: claims with provenance and
     /// evidence. Shares the same redb database as `store`.
     pub knowledge: qo_knowledge::KnowledgeStore,
+    /// Repository boundary for deterministic knowledge ingestion. Network
+    /// callers never choose this path, preventing arbitrary filesystem scans.
+    pub workspace_root: std::path::PathBuf,
     pub llm_routing: config::LlmRoutingConfig,
 
     pub configured_providers: Mutex<Vec<qo_llm::ProviderConfig>>,
@@ -122,6 +126,8 @@ pub struct QoConfig {
     /// Ollama model name (e.g. "orbit-companion-ft-q4")
     pub ollama_model: Option<String>,
     pub data_dir: std::path::PathBuf,
+    /// The only repository the local QO instance may index.
+    pub workspace_root: std::path::PathBuf,
     pub obsidian_vault: std::path::PathBuf,
     pub static_dir: Option<std::path::PathBuf>,
     /// Optional API token for bearer auth (reads QO_AUTH_TOKEN from env if None)
@@ -138,6 +144,7 @@ impl Default for QoConfig {
             ollama_url: None,
             ollama_model: None,
             data_dir: std::path::PathBuf::from("data"),
+            workspace_root: std::path::PathBuf::from("."),
             obsidian_vault: std::path::PathBuf::from("vault"),
             static_dir: None,
             auth_token: None,
@@ -252,6 +259,7 @@ pub async fn build_app(
         store,
         graph_store,
         knowledge,
+        workspace_root: config.workspace_root,
         llm_routing: config.llm_routing,
         obsidian,
         agents: Mutex::new(agents_reg),
@@ -810,6 +818,7 @@ pub async fn build_app(
         .route("/api/providers/{id}", delete(routes::providers::delete_provider))
         .route("/api/knowledge/stats", get(routes::knowledge_tools::knowledge_stats))
         .route("/api/knowledge/snapshot", get(routes::knowledge_tools::knowledge_snapshot))
+        .route("/api/knowledge/index", post(routes::knowledge_tools::index_workspace))
         .route("/api/memory/stats", get(routes::memory::memory_stats))
         .route("/api/memory/search", get(routes::memory::memory_search))
         .route("/api/messages/stats", get(routes::messages::bus_stats))
