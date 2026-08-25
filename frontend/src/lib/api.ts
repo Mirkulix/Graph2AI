@@ -101,6 +101,48 @@ export interface GraphDetail extends GraphSummary {
   raw?: unknown;
 }
 
+export interface KnowledgeStats {
+  verified: number;
+  observed: number;
+  proposed: number;
+  stale: number;
+  refuted: number;
+  load_bearing: number;
+  total: number;
+  entities: number;
+}
+
+export interface KnowledgeEntity {
+  id: string;
+  kind: string;
+  name: string;
+}
+
+export interface KnowledgeEvidence {
+  kind: string;
+  locator: string;
+  lines?: [number, number] | null;
+  excerpt?: string | null;
+  supports: boolean;
+}
+
+export interface KnowledgeClaim {
+  id: string;
+  statement: string;
+  subject: string;
+  relation?: string | null;
+  object?: string | null;
+  status: 'observed' | 'proposed' | 'verified' | 'stale' | 'refuted' | string;
+  provenance: { producer: string; observed_at: number; git_revision?: string | null; run_id?: string | null };
+  evidence: KnowledgeEvidence[];
+  revision: number;
+}
+
+export interface KnowledgeSnapshot {
+  entities: KnowledgeEntity[];
+  claims: KnowledgeClaim[];
+}
+
 // ─── Consensus (multi-agent fan-out) ─────────────────────────────────
 
 export interface ConsensusRequest {
@@ -446,6 +488,10 @@ export const api = {
   graphs:          () => get<GraphSummary[]>('/api/graphs'),
   graph:           (id: string) => get<GraphDetail>(`/api/graphs/${id}`),
   graphStats:      () => get<{ total: number; by_op?: Record<string, number> }>('/api/graphs/stats'),
+
+  // Knowledge graph — read-only cockpit projection of latest claim revisions.
+  knowledgeStats:    () => get<KnowledgeStats>('/api/knowledge/stats'),
+  knowledgeSnapshot: (limit: number = 100) => get<KnowledgeSnapshot>(`/api/knowledge/snapshot?limit=${Math.max(1, Math.min(500, limit))}`),
 
   // Supervisor
   supervisorState: () => get<{ agents?: AgentInfo[]; tasks?: unknown[]; sessions?: unknown[] }>('/api/supervisor/state'),

@@ -809,6 +809,7 @@ pub async fn build_app(
         .route("/api/providers/{id}/edit", put(routes::providers::update_provider))
         .route("/api/providers/{id}", delete(routes::providers::delete_provider))
         .route("/api/knowledge/stats", get(routes::knowledge_tools::knowledge_stats))
+        .route("/api/knowledge/snapshot", get(routes::knowledge_tools::knowledge_snapshot))
         .route("/api/memory/stats", get(routes::memory::memory_stats))
         .route("/api/memory/search", get(routes::memory::memory_search))
         .route("/api/messages/stats", get(routes::messages::bus_stats))

@@ -1,5 +1,6 @@
 {
   "name": "orbitqlang-plugins",
+  "description": "OrbitQLang integrations for Claude Code and the local QO control plane.",
   "owner": {
     "name": "OrbitQLang"
   },

@@ -19,6 +19,8 @@
 //! Writes require an agent identity (`by`), which is stored as provenance and
 //! written to the action log for audit.
 
+use axum::extract::Query;
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -483,5 +485,40 @@ pub async fn knowledge_stats(
         "load_bearing": verified + observed,
         "total": verified + observed + proposed + stale + refuted,
         "entities": state.knowledge.list_entities().map(|e| e.len()).unwrap_or(0),
+    }))
+}
+
+/// Query bounds for the cockpit snapshot. The endpoint is read-only and only
+/// returns latest claim revisions, never the append-only audit history.
+#[derive(Deserialize)]
+pub struct KnowledgeSnapshotQuery {
+    pub limit: Option<usize>,
+}
+
+/// `GET /api/knowledge/snapshot` — bounded, render-ready graph data for the
+/// QO cockpit. This keeps the frontend on the HTTP API rather than making it
+/// speak MCP JSON-RPC directly.
+pub async fn knowledge_snapshot(
+    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
+    Query(query): Query<KnowledgeSnapshotQuery>,
+) -> axum::Json<Value> {
+    let limit = query.limit.unwrap_or(100).clamp(1, 500);
+    let statuses = [
+        ClaimStatus::Verified,
+        ClaimStatus::Observed,
+        ClaimStatus::Proposed,
+        ClaimStatus::Stale,
+        ClaimStatus::Refuted,
+    ];
+    let mut claims = statuses
+        .into_iter()
+        .flat_map(|status| state.knowledge.claims_with_status(status).unwrap_or_default())
+        .collect::<Vec<_>>();
+    claims.sort_by(|a, b| b.provenance.observed_at.cmp(&a.provenance.observed_at));
+    claims.truncate(limit);
+
+    axum::Json(json!({
+        "entities": state.knowledge.list_entities().unwrap_or_default(),
+        "claims": claims,
     }))
 }

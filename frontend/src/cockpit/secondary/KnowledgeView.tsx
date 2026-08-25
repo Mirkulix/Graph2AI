@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Search, ChevronDown, ChevronRight } from 'lucide-react';
 import { api, type SwarmState, type BusMessage } from '../../lib/api';
 import { SecondaryFrame } from './SecondaryFrame';
+import { KnowledgeGraphPanel } from './KnowledgeGraphPanel';
 
 type ItemKind = 'swarm' | 'message' | 'chat' | 'graph';
 type TimeBucket = 'today' | '7d' | '30d' | 'all';
@@ -146,6 +147,7 @@ export default function KnowledgeView() {
 
   return (
     <SecondaryFrame title="knowledge" subtitle="conversation ledger — every swarm, message, chat and graph that flowed through this qo">
+      <KnowledgeGraphPanel />
       <div style={statsRow}>
         <Stat label="items" value={String(stats.totalGraphs)} />
         <Stat label="agent calls" value={String(stats.totalAgentCalls)} />

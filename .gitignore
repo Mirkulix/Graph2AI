@@ -6,6 +6,7 @@ editors/vscode/node_modules/
 editors/vscode/out/
 .cargo-offline/
 .claude/
+.projectatlas/
 .playwright-mcp/
 data/models/
 data/text/
