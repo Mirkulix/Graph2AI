@@ -8,6 +8,7 @@ description = "QO HTTP server — Axum routes + WebSocket + static files"
 qo-agents = { path = "../qo-agents" }
 qo-llm = { path = "../qo-llm" }
 qo-memory = { path = "../qo-memory" }
+qo-knowledge = { path = "../qo-knowledge" }
 qo-values = { path = "../qo-values" }
 qlang-agent = { workspace = true }
 qlang-core = { workspace = true }

@@ -27,10 +27,12 @@ fn server_info() -> Value {
     })
 }
 
-/// The 3 tool definitions exposed via `tools/list`.
+/// Tool definitions exposed via `tools/list`: the 3 agent tools below,
+/// plus the 5 `orbit_graph_*` knowledge-graph tools from
+/// [`crate::routes::knowledge_tools`].
 fn tool_definitions() -> Value {
-    json!([
-        {
+    let mut tools = vec![
+        json!({
             "name": "qlang_research",
             "description": "Multi-source web research (Tavily + Wikipedia + Jina Reader) with the QLANG Researcher agent.",
             "inputSchema": {
@@ -40,8 +42,8 @@ fn tool_definitions() -> Value {
                 },
                 "required": ["query"]
             }
-        },
-        {
+        }),
+        json!({
             "name": "qlang_run_goal",
             "description": "Run a goal through the QLANG orchestrator. CEO decomposes, specialist agents work in parallel, Guardian value-checks.",
             "inputSchema": {
@@ -51,8 +53,8 @@ fn tool_definitions() -> Value {
                 },
                 "required": ["goal"]
             }
-        },
-        {
+        }),
+        json!({
             "name": "qlang_read_workspace_file",
             "description": "Read a file from the QLANG agent workspace sandbox.",
             "inputSchema": {
@@ -62,8 +64,10 @@ fn tool_definitions() -> Value {
                 },
                 "required": ["path"]
             }
-        }
-    ])
+        }),
+    ];
+    tools.extend(crate::routes::knowledge_tools::tool_definitions());
+    Value::Array(tools)
 }
 
 #[derive(Deserialize)]
@@ -136,6 +140,12 @@ async fn handle_tools_call(
         .and_then(|v| v.as_str())
         .ok_or((-32602, "Missing tool name".to_string()))?;
     let args = params.get("arguments").cloned().unwrap_or(Value::Null);
+
+    // Knowledge-graph tools live in their own module.
+    if crate::routes::knowledge_tools::handles(name) {
+        let out = crate::routes::knowledge_tools::call(state, name, args).await?;
+        return Ok(text_content(out));
+    }
 
     match name {
         "qlang_research" => {

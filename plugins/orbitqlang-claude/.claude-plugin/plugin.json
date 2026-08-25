@@ -1,0 +1,17 @@
+{
+  "name": "orbitqlang",
+  "displayName": "OrbitQLang",
+  "version": "0.1.0",
+  "description": "Connect Claude Code to the local OrbitQLang QO control plane for research, goal orchestration, and sandboxed workspace reads.",
+  "author": {
+    "name": "OrbitQLang"
+  },
+  "license": "MIT",
+  "keywords": [
+    "multi-agent",
+    "knowledge-graph",
+    "qlms",
+    "orchestration"
+  ],
+  "defaultEnabled": false
+}

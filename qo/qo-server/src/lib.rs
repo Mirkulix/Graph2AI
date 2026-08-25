@@ -51,6 +51,9 @@ pub struct AppState {
     pub llm: Arc<LlmRouter>,
     pub store: Store,
     pub graph_store: GraphStore,
+    /// Durable, checkable knowledge layer: claims with provenance and
+    /// evidence. Shares the same redb database as `store`.
+    pub knowledge: qo_knowledge::KnowledgeStore,
     pub llm_routing: config::LlmRoutingConfig,
 
     pub configured_providers: Mutex<Vec<qo_llm::ProviderConfig>>,
@@ -152,6 +155,7 @@ pub async fn build_app(
 
     let store = Store::open(&db_path)?;
     let graph_store = GraphStore::new(store.db())?;
+    let knowledge = qo_knowledge::KnowledgeStore::from_db(store.db())?;
     let ollama_config = match (config.ollama_url, config.ollama_model) {
         (Some(url), Some(model)) => Some((url, model)),
         _ => None,
@@ -247,6 +251,7 @@ pub async fn build_app(
         llm,
         store,
         graph_store,
+        knowledge,
         llm_routing: config.llm_routing,
         obsidian,
         agents: Mutex::new(agents_reg),
@@ -803,6 +808,7 @@ pub async fn build_app(
         .route("/api/providers/{id}/toggle", put(routes::providers::toggle_provider))
         .route("/api/providers/{id}/edit", put(routes::providers::update_provider))
         .route("/api/providers/{id}", delete(routes::providers::delete_provider))
+        .route("/api/knowledge/stats", get(routes::knowledge_tools::knowledge_stats))
         .route("/api/memory/stats", get(routes::memory::memory_stats))
         .route("/api/memory/search", get(routes::memory::memory_search))
         .route("/api/messages/stats", get(routes::messages::bus_stats))

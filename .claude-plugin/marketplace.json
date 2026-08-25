@@ -1,0 +1,14 @@
+{
+  "name": "orbitqlang-plugins",
+  "owner": {
+    "name": "OrbitQLang"
+  },
+  "plugins": [
+    {
+      "name": "orbitqlang",
+      "source": "./plugins/orbitqlang-claude",
+      "description": "Claude Code integration for the local OrbitQLang QO control plane.",
+      "version": "0.1.0"
+    }
+  ]
+}

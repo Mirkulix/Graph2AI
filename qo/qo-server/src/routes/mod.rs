@@ -17,6 +17,7 @@ pub mod supervisor;
 pub mod mcp_qlms;
 pub mod dashboard;
 pub mod workspace;
+pub mod knowledge_tools;
 pub mod mcp_server;
 pub mod swarm;
 pub mod autonomous;

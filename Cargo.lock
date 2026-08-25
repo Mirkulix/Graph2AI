@@ -1248,6 +1248,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "qo-knowledge"
+version = "0.1.0"
+dependencies = [
+ "redb",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "qo-llm"
 version = "0.1.0"
 dependencies = [
@@ -1295,6 +1306,7 @@ dependencies = [
  "qlang-core",
  "qlang-runtime",
  "qo-agents",
+ "qo-knowledge",
  "qo-llm",
  "qo-memory",
  "qo-values",
