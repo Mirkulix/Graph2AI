@@ -120,6 +120,10 @@ impl LlmRouter {
     /// `ProviderType` variants ("groq", "deepseek", "openai",
     /// "anthropic", "ollama", …). Provider types we do not yet wire
     /// for hot-reload return `Err` so the caller can log it.
+    ///
+    /// Note: only `deepseek`, `groq` and `ollama` have dedicated clients.
+    /// Everything else shares one OpenAI-shaped "cloud" slot — see the
+    /// comment on that match arm for what that costs you.
     pub async fn install_provider(
         &self,
         provider_type: &str,
@@ -139,9 +143,21 @@ impl LlmRouter {
                 *self.groq.write().await = Some(GroqClient::new(api_key));
                 Ok(())
             }
-            // Treat OpenAI-compatible providers as the generic "cloud"
-            // tier. Anthropic / OpenRouter / Gemini / Mistral / Custom
-            // all use the same OpenAI-shaped chat-completions API.
+            // All of these share the single generic "cloud" tier, which
+            // speaks the OpenAI chat-completions shape.
+            //
+            // Two consequences worth knowing before you use this:
+            //
+            // 1. There is NO native Anthropic client. Anthropic's Messages
+            //    API is not OpenAI-shaped, so "anthropic" only works against
+            //    an OpenAI-compatible gateway (OpenRouter, LiteLLM, a proxy)
+            //    — not against api.anthropic.com directly. Adding a real
+            //    client means a new `Tier` and a new module here.
+            //
+            // 2. There is only ONE cloud slot. Installing any of these
+            //    REPLACES whichever was configured before: an Anthropic key
+            //    overwrites an OpenAI one and vice versa. They cannot be
+            //    used side by side.
             "openai" | "anthropic" | "openrouter" | "gemini" | "mistral" | "custom" => {
                 let url = base_url.unwrap_or_else(|| "https://api.openai.com/v1".to_string());
                 let model = model.unwrap_or_else(|| "gpt-4o-mini".to_string());

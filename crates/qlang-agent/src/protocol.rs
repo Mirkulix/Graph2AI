@@ -125,7 +125,7 @@ impl GraphMessage {
         let hash = crypto::hash_graph(&self.graph);
         let sig = keypair.sign(&hash);
         self.signature = Some(sig);
-        self.signer_pubkey = Some(*keypair.public_key());
+        self.signer_pubkey = Some(keypair.public_key());
         self.graph_hash = Some(hash);
         self
     }
@@ -377,7 +377,7 @@ impl AgentConversation {
         buf.extend_from_slice(&2u16.to_le_bytes()); // version 2
         buf.extend_from_slice(&1u16.to_le_bytes()); // flags: SIGNED=0x01
         buf.extend_from_slice(&signature); // 64 bytes
-        buf.extend_from_slice(keypair.public_key()); // 32 bytes
+        buf.extend_from_slice(&keypair.public_key()); // 32 bytes
         buf.extend_from_slice(&payload_hash); // 32 bytes
         buf.extend_from_slice(&(self.messages.len() as u32).to_le_bytes());
         buf.extend_from_slice(&json);
@@ -423,7 +423,7 @@ impl AgentConversation {
         buf.extend_from_slice(&2u16.to_le_bytes());
         buf.extend_from_slice(&(FLAG_SIGNED | FLAG_NATIVE_BINARY).to_le_bytes());
         buf.extend_from_slice(&signature);
-        buf.extend_from_slice(keypair.public_key());
+        buf.extend_from_slice(&keypair.public_key());
         buf.extend_from_slice(&payload_hash);
         buf.extend_from_slice(&(self.messages.len() as u32).to_le_bytes());
         buf.extend_from_slice(&bin);

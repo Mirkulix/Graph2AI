@@ -99,10 +99,10 @@ impl Op {
 
     /// Whether this operation is deterministic.
     pub fn is_deterministic(&self) -> bool {
-        match self {
-            Op::Dropout { .. } | Op::OllamaGenerate { .. } | Op::OllamaChat { .. } => false,
-            _ => true,
-        }
+        !matches!(
+            self,
+            Op::Dropout { .. } | Op::OllamaGenerate { .. } | Op::OllamaChat { .. }
+        )
     }
 
     /// Whether this is a quantum operation. Always false after radical purge.

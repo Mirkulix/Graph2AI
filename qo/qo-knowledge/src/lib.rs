@@ -53,14 +53,47 @@
 //! assert_eq!(store.load_bearing_context(&file, 10).unwrap().len(), 1);
 //! ```
 
+pub mod archive;
+pub mod context;
+pub mod delta;
+pub mod divergence;
+pub mod extract;
+pub mod health;
+pub mod orbitql;
+pub mod merge;
 pub mod model;
+pub mod receipt;
+pub mod sourcecheck;
 pub mod store;
+pub mod trust;
 
+pub use delta::{
+    DeltaProducer, DeltaSignature, DeltaValidationError, GraphDelta, GraphDeltaOp,
+    GRAPH_DELTA_VERSION,
+};
 pub use model::{
     Claim, ClaimId, ClaimStatus, Entity, EntityId, EntityKind, Evidence, EvidenceKind, Provenance,
     Relation,
 };
+pub use archive::{export, import, list_backups, write_backup, Archive, ImportReport, ARCHIVE_VERSION};
+pub use context::{compile_context, CompiledContext, ContextRequest};
+pub use divergence::{divergences, Divergence, DivergenceReport};
+pub use extract::{
+    propose_from_text, proposal_system_prompt, ProposalOutcome, ProposalPolicy, ProposalViolation,
+};
+pub use health::{health, GraphHealth};
+pub use merge::{
+    merge_delta, merge_signed_delta, Conflict, ConflictKind, MergeReport, OpOutcome, SubmitError,
+};
+pub use orbitql::{from_orbitql, parse_recovering, to_orbitql, OrbitQlError, ParseOutcome};
+pub use receipt::{build_receipt, Receipt};
+pub use sourcecheck::{
+    assess, distinctive_terms, heal_stale, refresh_sources, verify_all_proposals,
+    verify_claim_against_source, Assessment, HealOutcome, HealOutcomeKind, HealReport, SourceCheck,
+    StaleOutcome, StaleOutcomeKind, StaleReport, SweepOutcome, SweepReport, Verdict,
+};
 pub use store::KnowledgeStore;
+pub use trust::{sign_delta, verify_delta, TrustError, TrustStore, TrustedKey, SIGNING_ALGORITHM};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

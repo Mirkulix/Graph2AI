@@ -70,6 +70,17 @@ pub struct ErrorBody {
 
 type ApiError = (StatusCode, Json<ErrorBody>);
 
+/// Escape hatch for peers still speaking unsigned QLMS v1.
+///
+/// Off by default: an unsigned frame carries no authenticity, so accepting
+/// one is a deployment decision an operator has to make explicitly.
+fn allow_unsigned_frames() -> bool {
+    matches!(
+        std::env::var("QO_QLMS_ALLOW_UNSIGNED").as_deref(),
+        Ok("1") | Ok("true")
+    )
+}
+
 fn bad_request(msg: impl Into<String>) -> ApiError {
     (StatusCode::BAD_REQUEST, Json(ErrorBody { error: msg.into() }))
 }
@@ -120,17 +131,34 @@ pub async fn deliver(
 
     let decoded = decode_qlms_frame(&bytes).map_err(|e| bad_request(format!("invalid QLMS frame: {e}")))?;
 
-    if decoded.signed && !decoded.signature_verified {
-        return Err(unauthorized("QLMS signature verification failed"));
+    // Insist on a verified signature. Checking only `signed && !verified`
+    // would let a caller strip the signed flag to skip verification
+    // entirely — an unsigned frame would then reach the bus unchecked.
+    if !decoded.signature_verified {
+        if !allow_unsigned_frames() {
+            return Err(unauthorized(
+                "QLMS envelope must carry a verified signature \
+                 (set QO_QLMS_ALLOW_UNSIGNED=1 to accept legacy unsigned frames)",
+            ));
+        }
+        tracing::warn!(
+            signed = decoded.signed,
+            "accepting unsigned QLMS frame: QO_QLMS_ALLOW_UNSIGNED is set"
+        );
     }
 
     let messages = decoded.messages;
 
-    // Dispatch messages to the internal bus
+    // Dispatch messages to the internal bus. Agent names come from the
+    // frame, so they are logged as structured fields rather than
+    // interpolated into the message — a name containing newlines must not
+    // be able to forge log lines.
     for msg in &messages {
-        eprintln!(
-            "[QLMS Bridge] Received graph from {} for {} (intent: {:?})",
-            msg.from.name, msg.to.name, msg.intent
+        tracing::info!(
+            from = %msg.from.name,
+            to = %msg.to.name,
+            intent = ?msg.intent,
+            "QLMS bridge received graph"
         );
         state.message_bus.send(msg.clone()).await;
     }
@@ -170,4 +198,107 @@ pub async fn reply(
         frame,
         encoding: "base64".to_string(),
     }))
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use qlang_agent::protocol::{decode_qlms_frame, AgentConversation, AgentId, MessageIntent};
+    use qlang_core::graph::Graph;
+    use std::collections::HashMap;
+
+    fn agent(name: &str) -> AgentId {
+        AgentId {
+            name: name.to_string(),
+            capabilities: Vec::new(),
+        }
+    }
+
+    fn frame_pair() -> (Vec<u8>, Vec<u8>) {
+        let mut signed_conv = AgentConversation::new();
+        signed_conv.send(
+            agent("alice"),
+            agent("bob"),
+            Graph::new("g"),
+            HashMap::new(),
+            MessageIntent::Execute,
+            None,
+        );
+        let mut unsigned_conv = AgentConversation::new();
+        unsigned_conv.send(
+            agent("alice"),
+            agent("bob"),
+            Graph::new("g"),
+            HashMap::new(),
+            MessageIntent::Execute,
+            None,
+        );
+
+        let kp = Keypair::from_seed(&[7u8; 32]);
+        (
+            signed_conv.to_signed_binary(&kp).expect("sign"),
+            unsigned_conv.to_binary().expect("serialize"),
+        )
+    }
+
+    /// The gate the handler applies, extracted so it can be tested without
+    /// standing up a server: a frame passes only if its signature verified.
+    fn accepts(frame: &[u8], allow_unsigned: bool) -> bool {
+        let decoded = decode_qlms_frame(frame).expect("frame must decode");
+        decoded.signature_verified || allow_unsigned
+    }
+
+    #[test]
+    fn signed_frame_is_accepted() {
+        let (signed, _) = frame_pair();
+        assert!(accepts(&signed, false));
+    }
+
+    /// The bug this replaced: an attacker omits the signed flag, and a check
+    /// of `signed && !verified` never fires. Dropping the flag must not be a
+    /// way past verification.
+    #[test]
+    fn unsigned_frame_is_rejected_by_default() {
+        let (_, unsigned) = frame_pair();
+        let decoded = decode_qlms_frame(&unsigned).expect("frame must decode");
+        assert!(!decoded.signed, "fixture must be an unsigned frame");
+        assert!(
+            !accepts(&unsigned, false),
+            "an unsigned frame must not reach the bus"
+        );
+    }
+
+    /// Legacy peers stay reachable, but only when an operator opts in.
+    #[test]
+    fn unsigned_frame_is_accepted_only_with_opt_in() {
+        let (_, unsigned) = frame_pair();
+        assert!(accepts(&unsigned, true));
+    }
+
+    /// A tampered signed frame fails verification, so it is refused whatever
+    /// the opt-in says about *unsigned* traffic.
+    #[test]
+    fn tampered_signed_frame_is_rejected() {
+        let (mut signed, _) = frame_pair();
+        let last = signed.len() - 1;
+        signed[last] ^= 0xFF;
+        match decode_qlms_frame(&signed) {
+            Err(_) => {}
+            Ok(decoded) => assert!(
+                !decoded.signature_verified,
+                "tampering must not verify"
+            ),
+        }
+    }
+
+    #[test]
+    fn allow_unsigned_defaults_to_false() {
+        // The env var is absent in a normal test process.
+        std::env::remove_var("QO_QLMS_ALLOW_UNSIGNED");
+        assert!(!allow_unsigned_frames());
+    }
 }

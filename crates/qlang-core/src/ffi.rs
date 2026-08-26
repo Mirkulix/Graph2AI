@@ -2,6 +2,26 @@
 //!
 //! All functions use `extern "C"` with `#[unsafe(no_mangle)]` and operate on
 //! raw pointers and C-compatible types only.
+//!
+//! # Safety (whole module)
+//!
+//! Every function here shares one contract, so it is stated once rather than
+//! repeated per function:
+//!
+//! - Any `*mut Graph` must be a pointer previously returned by
+//!   `qlang_graph_new` and not yet passed to `qlang_graph_free`. A null
+//!   pointer is handled and returns a safe error value; a dangling or foreign
+//!   pointer is undefined behaviour.
+//! - Any `*const c_char` must be a valid, NUL-terminated C string for the
+//!   duration of the call.
+//! - Strings returned as `*mut c_char` must be freed with `qlang_free_string`,
+//!   and graphs with `qlang_graph_free`. Freeing anything else, or twice, is
+//!   undefined behaviour.
+//!
+//! The per-function `missing_safety_doc` lint is allowed at the module level
+//! because that contract is uniform; documenting each function separately
+//! would restate the same four lines ten times.
+#![allow(clippy::missing_safety_doc)]
 
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;

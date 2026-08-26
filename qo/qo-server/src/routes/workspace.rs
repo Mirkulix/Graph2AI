@@ -167,7 +167,40 @@ pub fn sandbox_resolve(root: &Path, rel: &str) -> Option<PathBuf> {
             _ => return None, // ParentDir, Prefix, RootDir — all rejected
         }
     }
-    Some(root.join(assembled))
+    let resolved = root.join(assembled);
+
+    // Component filtering alone is not containment: it rejects `..` in the
+    // *string*, but a symlink inside the workspace still points wherever it
+    // points. `exec_file` can create one, so this is reachable. Resolve the
+    // real path and check it is still inside.
+    //
+    // Only an existing path can be canonicalised, so for a path being created
+    // the nearest existing ancestor is checked instead — that is the directory
+    // the write actually lands in.
+    // A root that does not exist yet cannot contain a symlink, so component
+    // filtering is already the whole guarantee. Refusing here would break the
+    // first write into a workspace directory that has not been created.
+    let Ok(real_root) = root.canonicalize() else {
+        return Some(resolved);
+    };
+
+    match resolved.canonicalize() {
+        Ok(real) => real.starts_with(&real_root).then_some(resolved),
+        Err(_) => {
+            let mut ancestor = resolved.parent();
+            while let Some(dir) = ancestor {
+                match dir.canonicalize() {
+                    Ok(real) => {
+                        return real.starts_with(&real_root).then_some(resolved);
+                    }
+                    // Not created yet — keep walking up.
+                    Err(_) => ancestor = dir.parent(),
+                }
+            }
+            // Nothing on the path exists, not even the root: nothing to trust.
+            None
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -651,6 +684,67 @@ mod tests {
         let root = Path::new("/workspace");
         let got = sandbox_resolve(root, "./src/./main.py").unwrap();
         assert_eq!(got, Path::new("/workspace/src/main.py"));
+    }
+
+    /// A symlink inside the workspace pointing out of it must not be followed.
+    ///
+    /// Component filtering does not catch this: the path string contains no
+    /// `..` at all. `exec_file` can create such a link, so this is a reachable
+    /// escape rather than a theoretical one.
+    #[test]
+    #[cfg(unix)]
+    fn sandbox_rejects_a_symlink_that_escapes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("workspace");
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret.txt"), "secret").unwrap();
+
+        std::os::unix::fs::symlink(&outside, root.join("escape")).unwrap();
+
+        assert!(
+            sandbox_resolve(&root, "escape/secret.txt").is_none(),
+            "followed a symlink out of the workspace"
+        );
+        // A real file inside still resolves.
+        std::fs::write(root.join("ok.txt"), "fine").unwrap();
+        assert!(sandbox_resolve(&root, "ok.txt").is_some());
+    }
+
+    /// Same attack on Windows, where the link type differs. Creating a
+    /// directory symlink needs privilege, so the test skips rather than fails
+    /// when it is not available.
+    #[test]
+    #[cfg(windows)]
+    fn sandbox_rejects_a_symlink_that_escapes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("workspace");
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret.txt"), "secret").unwrap();
+
+        if std::os::windows::fs::symlink_dir(&outside, root.join("escape")).is_err() {
+            eprintln!("skipping: creating a symlink needs developer mode or admin");
+            return;
+        }
+
+        assert!(
+            sandbox_resolve(&root, "escape/secret.txt").is_none(),
+            "followed a symlink out of the workspace"
+        );
+        std::fs::write(root.join("ok.txt"), "fine").unwrap();
+        assert!(sandbox_resolve(&root, "ok.txt").is_some());
+    }
+
+    /// Writing a file that does not exist yet still works — the check falls
+    /// back to the nearest existing ancestor.
+    #[test]
+    fn sandbox_allows_creating_a_new_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+        assert!(sandbox_resolve(&root, "new/nested/file.txt").is_some());
     }
 
     #[test]

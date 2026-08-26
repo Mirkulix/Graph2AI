@@ -1,11 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
-import { CircleDot, Database, FileCheck2, RefreshCw, Search, ShieldCheck } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { CircleDot, Database, FileCheck2, Receipt, RefreshCw, Search, ShieldCheck } from 'lucide-react';
 import {
   api,
   type KnowledgeClaim,
+  type KnowledgeDivergence,
   type KnowledgeEntity,
+  type KnowledgeReceipt,
   type KnowledgeSnapshot,
   type KnowledgeStats,
+  type KnowledgeVerifySourceResult,
 } from '../../lib/api';
 
 type Status = KnowledgeClaim['status'];
@@ -33,27 +36,36 @@ export function KnowledgeGraphPanel() {
   const [error, setError] = useState<string | null>(null);
   const [indexing, setIndexing] = useState(false);
   const [indexResult, setIndexResult] = useState<string | null>(null);
+  const [sweeping, setSweeping] = useState(false);
+  const [sweepResult, setSweepResult] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshResult, setRefreshResult] = useState<string | null>(null);
+  const [healing, setHealing] = useState(false);
+  const [healResult, setHealResult] = useState<string | null>(null);
+  const [divergences, setDivergences] = useState<KnowledgeDivergence[]>([]);
+  const [divergencesOpen, setDivergencesOpen] = useState(false);
+
+  const refresh = useCallback(async () => {
+    try {
+      const [nextStats, nextSnapshot, nextDivergences] = await Promise.all([
+        api.knowledgeStats(),
+        api.knowledgeSnapshot(150),
+        api.knowledgeDivergences().catch(() => ({ divergences: [] as KnowledgeDivergence[] })),
+      ]);
+      setStats(nextStats);
+      setSnapshot(nextSnapshot);
+      setDivergences(nextDivergences.divergences ?? []);
+      setError(null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Knowledge graph unavailable');
+    }
+  }, []);
 
   useEffect(() => {
-    let alive = true;
-    const load = async () => {
-      try {
-        const [nextStats, nextSnapshot] = await Promise.all([
-          api.knowledgeStats(),
-          api.knowledgeSnapshot(150),
-        ]);
-        if (!alive) return;
-        setStats(nextStats);
-        setSnapshot(nextSnapshot);
-        setError(null);
-      } catch (cause) {
-        if (alive) setError(cause instanceof Error ? cause.message : 'Knowledge graph unavailable');
-      }
-    };
-    void load();
-    const timer = window.setInterval(() => void load(), 4000);
-    return () => { alive = false; window.clearInterval(timer); };
-  }, []);
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 4000);
+    return () => window.clearInterval(timer);
+  }, [refresh]);
 
   const visibleClaims = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -93,6 +105,36 @@ export function KnowledgeGraphPanel() {
     finally { setIndexing(false); }
   }
 
+  async function sweepProposals() {
+    setSweeping(true);
+    try {
+      const result = await api.knowledgeVerifyAll();
+      setSweepResult(`${result.verified} verified · ${result.inconclusive} inconclusive · ${result.unavailable} unavailable (of ${result.checked})`);
+      await refresh();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Sweep failed'); }
+    finally { setSweeping(false); }
+  }
+
+  async function refreshSources() {
+    setRefreshing(true);
+    try {
+      const result = await api.knowledgeRefreshSources();
+      setRefreshResult(`${result.stale} stale · ${result.still_current} current (of ${result.checked})`);
+      await refresh();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Source refresh failed'); }
+    finally { setRefreshing(false); }
+  }
+
+  async function healStale() {
+    setHealing(true);
+    try {
+      const result = await api.knowledgeHealStale();
+      setHealResult(`${result.healed} healed · ${result.remained_stale} still stale (of ${result.examined})`);
+      await refresh();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Heal failed'); }
+    finally { setHealing(false); }
+  }
+
   return (
     <section style={panel}>
       <div style={heading}>
@@ -101,11 +143,36 @@ export function KnowledgeGraphPanel() {
           <div style={title}><ShieldCheck size={17} /> verified project memory</div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          <button onClick={() => void sweepProposals()} disabled={sweeping} style={indexButton}><ShieldCheck size={12} /> {sweeping ? 'sweeping…' : 'sweep proposals'}</button>
+          <button onClick={() => void refreshSources()} disabled={refreshing} style={indexButton}><RefreshCw size={12} /> {refreshing ? 'refreshing…' : 'refresh sources'}</button>
+          <button onClick={() => void healStale()} disabled={healing} style={indexButton}><ShieldCheck size={12} /> {healing ? 'healing…' : 'heal stale'}</button>
           <button onClick={() => void indexWorkspace()} disabled={indexing} style={indexButton}><RefreshCw size={12} /> {indexing ? 'scanning…' : 'scan workspace'}</button>
           <div style={loadBearing}><FileCheck2 size={14} /> {stats.load_bearing} reliable</div>
         </div>
       </div>
       {indexResult && <div style={indexResultStyle}>last scan: {indexResult}</div>}
+      {sweepResult && <div style={indexResultStyle}>sweep: {sweepResult}</div>}
+      {refreshResult && <div style={indexResultStyle}>source refresh: {refreshResult}</div>}
+      {healResult && <div style={indexResultStyle}>heal: {healResult}</div>}
+      {divergences.length > 0 && (
+        <div style={divergenceBox}>
+          <button onClick={() => setDivergencesOpen((o) => !o)} style={divergenceHeader}>
+            <span style={{ color: 'var(--danger)', fontWeight: 600 }}>{divergences.length} divergent subject(s)</span>
+            <span style={{ color: 'var(--ink-faint)' }}>{divergencesOpen ? 'hide' : 'show'}</span>
+          </button>
+          {divergencesOpen && divergences.map((d) => (
+            <div key={d.subject} style={divergenceRow}>
+              <div style={{ ...divergenceMeta, color: 'var(--ink-bright)' }}>{d.subject}</div>
+              <div style={divergenceMeta}>
+                <span style={{ color: 'var(--ok)' }}>+{d.load_bearing.length} {d.load_bearing.map((c) => c.statement).join(' · ')}</span>
+              </div>
+              <div style={divergenceMeta}>
+                <span style={{ color: 'var(--danger)' }}>−{d.refuted.length} {d.refuted.map((c) => c.statement).join(' · ')}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div style={metrics}>
         <Metric label="entities" value={stats.entities} icon={<CircleDot size={13} />} />
@@ -138,7 +205,7 @@ export function KnowledgeGraphPanel() {
 
           <div style={contentGrid}>
             <GraphMap entities={graphEntities} claims={visibleClaims} selectedId={selected} onSelect={setSelected} />
-            <ClaimInspector claim={selectedClaim} claims={visibleClaims} onSelect={setSelected} />
+            <ClaimInspector key={selectedClaim?.id ?? 'none'} claim={selectedClaim} claims={visibleClaims} onSelect={setSelected} onChanged={refresh} />
           </div>
         </>
       )}
@@ -192,17 +259,75 @@ function GraphMap({ entities, claims, selectedId, onSelect }: {
   );
 }
 
-function ClaimInspector({ claim, claims, onSelect }: {
+function ClaimInspector({ claim, claims, onSelect, onChanged }: {
   claim: KnowledgeClaim | null;
   claims: KnowledgeClaim[];
   onSelect: (id: string) => void;
+  onChanged: () => Promise<void>;
 }) {
+  const [verifying, setVerifying] = useState(false);
+  const [verifyResult, setVerifyResult] = useState<KnowledgeVerifySourceResult | null>(null);
+  const [verifyError, setVerifyError] = useState<string | null>(null);
+  const [receipt, setReceipt] = useState<KnowledgeReceipt | null>(null);
+  const [receiptLoading, setReceiptLoading] = useState(false);
+
+  async function verifySource() {
+    if (!claim) return;
+    setVerifying(true);
+    setVerifyError(null);
+    setVerifyResult(null);
+    try {
+      const result = await api.knowledgeVerifySource(claim.id);
+      setVerifyResult(result);
+      // The claim's status may have changed to `verified`; refresh the graph.
+      await onChanged();
+    } catch (cause) {
+      setVerifyError(cause instanceof Error ? cause.message : 'Source check failed');
+    } finally {
+      setVerifying(false);
+    }
+  }
+
+  async function showReceipt() {
+    if (!claim) return;
+    setReceiptLoading(true);
+    setVerifyError(null);
+    try {
+      setReceipt(await api.knowledgeReceipt(claim.id));
+    } catch (cause) {
+      setVerifyError(cause instanceof Error ? cause.message : 'Receipt failed');
+    } finally {
+      setReceiptLoading(false);
+    }
+  }
+
   if (claim) {
     return <aside style={inspector}>
       <ClaimStatus status={claim.status} />
       <div style={claimStatement}>{claim.statement}</div>
       <div style={claimMeta}>{claim.subject}{claim.relation ? `  ${claim.relation}  ${claim.object ?? ''}` : ''}</div>
       <div style={claimMeta}>revision {claim.revision} · by {claim.provenance.producer}</div>
+
+      <div style={actionRow}>
+        {claim.status === 'proposed' && (
+          <button onClick={() => void verifySource()} disabled={verifying} style={actionButton}>
+            <ShieldCheck size={12} /> {verifying ? 'checking source…' : 'check against source'}
+          </button>
+        )}
+        <button onClick={() => void showReceipt()} disabled={receiptLoading} style={actionButton}>
+          <Receipt size={12} /> {receiptLoading ? 'loading…' : 'proof receipt'}
+        </button>
+      </div>
+
+      {verifyError && <div style={verifyErrorStyle}>{verifyError}</div>}
+      {verifyResult && <VerifyResultLine result={verifyResult} />}
+      {receipt && (
+        <div style={{ marginTop: 10 }}>
+          <div className="eyebrow" style={{ marginBottom: 4 }}>proof receipt</div>
+          <pre style={receiptPre}>{receipt.rendered}</pre>
+        </div>
+      )}
+
       <div className="eyebrow" style={{ marginTop: 12 }}>evidence</div>
       {claim.evidence.length === 0 ? <div style={muted}>Noch keine Evidenz — dieser Claim ist nicht belastbar.</div> : claim.evidence.map((evidence, index) => (
         <div key={`${evidence.locator}-${index}`} style={evidenceCard}>
@@ -224,6 +349,23 @@ function ClaimInspector({ claim, claims, onSelect }: {
     ))}
     {claims.length === 0 && <div style={muted}>Keine Claims gefunden.</div>}
   </aside>;
+}
+
+function VerifyResultLine({ result }: { result: KnowledgeVerifySourceResult }) {
+  const kind = result.verdict.kind;
+  const color = kind === 'verified' ? 'var(--ok)' : kind === 'inconclusive' ? 'var(--warn)' : 'var(--ink-muted)';
+  const detail = kind === 'verified'
+    ? `all ${result.matched} term(s) present: ${result.terms.join(', ')}`
+    : kind === 'inconclusive'
+      ? (result.verdict.reason ?? `${result.matched}/${result.terms.length} terms present`)
+      : kind === 'not_proposed'
+        ? `already ${result.verdict.status ?? 'settled'} — not re-promoted`
+        : (result.verdict.reason ?? 'unavailable');
+  return (
+    <div style={{ ...verifyResultStyle, color }}>
+      <ShieldCheck size={12} /> {kind === 'verified' ? 'verified against source' : kind} — {detail}
+    </div>
+  );
 }
 
 function ClaimStatus({ status }: { status: Status }) {
@@ -268,3 +410,12 @@ const claimRowText: React.CSSProperties = { color: 'var(--ink-muted)', fontSize:
 const errorBox: React.CSSProperties = { padding: 10, border: '1px solid var(--danger)', borderRadius: 3, color: 'var(--danger)', fontFamily: 'var(--font-mono)', fontSize: 10 };
 const indexButton: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 4, padding: '4px 7px', color: 'var(--ink-bright)', background: 'var(--bg-raised)', border: '1px solid var(--rule-default)', borderRadius: 3, cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 10 };
 const indexResultStyle: React.CSSProperties = { marginBottom: 9, color: 'var(--ink-faint)', fontFamily: 'var(--font-mono)', fontSize: 10 };
+const actionRow: React.CSSProperties = { display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' };
+const actionButton: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 4, padding: '4px 7px', color: 'var(--ink-bright)', background: 'var(--bg-raised)', border: '1px solid var(--rule-default)', borderRadius: 3, cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 10 };
+const verifyErrorStyle: React.CSSProperties = { marginTop: 8, padding: 6, border: '1px solid var(--danger)', borderRadius: 3, color: 'var(--danger)', fontFamily: 'var(--font-mono)', fontSize: 9, overflowWrap: 'anywhere' };
+const verifyResultStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 5, marginTop: 8, padding: 6, border: '1px solid var(--rule-faint)', borderRadius: 3, fontFamily: 'var(--font-mono)', fontSize: 9, lineHeight: 1.4 };
+const receiptPre: React.CSSProperties = { fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--ink-muted)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, padding: 8, background: 'var(--bg-void)', borderRadius: 3, lineHeight: 1.5, maxHeight: 340, overflowY: 'auto' };
+const divergenceBox: React.CSSProperties = { marginBottom: 12, border: '1px solid var(--danger)', borderRadius: 3, background: 'var(--bg-raised)', overflow: 'hidden' };
+const divergenceHeader: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', padding: '7px 10px', background: 'transparent', border: 0, cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 10 };
+const divergenceRow: React.CSSProperties = { padding: '6px 10px', borderTop: '1px solid var(--rule-faint)' };
+const divergenceMeta: React.CSSProperties = { marginTop: 3, fontFamily: 'var(--font-mono)', fontSize: 9, overflowWrap: 'anywhere', lineHeight: 1.4 };

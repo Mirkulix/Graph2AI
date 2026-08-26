@@ -28,6 +28,9 @@ const ENTITIES: TableDefinition<&str, &str> = TableDefinition::new("k_entities")
 const IDX_SUBJECT: TableDefinition<&str, &str> = TableDefinition::new("k_idx_subject");
 const IDX_OBJECT: TableDefinition<&str, &str> = TableDefinition::new("k_idx_object");
 const IDX_STATUS: TableDefinition<&str, &str> = TableDefinition::new("k_idx_status");
+/// Signatures already accepted, so a captured delta cannot be replayed.
+/// Key is `producer/delta_id`, value is the signature that was accepted.
+const SEEN_DELTAS: TableDefinition<&str, &str> = TableDefinition::new("k_seen_deltas");
 
 const SEP: char = '\u{1}';
 
@@ -72,9 +75,55 @@ impl KnowledgeStore {
             w.open_table(IDX_SUBJECT)?;
             w.open_table(IDX_OBJECT)?;
             w.open_table(IDX_STATUS)?;
+            w.open_table(SEEN_DELTAS)?;
         }
         w.commit()?;
         Ok(())
+    }
+
+    // ---- replay guard ----
+
+    /// Record that a signed delta was accepted, and report whether it is new.
+    ///
+    /// Returns `Ok(true)` the first time a `(producer, delta_id)` pair is
+    /// seen, `Ok(false)` on any repeat — including a repeat that carries a
+    /// *different* signature, which is a submitter reusing an id rather than
+    /// a network retry.
+    ///
+    /// The merge itself is idempotent, so a replay cannot corrupt the graph.
+    /// This exists so a replay is visible rather than silent: an attacker
+    /// re-submitting a captured delta is not the same event as a worker
+    /// retrying after a timeout, even though both are harmless to the data.
+    pub fn record_delta(
+        &self,
+        producer: &str,
+        delta_id: &str,
+        signature: &str,
+    ) -> Result<bool, Error> {
+        let key = format!("{producer}/{delta_id}");
+        let w = self.db.begin_write()?;
+        let is_new = {
+            let mut table = w.open_table(SEEN_DELTAS)?;
+            let existing = table.get(key.as_str())?.map(|v| v.value().to_string());
+            match existing {
+                Some(_) => false,
+                None => {
+                    table.insert(key.as_str(), signature)?;
+                    true
+                }
+            }
+        };
+        w.commit()?;
+        Ok(is_new)
+    }
+
+    /// The signature recorded for a delta, if it has been accepted before.
+    pub fn seen_delta(&self, producer: &str, delta_id: &str) -> Result<Option<String>, Error> {
+        let r = self.db.begin_read()?;
+        let table = r.open_table(SEEN_DELTAS)?;
+        Ok(table
+            .get(format!("{producer}/{delta_id}").as_str())?
+            .map(|v| v.value().to_string()))
     }
 
     // ---- entities ----
@@ -210,6 +259,56 @@ impl KnowledgeStore {
     }
 
     /// Append a new revision with a new status, superseding the previous one.
+    /// Attach a relation and object to a claim that does not yet have one.
+    ///
+    /// Like every other mutation this appends a revision rather than editing
+    /// in place, so the pre-relation form stays in `history`. Refuses to
+    /// re-point an existing relation — that is a merge conflict, not a write.
+    pub fn attach_relation(
+        &self,
+        id: &ClaimId,
+        relation: Relation,
+        object: EntityId,
+        by: Provenance,
+    ) -> Result<Claim, Error> {
+        let prev = self.latest(id)?.ok_or_else(|| Error::NoSuchClaim(id.0.clone()))?;
+        if prev.relation.is_some() {
+            return Err(Error::Storage(format!(
+                "claim {} already carries a relation",
+                id.0
+            )));
+        }
+
+        let mut next = prev.clone();
+        next.revision = prev.revision + 1;
+        next.provenance = by;
+        next.superseded_by = None;
+        next.relation = Some(relation);
+        next.object = Some(object);
+
+        self.write_revision(&next, Some(prev))?;
+        Ok(next)
+    }
+
+    /// Write a revision exactly as it was recorded elsewhere.
+    ///
+    /// This is for [`crate::archive::import`] only, and it deliberately
+    /// bypasses the status rules: a restored `Verified` claim was verified
+    /// once, with its evidence, and re-deriving that through `verify_claim`
+    /// would rewrite provenance and renumber revisions — turning a faithful
+    /// restore into a forgery of who decided what, when.
+    ///
+    /// It is not a general write path. Everything that *creates* knowledge
+    /// still goes through `add_claim` / `verify_claim` / `refute_claim`.
+    pub fn restore_revision(&self, claim: &Claim) -> Result<(), Error> {
+        let previous = if claim.revision > 1 {
+            self.latest(&claim.id)?
+        } else {
+            None
+        };
+        self.write_revision(claim, previous)
+    }
+
     fn advance(
         &self,
         id: &ClaimId,
@@ -227,6 +326,17 @@ impl KnowledgeStore {
         if let Some(e) = evidence {
             next.evidence.push(e);
         }
+
+        // A status change is what makes a claim load-bearing (or stops it
+        // being so). That transition is the auditable event, not the write.
+        tracing::info!(
+            claim = %id,
+            from = prev.status.as_str(),
+            to = status.as_str(),
+            revision = next.revision,
+            by = %next.provenance.producer,
+            "claim status changed"
+        );
 
         self.write_revision(&next, Some(prev))?;
         Ok(next)

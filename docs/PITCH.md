@@ -1,109 +1,110 @@
-# QLANG — Pitch Deck
+# OrbitQO — Pitch
 
-## The Problem
+> This replaces an older pitch that sold an ML compiler (IGQK compression,
+> LLVM JIT, edge deployment). Those features were removed from the codebase
+> — see `QLANG-STATUS.md`. This pitch sells what actually runs and is tested.
 
-AI models are too large, too slow, and too hard to deploy.
+## The problem, in one sentence
 
-- GPT-4 costs $100M+ to train, requires datacenter GPUs to run
-- A 7B parameter model is 14 GB — doesn't fit on a phone
-- PyTorch models need Python runtime (500MB+) to execute
-- Deploying ML to edge devices requires manual optimization by experts
-- AI agents communicate via text — slow, error-prone, lossy
+When several AI coding agents work on the same codebase, they share what they
+know by copying conversation text — which is lossy, unverifiable, and gets
+stale the moment someone changes a file.
 
-## The Solution: QLANG
+Concretely, on any team using Claude Code, Cursor, or similar across more than
+one session:
 
-**QLANG is a compiler that makes AI models small, fast, and portable.**
+- **Duplicated work.** Session B re-discovers what session A already learned,
+  because A's findings live in a transcript B never sees.
+- **Confident wrong answers.** An agent asserts "auth uses bcrypt" because it
+  read it in a prompt three steps ago — nobody checked, and it's now argon2.
+- **No shared, durable memory.** Close the tab, lose the context. The next
+  session starts cold.
 
-Write once → compile to native code, WebAssembly, GPU shaders, or compressed binaries.
+## The product
 
-### Key Features
+**OrbitQO is a shared, verifiable memory for AI coding agents.**
 
-1. **IGQK Compression**: 16x model compression with mathematical proof of accuracy retention
-2. **Universal Compilation**: One model → 9 deployment targets
-3. **AI-to-AI Protocol**: Binary graph exchange (3 KB vs 50 KB text)
-4. **29x Faster**: LLVM JIT compilation matches C/Rust performance
+Instead of copying text, agents exchange **signed, evidence-backed graph
+deltas**. Each fact carries who observed it, when, and the exact file and line
+that proves it. A later agent can *check* a claim instead of trusting it.
 
-## Market
+Three properties make it real rather than a wiki with extra steps:
 
-### Total Addressable Market
-- Edge AI: $40B by 2028 (CAGR 20%)
-- ML Compiler/Runtime: $8B by 2027
-- AI Infrastructure: $300B+ by 2030
+1. **A proposal is never a fact.** An agent can suggest "auth uses bcrypt", but
+   it stays a proposal — invisible to the next agent's context — until real
+   evidence promotes it. This is enforced in the type system, not by
+   convention.
+2. **Signed, so provenance is proof.** Every delta is Ed25519-signed by a key
+   the operator trusts. "Who said this" is cryptographic, not a string anyone
+   can claim. Rotation and revocation are built in.
+3. **Conflicts surface, never overwrite.** Two agents disagree? Both sides keep
+   their evidence, and the conflict shows up in the cockpit for a human to
+   settle. Nothing is silently lost.
 
-### Target Customers
-1. **Automotive**: Compress vision models for self-driving ECUs
-2. **Mobile**: Run LLMs on smartphones without cloud
-3. **IoT**: Deploy ML on microcontrollers (Arduino, ESP32)
-4. **Healthcare**: HIPAA-compliant on-device inference
-5. **Gaming**: Real-time AI in browsers via WebAssembly
+## What's real today (verified, not claimed)
 
-## Business Model
+Every number here is reproducible from the repo:
 
-### Open Core
-- **QLANG Core** (MIT, free): Compiler, runtime, CLI
-- **QLANG Enterprise** (paid):
-  - GPU runtime (actual GPU execution)
-  - Cloud compression service
-  - Priority support + SLA
-  - Custom optimization passes
-  - Enterprise SSO + audit logging
+- **1013 passing tests, 0 failures** across the workspace.
+- The signature path is covered by **33 tests written as attacks** — foreign
+  keys, producer impersonation, tampering, replay, backdating past a
+  revocation. All rejected.
+- **~4x smaller than JSON** for the same graph delta
+  (`cargo run -p qo-knowledge --example orbitql_demo` prints the exact bytes).
+- Verified end-to-end against a running server: unsigned submission → 401,
+  replay → 409, tampered → 401, and the graph kept only the legitimate write.
+- Works today with **DeepSeek, Groq, and local Ollama**; OpenAI/Anthropic/etc.
+  through an OpenAI-compatible gateway. (We do not overstate this: there is one
+  shared "cloud" slot, documented honestly in the code.)
 
-### Pricing
-- **Free**: Open source core
-- **Pro**: $99/month (cloud compression API, 100 models/month)
-- **Enterprise**: $999/month (GPU runtime, unlimited, support)
-- **Custom**: On-premise deployment, dedicated support
+## What it is not, yet
 
-## Traction
+Selling this honestly means saying where the edges are:
 
-- Working prototype with 248 passing tests
-- 20,000 lines of production Rust code
-- 9 compilation targets (more than any competitor)
-- Neural network training: 100% accuracy in 70ms
-- IGQK compression: 4-16x verified
+- **Not multi-tenant.** Today it's one team, one instance. The SaaS path (below)
+  is where that changes.
+- **Agents still write the delta format by hand** (or are prompted to). The
+  automatic "extract findings from a task" step is on the roadmap, not done.
+- **The trust store says *who* may write, not *what about*.** Per-entity write
+  policy is a refinement, not shipped.
 
-## Competition
+We'd rather a customer hear this from us than discover it.
 
-| Feature | QLANG | TensorRT | ONNX RT | TFLite |
-|---------|-------|----------|---------|--------|
-| Compression | 16x (IGQK) | 2-4x | None | 2-4x |
-| WebAssembly | Yes | No | No | No |
-| GPU Shaders | Yes (WGSL) | CUDA only | No | No |
-| Cross-platform | 9 targets | NVIDIA only | 3 targets | 2 targets |
-| AI-to-AI Protocol | Yes | No | No | No |
-| Formal Proofs | Yes | No | No | No |
-| Open Source | MIT | Proprietary | MIT | Apache |
+## Who pays, and why
 
-## Team Needed
+**Engineering teams running AI coding agents at scale** — the ones who already
+feel the pain of agents re-doing each other's work and asserting stale facts.
 
-- CEO/Founder: Aleksandar Barisic (domain expert, IGQK theory)
-- CTO: Rust/LLVM compiler engineer
-- ML Lead: Model optimization specialist
-- Business Development: Enterprise sales
+The value is not "another AI tool." It's:
 
-## Funding Ask
+- **Less duplicated agent work** → fewer tokens burned re-discovering the known.
+- **Fewer confident-wrong changes** → the evidence rule blocks unverified
+  claims from becoming "context."
+- **Auditable AI decisions** → every change is signed and provenance-tracked,
+  which the compliance-minded will pay for on its own.
 
-**Pre-Seed: 150K EUR**
-- 6 months runway
-- Hire 1 Rust engineer
-- Build enterprise features
-- First 3 pilot customers
+## Business model: hosted SaaS
 
-**Use of Funds**:
-- 60% Engineering (hire + infrastructure)
-- 20% Business Development (conferences, pilots)
-- 10% Legal (IP protection, contracts)
-- 10% Operations
+Core stays open (MIT). Money comes from **hosted OrbitQO for teams** — they
+connect their agents, we run the instance, sync the graph, keep it durable.
 
-## Timeline
+| Tier | Who | Price (indicative) |
+|------|-----|--------------------|
+| **Free** | Solo, self-hosted | $0 — open source |
+| **Team** | Up to ~10 seats, hosted | ~$49/seat/month |
+| **Enterprise** | SSO, audit export, trust-store management, SLA | Custom |
 
-- Month 1-3: Windows support, Python bindings, GPU runtime
-- Month 4-6: Enterprise features, first pilots
-- Month 7-9: Cloud service, 10 customers
-- Month 10-12: Series A preparation
+Pricing is a hypothesis to validate, not a commitment — see the go-to-market
+note.
 
-## Contact
+## Why now
 
-Aleksandar Barisic
-GitHub: github.com/Mirkulix/qland
-Location: Hamburg, Germany
+Every serious engineering org is adopting AI coding agents *this year*. The
+multi-agent coordination problem is brand new and unowned. The teams feeling it
+first are exactly the ones who buy infrastructure to fix it.
+
+## The ask / next step
+
+Not "build all of SaaS." First: **put the honest product in front of ten
+teams** with a landing page and a live demo, and find out what they'd pay for.
+Build the billing and multi-tenancy once someone has said yes.

@@ -1,0 +1,23 @@
+{
+  "_comment": [
+    "Per-seat API keys. Copy to api_keys.json — the real file is gitignored",
+    "because the secrets are bearer tokens.",
+    "",
+    "Do not edit by hand in production. Use the CLI:",
+    "  qlang keys issue --label alice --role admin",
+    "  qlang keys list",
+    "  qlang keys revoke --label alice",
+    "",
+    "Roles: member (read + submit signed deltas), admin (member + manage",
+    "keys/trust), viewer (read-only). A revoked key is kept, not deleted,",
+    "so the audit log still resolves who past actions belonged to."
+  ],
+  "keys": [
+    {
+      "label": "example-admin",
+      "secret": "replace-me-use-the-cli-to-generate-a-real-secret",
+      "role": "admin",
+      "revoked": false
+    }
+  ]
+}

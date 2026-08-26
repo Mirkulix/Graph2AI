@@ -85,6 +85,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         obsidian_vault: dirs_home().join("Dokumente/Obsidian Vault/QO"),
         static_dir: static_dir.clone(),
         auth_token: std::env::var("QO_AUTH_TOKEN").ok(),
+        cors_origins: std::env::var("QO_CORS_ORIGINS")
+            .map(|s| s.split(',').map(|o| o.trim().to_string()).collect())
+            .unwrap_or_default(),
+        api_keys_path: std::env::var("QO_API_KEYS_PATH")
+            .ok()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(".qlang/api_keys.json")),
+        max_body_bytes: std::env::var("QO_MAX_BODY_BYTES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(16 * 1024 * 1024),
+        rate_per_second: std::env::var("QO_RATE_PER_SEC")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(50),
+        rate_burst_size: std::env::var("QO_RATE_BURST")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(200),
         llm_routing: qo_server::config::LlmRoutingConfig::load_or_default(".qlang/llm_routing.toml"),
     };
 
@@ -96,6 +115,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let port = config.port;
     let auth_token_for_discovery = config.auth_token.clone();
+    let has_auth_token = config.auth_token.is_some();
     let (app, state) = qo_server::build_app(config).await.map_err(|e| format!("{e}"))?;
 
     // PRD Task 4.2: opt-in multi-node gossip loop. No-op unless
@@ -140,10 +160,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracing::info!("Telegram bot started");
     }
 
-    let addr = format!("0.0.0.0:{port}");
+    // Without a token every route is unauthenticated, including ones that
+    // execute code (`/api/tools/exec_file`), rewrite git state and read back
+    // stored provider keys. Binding those to 0.0.0.0 would publish them to
+    // the network, so an instance with *no* way to authenticate is confined
+    // to loopback. Either a token or at least one issued API key counts as a
+    // way to authenticate.
+    let has_seats = !state.api_keys.keys.is_empty();
+    let bind_host = if has_auth_token || has_seats {
+        "0.0.0.0"
+    } else {
+        tracing::warn!(
+            "No QO_AUTH_TOKEN and no API keys — every route is unauthenticated. \
+             Binding to 127.0.0.1 only. Set QO_AUTH_TOKEN or issue an API key \
+             (.qlang/api_keys.json) to accept remote clients."
+        );
+        "127.0.0.1"
+    };
+
+    let addr = format!("{bind_host}:{port}");
     tracing::info!("QO starting on {addr}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    axum::serve(listener, app).await?;
+    // `into_make_service_with_connect_info` populates the peer socket address,
+    // which the per-IP rate limiter keys on.
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }

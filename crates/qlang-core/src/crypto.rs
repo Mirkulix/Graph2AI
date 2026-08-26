@@ -1,7 +1,12 @@
 //! Cryptographic primitives for QLANG protocol security.
 //!
-//! Pure Rust implementations -- no external crates.
-//! Follows the same pattern as `qlang-runtime/src/web_server.rs` SHA-1.
+//! Hashing ([`sha256`], [`hmac_sha256`], [`hash_graph`], [`ct_eq`]) is
+//! implemented in-tree, per the project rule in `CLAUDE.md`.
+//!
+//! Signing is not. [`Keypair`] wraps `ed25519-dalek`, because the previous
+//! hand-rolled scheme turned out to be forgeable from public data alone —
+//! see the note above [`Keypair`] for what went wrong and why a dependency
+//! is the right call for signatures specifically.
 
 use crate::graph::Graph;
 use serde::{Deserialize, Serialize};
@@ -189,140 +194,112 @@ pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Signing: HMAC-SHA256-based scheme (Ed25519-compatible API)
+// Signing: Ed25519 (RFC 8032) via ed25519-dalek
 // ---------------------------------------------------------------------------
 //
-// This uses HMAC-SHA256 as the signing primitive. The API matches Ed25519:
-//   - Keypair: 32-byte secret -> 32-byte public key
+// Wire format, unchanged from the previous scheme:
+//   - 32-byte seed (secret) -> 32-byte public key
 //   - sign(message) -> 64-byte signature
-//   - verify(message, signature, public_key) -> bool
+//   - verify(pubkey, message, signature) -> bool
 //
-// The wire format is identical to Ed25519 (64-byte sig, 32-byte pubkey),
-// so upgrading to real Ed25519 requires only changing this module's internals.
+// ## Why this is not hand-rolled
 //
-// Signing scheme:
-//   r = HMAC-SHA256(secret, message)            -- requires secret (unguessable)
-//   tag = SHA-256(r || public_key || message)    -- deterministic given r
-//   s = SHA-256(tag)                             -- anyone can verify given r + pubkey + msg
-//   signature = r || s                           -- 64 bytes total
+// This module previously implemented signing from SHA-256 and HMAC:
 //
-// Verification (public):
-//   recompute tag' = SHA-256(sig[0..32] || pubkey || message)
-//   check sig[32..64] == SHA-256(tag')
+//     r   = HMAC-SHA256(secret, message)
+//     s   = SHA-256(SHA-256(r || pubkey || message))
+//     sig = r || s
 //
-// Security: forging r requires the secret (HMAC key).
+// That scheme was forgeable. `verify` recomputed `s` from `r`, `pubkey` and
+// `message` — all public — and never touched the secret, and nothing
+// constrained `r`. An attacker holding only the public key could pick any
+// `r`, compute the matching `s`, and produce a signature that verified for
+// an arbitrary message. A proof-of-concept confirmed it end to end.
+//
+// The lesson is the reason for the dependency: the flaw was not a typo but
+// a design error that read as plausible for as long as nobody attacked it.
+// `CLAUDE.md` prefers in-tree crypto and that rule still holds for hashes —
+// `sha256` and `hmac_sha256` below are ours and are used for content
+// addressing. Signature schemes are the exception: ed25519-dalek is audited
+// and constant-time, and reimplementing curve arithmetic here would
+// reintroduce exactly the class of bug this replaces.
+//
+// Note: signatures produced by the old scheme do not verify under Ed25519.
+// That is intended — they never carried authenticity to begin with.
 
 /// A signing keypair.
 ///
-/// Holds a 32-byte secret and a 32-byte public key.
-/// The public key is derived deterministically from the secret via SHA-256.
+/// Holds a 32-byte Ed25519 seed and its derived 32-byte public key.
+/// Derivation follows RFC 8032, so a given seed always yields the same key.
 #[derive(Clone)]
 pub struct Keypair {
-    secret: [u8; 32],
-    public: [u8; 32],
+    signing: ed25519_dalek::SigningKey,
 }
 
 impl Keypair {
     /// Create a keypair from a 32-byte seed.
     ///
-    /// Deterministic: same seed always produces the same keypair.
+    /// Deterministic: the same seed always produces the same keypair, per
+    /// RFC 8032 key derivation. Every 32-byte value is a valid seed, so this
+    /// cannot fail.
     pub fn from_seed(seed: &[u8; 32]) -> Self {
-        // Derive public key: SHA-256("qlang-pubkey" || seed)
-        let mut pubkey_input = Vec::with_capacity(12 + 32);
-        pubkey_input.extend_from_slice(b"qlang-pubkey");
-        pubkey_input.extend_from_slice(seed);
-        let public = sha256(&pubkey_input);
-
         Self {
-            secret: *seed,
-            public,
+            signing: ed25519_dalek::SigningKey::from_bytes(seed),
         }
     }
 
-    /// Generate a keypair from system entropy (current time + xorshift).
+    /// Generate a keypair from operating-system entropy.
     ///
-    /// NOT cryptographically secure -- suitable for development/testing only.
-    /// Production code should use `from_seed()` with properly generated randomness.
+    /// Uses `getrandom`, which reads the OS CSPRNG (`BCryptGenRandom` on
+    /// Windows, `getrandom(2)` on Linux). Panics if the OS cannot supply
+    /// entropy — continuing with a predictable key would be worse than
+    /// failing loudly.
+    ///
+    /// An earlier version seeded from `SystemTime` nanos through xorshift,
+    /// which made generated keys guessable to anyone who knew roughly when
+    /// they were created.
     pub fn generate() -> Self {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-
-        // xorshift128 to mix the timestamp into a seed
-        let mut x = nanos as u64;
-        if x == 0 {
-            x = 0xdeadbeefcafe1234;
-        }
         let mut seed = [0u8; 32];
-        for chunk in seed.chunks_exact_mut(8) {
-            x ^= x << 13;
-            x ^= x >> 7;
-            x ^= x << 17;
-            chunk.copy_from_slice(&x.to_le_bytes());
-        }
-
-        // Hash the xorshift output for extra mixing
-        let seed = sha256(&seed);
+        getrandom::fill(&mut seed).expect("OS entropy source unavailable");
         Self::from_seed(&seed)
     }
 
     /// Get the public key.
-    pub fn public_key(&self) -> &[u8; 32] {
-        &self.public
+    pub fn public_key(&self) -> [u8; 32] {
+        self.signing.verifying_key().to_bytes()
     }
 
-    /// Sign a message, producing a 64-byte signature.
+    /// Return the 32-byte seed this keypair was built from.
     ///
-    /// Scheme:
-    ///   r = HMAC-SHA256(secret, message)           -- requires secret (unguessable)
-    ///   tag = SHA-256(r || public_key || message)   -- deterministic given r
-    ///   s = SHA-256(tag)                            -- anyone can verify given r + pubkey + message
-    ///   signature = r || s                          -- 64 bytes total
+    /// Handle as secret material: anyone holding it can sign as this agent.
+    pub fn secret_seed(&self) -> [u8; 32] {
+        self.signing.to_bytes()
+    }
+
+    /// Sign a message, producing a 64-byte Ed25519 signature.
     pub fn sign(&self, data: &[u8]) -> [u8; 64] {
-        // r = HMAC-SHA256(secret, message) -- only the key holder can produce this
-        let r = hmac_sha256(&self.secret, data);
-
-        // tag = SHA-256(r || public_key || message)
-        let mut tag_input = Vec::with_capacity(32 + 32 + data.len());
-        tag_input.extend_from_slice(&r);
-        tag_input.extend_from_slice(&self.public);
-        tag_input.extend_from_slice(data);
-        let tag = sha256(&tag_input);
-
-        // s = SHA-256(tag)
-        let s = sha256(&tag);
-
-        let mut sig = [0u8; 64];
-        sig[..32].copy_from_slice(&r);
-        sig[32..].copy_from_slice(&s);
-        sig
+        use ed25519_dalek::Signer;
+        self.signing.sign(data).to_bytes()
     }
 
     /// Verify a signature against a message and public key.
     ///
-    /// Returns `true` if the signature is valid.
+    /// Returns `false` — never panics — if the signature does not verify or
+    /// the public key is not a valid Ed25519 point.
     pub fn verify(pubkey: &[u8; 32], data: &[u8], sig: &[u8; 64]) -> bool {
-        let r = &sig[..32];
-        let s = &sig[32..];
-
-        // Recompute: tag = SHA-256(r || pubkey || message)
-        let mut tag_input = Vec::with_capacity(32 + 32 + data.len());
-        tag_input.extend_from_slice(r);
-        tag_input.extend_from_slice(pubkey);
-        tag_input.extend_from_slice(data);
-        let tag = sha256(&tag_input);
-
-        // Check: s == SHA-256(tag)
-        let expected_s = sha256(&tag);
-        constant_time_eq(s, &expected_s)
+        use ed25519_dalek::Verifier;
+        let Ok(vk) = ed25519_dalek::VerifyingKey::from_bytes(pubkey) else {
+            return false;
+        };
+        vk.verify(data, &ed25519_dalek::Signature::from_bytes(sig))
+            .is_ok()
     }
 }
 
 impl std::fmt::Debug for Keypair {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Keypair")
-            .field("public", &hex(&self.public))
+            .field("public", &hex(&self.public_key()))
             .field("secret", &"[REDACTED]")
             .finish()
     }
@@ -362,7 +339,7 @@ impl SignedGraph {
         Self {
             graph,
             signature,
-            pubkey: keypair.public,
+            pubkey: keypair.public_key(),
             hash,
         }
     }
@@ -537,25 +514,23 @@ mod tests {
     fn keypair_from_seed_deterministic() {
         let kp1 = Keypair::from_seed(&[42u8; 32]);
         let kp2 = Keypair::from_seed(&[42u8; 32]);
-        assert_eq!(kp1.public, kp2.public);
+        assert_eq!(kp1.public_key(), kp2.public_key());
 
         let kp3 = Keypair::from_seed(&[99u8; 32]);
-        assert_ne!(kp1.public, kp3.public);
+        assert_ne!(kp1.public_key(), kp3.public_key());
     }
 
     #[test]
     fn keypair_generate_produces_different_keys() {
         let kp1 = Keypair::generate();
-        // Tiny sleep to ensure different timestamp
-        std::thread::sleep(std::time::Duration::from_millis(2));
         let kp2 = Keypair::generate();
-        assert_ne!(kp1.public, kp2.public);
+        assert_ne!(kp1.public_key(), kp2.public_key());
     }
 
     #[test]
     fn public_key_is_32_bytes() {
         let kp = Keypair::from_seed(&[6u8; 32]);
-        assert_eq!(kp.public.len(), 32);
+        assert_eq!(kp.public_key().len(), 32);
     }
 
     // ---- Signing ----
@@ -566,7 +541,7 @@ mod tests {
         let message = b"hello QLANG";
         let sig = kp.sign(message);
 
-        assert!(Keypair::verify(&kp.public, message, &sig));
+        assert!(Keypair::verify(&kp.public_key(), message, &sig));
     }
 
     #[test]
@@ -581,7 +556,7 @@ mod tests {
         let kp = Keypair::from_seed(&[2u8; 32]);
         let sig = kp.sign(b"original");
 
-        assert!(!Keypair::verify(&kp.public, b"tampered", &sig));
+        assert!(!Keypair::verify(&kp.public_key(), b"tampered", &sig));
     }
 
     #[test]
@@ -590,7 +565,7 @@ mod tests {
         let kp2 = Keypair::from_seed(&[4u8; 32]);
         let sig = kp1.sign(b"data");
 
-        assert!(!Keypair::verify(&kp2.public, b"data", &sig));
+        assert!(!Keypair::verify(&kp2.public_key(), b"data", &sig));
     }
 
     // ---- SignedGraph ----

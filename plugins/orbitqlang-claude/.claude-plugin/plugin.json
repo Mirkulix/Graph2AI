@@ -2,7 +2,7 @@
   "name": "orbitqlang",
   "displayName": "OrbitQLang",
   "version": "0.1.0",
-  "description": "Connect Claude Code to the local OrbitQLang QO control plane for research, goal orchestration, and sandboxed workspace reads.",
+  "description": "Connect Claude Code to the local OrbitQLang QO control plane: a durable knowledge graph with provenance, evidence and a full propose-verify-refresh-heal lifecycle, plus multi-agent research, tracked goals, and sandboxed workspace reads.",
   "repository": "https://github.com/Mirkulix/Graph2AI",
   "author": {
     "name": "OrbitQLang"

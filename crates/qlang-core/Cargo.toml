@@ -5,6 +5,8 @@ edition.workspace = true
 description = "Core graph data structures for QLANG"
 
 [dependencies]
+ed25519-dalek = { version = "3.0.0", features = ["rand_core"] }
+getrandom = "0.4.3"
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

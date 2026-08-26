@@ -74,7 +74,18 @@ fn measure_once(pubkey: &[u8; 32], msg: &[u8], good_sig: &[u8; 64], bad_sig: &[u
     (median(&mut eq), median(&mut ne))
 }
 
+/// Ignored by default: 5 passes x 10,000 verifications takes ~12 minutes in a
+/// dev build, which is long enough that `cargo test --workspace` stops being
+/// something anyone runs — and a suite nobody runs protects nothing.
+///
+/// It is not optional, just scheduled separately. Run it explicitly, and in
+/// release mode where it takes seconds rather than minutes:
+///
+/// ```text
+/// cargo test -p qlang-core --release --test crypto_timing -- --ignored --nocapture
+/// ```
 #[test]
+#[ignore = "slow statistical timing test; run explicitly with --ignored, ideally --release"]
 fn ct_verify_latency_ratio_within_spec() {
     let kp = Keypair::from_seed(&[0x5Au8; 32]);
     let msg = b"QLMS v1.1 constant-time verify test payload";
@@ -87,12 +98,12 @@ fn ct_verify_latency_ratio_within_spec() {
     bad_sig[63] ^= 0x01;
 
     // Sanity: our fixtures really do diverge.
-    assert!(Keypair::verify(kp.public_key(), msg, &good_sig));
-    assert!(!Keypair::verify(kp.public_key(), msg, &bad_sig));
+    assert!(Keypair::verify(&kp.public_key(), msg, &good_sig));
+    assert!(!Keypair::verify(&kp.public_key(), msg, &bad_sig));
 
     let mut last_report: Option<(u128, u128, f64)> = None;
     for attempt in 1..=MAX_ATTEMPTS {
-        let (eq_ns, ne_ns) = measure_once(kp.public_key(), msg, &good_sig, &bad_sig);
+        let (eq_ns, ne_ns) = measure_once(&kp.public_key(), msg, &good_sig, &bad_sig);
         // Guard against tiny timers / zero measurements on extremely fast boxes.
         let ratio = if ne_ns == 0 { f64::NAN } else { eq_ns as f64 / ne_ns as f64 };
 

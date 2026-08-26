@@ -140,6 +140,17 @@ pub enum ClaimStatus {
 }
 
 impl ClaimStatus {
+    /// Every status, for callers that must enumerate the whole space (export,
+    /// snapshot views). Kept next to the enum so adding a variant without
+    /// updating this is an obvious omission.
+    pub const ALL: [ClaimStatus; 5] = [
+        ClaimStatus::Observed,
+        ClaimStatus::Proposed,
+        ClaimStatus::Verified,
+        ClaimStatus::Stale,
+        ClaimStatus::Refuted,
+    ];
+
     pub fn as_str(&self) -> &'static str {
         match self {
             ClaimStatus::Observed => "observed",

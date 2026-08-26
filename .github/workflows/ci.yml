@@ -28,11 +28,56 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: cargo check (no default features)
         run: cargo check --workspace --no-default-features
-      - name: cargo test (qo-server only -- fast)
-        run: cargo test -p qo-server --no-default-features --lib
-      - name: cargo clippy (warnings allowed for now, but visible)
-        run: cargo clippy --workspace --no-default-features --all-targets -- -D warnings
+      # qo-knowledge carries the protocol guarantees the rest of the system
+      # relies on — round-trip losslessness, merge order-independence, and the
+      # rule that an unverified proposal never reaches a worker as fact. Its
+      # integration tests are where those are actually checked, so `--lib`
+      # would silently skip every one of them.
+      #
+      # qo-agents holds the sandboxed tools (tool_shell, web_search,
+      # read_file) whose allowlist and injection tests are written as attacks;
+      # a regression there would re-open a code-execution path, so it is
+      # guarded too.
+      - name: cargo test (protocol core + server + agent tools)
+        run: cargo test -p qo-knowledge -p qo-server -p qo-agents --no-default-features
+      # Hard-gate clippy on the crates that are clean, so a regression in them
+      # fails the build. These are the protocol core (qlang-core), the product
+      # heart (qo-knowledge) and the LLM router (qo-llm). Enforced beats
+      # visible-but-ignored: the old workspace-wide job carried ~700 legacy
+      # hits and was `continue-on-error`, so it caught nothing.
+      - name: cargo clippy (clean core, enforced)
+        run: cargo clippy -p qlang-core -p qo-knowledge -p qo-llm --no-default-features -- -D warnings
+      # The rest is still linted, for visibility, until each crate is brought
+      # to zero and promoted into the enforced gate above. Next up:
+      # qo-server, qo-agents, qo-memory (~30-50 hits each).
+      - name: cargo clippy (rest, informational)
+        run: cargo clippy --workspace --no-default-features --all-targets
         continue-on-error: true
+
+  # The QLMS §14.2 conformance test is #[ignore]d so it does not add ~12
+  # minutes to every local `cargo test`. It still has to run — here, in
+  # release mode, where it takes seconds.
+  crypto-timing:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: constant-time verification bound
+        run: cargo test -p qlang-core --release --test crypto_timing -- --ignored --nocapture
+
+  # Platform-specific regressions are invisible on ubuntu: the `tool_shell`
+  # direct-spawn change once broke a `date` test on Windows for months because
+  # nothing ran there. Run the same tests on Windows so a platform-specific
+  # break fails the build instead of a local dev's day.
+  windows-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test (protocol core + server + agent tools, Windows)
+        run: cargo test -p qo-knowledge -p qo-server -p qo-agents --no-default-features
 
   frontend-build:
     runs-on: ubuntu-latest
@@ -81,7 +126,7 @@ jobs:
           retention-days: 14
 
   ci-summary:
-    needs: [rust-check, frontend-build, extension-package]
+    needs: [rust-check, crypto-timing, windows-test, frontend-build, extension-package]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -89,8 +134,10 @@ jobs:
         run: |
           echo "## CI Result" >> $GITHUB_STEP_SUMMARY
           echo "- Rust check: ${{ needs.rust-check.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Crypto timing: ${{ needs.crypto-timing.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Windows test: ${{ needs.windows-test.result }}" >> $GITHUB_STEP_SUMMARY
           echo "- Frontend build: ${{ needs.frontend-build.result }}" >> $GITHUB_STEP_SUMMARY
           echo "- Extension package: ${{ needs.extension-package.result }}" >> $GITHUB_STEP_SUMMARY
-          if [[ "${{ needs.rust-check.result }}" == "failure" || "${{ needs.frontend-build.result }}" == "failure" || "${{ needs.extension-package.result }}" == "failure" ]]; then
+          if [[ "${{ needs.rust-check.result }}" == "failure" || "${{ needs.crypto-timing.result }}" == "failure" || "${{ needs.windows-test.result }}" == "failure" || "${{ needs.frontend-build.result }}" == "failure" || "${{ needs.extension-package.result }}" == "failure" ]]; then
             exit 1
           fi

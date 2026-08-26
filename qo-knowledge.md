@@ -1,9 +1,15 @@
 # QO Knowledge Graph
 
-> Status: Etappen 1, 3, 4 und 6 umgesetzt — siehe `QLANG-STATUS.md`.
-> Offen: Etappe 2 (deterministischer Repository-Indexer) und Etappe 5
-> (LLM-Extraktion als Vorschlags-Pipeline). Von Etappe 4 fehlt die
-> Policy-Prüfung; Agentenidentität und Audit-Eintrag sind vorhanden.
+> Status: **alle Etappen 1–6 umgesetzt.** `QLANG-STATUS.md` bleibt die maßgebliche
+> Quelle für das, was wirklich läuft. Dieses Dokument beschreibt die Konzeption
+> (Datenmodell, Vertrauensmodell, Schnittstellen); die Etappen unten sind
+> abgehakt, und der tatsächliche Funktionsumfang ist weit darüber
+> hinausgewachsen: Extraktion (Text→Graph), deterministische Quell-Verifikation,
+> Proof Receipts, Sweep, Source-Refresh, Self-Healing, Divergenz-Report, Health,
+> Backup/Restore und ein Claude-Code-Sync-Skill.
+>
+> Ursprünglich „offen" waren Etappe 2 (deterministischer Repository-Indexer) und
+> Etappe 5 (LLM-Extraktion) — beide sind erledigt.
 
 ## Aufgabe
 
@@ -88,13 +94,18 @@ Projektbereichs dürfen nicht als Evidenz oder Claim gespeichert werden.
 
 ## Umsetzungsetappen
 
-1. Typen, Persistenz, Revisionen und Indizes in `qo-knowledge` implementieren.
-2. Deterministischen Repository-Indexer für Code-Entitäten und Abhängigkeiten
-   anbinden.
-3. MCP-Read-Tools und nachvollziehbare Graph-Abfragen bereitstellen.
-4. Claim- und Evidenz-Write-API mit Policies, Audit und Verifikation ergänzen.
-5. LLM-Extraktion als Vorschlags-Pipeline anschließen.
-6. Den Claude-Code-Plugin auf die Graph-Tools umstellen und End-to-End testen.
+Alle erledigt (`QLANG-STATUS.md` ist die Quelle für Details):
+
+1. ~~Typen, Persistenz, Revisionen und Indizes in `qo-knowledge` implementieren.~~ ✓
+2. ~~Deterministischen Repository-Indexer für Code-Entitäten und Abhängigkeiten
+   anbinden.~~ ✓ (live-Scan, Revisionen)
+3. ~~MCP-Read-Tools und nachvollziehbare Graph-Abfragen bereitstellen.~~ ✓
+4. ~~Claim- und Evidenz-Write-API mit Policies, Audit und Verifikation ergänzen.~~ ✓
+   (inkl. Ed25519-Delta-Signaturen, Trust-Store, Replay-Schutz)
+5. ~~LLM-Extraktion als Vorschlags-Pipeline anschließen.~~ ✓
+   (`qo-knowledge::extract` + deterministische Quell-Verifikation)
+6. ~~Den Claude-Code-Plugin auf die Graph-Tools umstellen und End-to-End
+   testen.~~ ✓ (`plugins/orbitqlang-claude`, inkl. Sync-Skill)
 
 ## Erfolgskriterium
 

@@ -56,7 +56,7 @@ Konsolidierungs-Notizen:
 - **Outdated CLI/UI:** `CLI.md`, `HowTo.md`, `WebUI.md`, `Agents.md`,
   `Ollama.md`, `Training.md` -> referenzieren das alte `qlang-cli`-Tooling
   und Port 8081, beides ueberholt (siehe QLANG-STATUS fuer aktuelles
-  `qlang`-Binary und QO auf Port 4747).
+  `qlang`-Binary und QO auf Port 4646).
 - **Experimental ML:** `Transformer.md`, `Swarm.md`, `Diffusion.md`,
   `ParaDiffuse.md`, `TSLM.md`, `GPU_QAT_PROFILING.md` -> Code lebt unter
   `--features experimental-ml`; die Dokumente beschreiben Komponenten, die

@@ -1,6 +1,10 @@
 # OrbitQO — System Architecture
 
-> Status: 2026-04-23 — early-alpha, end-to-end verified, merged into `NewWayLLMHandling`.
+> **Snapshot from 2026-04-23** — kept for the topology and module overview,
+> which are still broadly accurate. For what *actually works today*, see
+> **`QLANG-STATUS.md`** (single source of truth); this document's "early-alpha"
+> status and its "honest limitations" table have since been overtaken by CI,
+> observability, export/import, role enforcement and rate limiting.
 
 ## What this is
 

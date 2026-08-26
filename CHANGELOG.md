@@ -1,5 +1,11 @@
 # Changelog
 
+> ⚠️ **HISTORICAL — superseded.** This file documents the pre-pivot era (up to
+> 2026-04), when the project was an ML compiler/training framework. That product
+> line was purged; the entries below no longer describe what this repository
+> does. For the current state see **`QLANG-STATUS.md`** (single source of truth);
+> for the recent work log see **`CHANGES.md`**.
+
 All notable changes to QLANG are documented in this file.
 Dates use ISO format. Measured numbers cite their source file.
 

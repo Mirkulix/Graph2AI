@@ -144,8 +144,8 @@ pub fn type_check(graph: &Graph) -> Vec<TypeError> {
                                 });
                             }
                             _ => {
-                                let m = a.shape.0[0].clone();
-                                let n = b.shape.0[1].clone();
+                                let m = a.shape.0[0];
+                                let n = b.shape.0[1];
                                 node_output_types.insert(node_id,
                                     TensorType::new(Dtype::F32, Shape(vec![m, n])));
                             }

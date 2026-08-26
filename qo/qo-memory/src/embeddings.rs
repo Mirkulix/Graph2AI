@@ -1,14 +1,28 @@
-/// Text embedding — pure Rust via candle (all-MiniLM-L6-v2)
-///
-/// No Python, no Ollama, no external server.
-/// 384-dimensional real semantic embeddings.
-///
-/// Falls back to hash-based pseudo-embeddings if model fails to load.
+//! Text embedding — hash-based pseudo-embeddings only.
+//!
+//! # These are NOT semantic embeddings
+//!
+//! Every vector this module produces is a deterministic hash of the input
+//! text. Two texts that mean the same thing get unrelated vectors, so
+//! cosine similarity over them carries **no semantic meaning** — only an
+//! exact string match scores highly.
+//!
+//! Anything built on top of this (`/api/memory/search`, the chat
+//! memory-recall in `routes/chat.rs`) is therefore exact-match retrieval
+//! wearing a vector-search interface. Treat a miss as "not found", never as
+//! "nothing similar exists".
+//!
+//! An earlier version of this comment advertised candle with
+//! all-MiniLM-L6-v2 and "384-dimensional real semantic embeddings". No such
+//! code was ever present in this crate. To make that true, add a real model
+//! behind [`embed_text`] and update this header — do not remove the warning
+//! while the hash fallback is still what runs.
 
-/// Embed text using the candle Rust model (384 dim, real semantics).
-/// Thread-safe, model is loaded once and cached.
-/// Embed text using a deterministic hash-based pseudo-embedding.
-/// NO semantic understanding, but zero external dependencies and fast.
+/// Embed text as a deterministic hash-based pseudo-embedding.
+///
+/// **No semantic understanding.** See the module docs: only exact matches
+/// score highly. The output is L2-normalised so cosine similarity is well
+/// defined, which makes the result *look* like an embedding — it is not one.
 pub fn embed_text(text: &str, dimensions: usize) -> Vec<f32> {
     embed_hash_fallback(text, dimensions)
 }

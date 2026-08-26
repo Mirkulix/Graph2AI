@@ -41,6 +41,28 @@ Every claim has a status. Only two of them count as reliable:
 - `mcp__orbitqlang__orbit_graph_verify_claim`: Confirm (`supports: true`) or
   refute (`supports: false`) a claim with evidence — a file and line range, a
   command, a commit, a test run.
+- `mcp__orbitqlang__orbit_graph_verify_source`: Have the graph check a proposed
+  claim against its actual source file and promote it to `verified` only when
+  the code literally substantiates every term. Deterministic — the graph reads
+  the file, not a caller-supplied excerpt.
+- `mcp__orbitqlang__orbit_graph_receipt`: Render one claim's full audit trail —
+  revisions, who decided what, evidence, and related claims including
+  disagreements — to prove why it is believed.
+- `mcp__orbitqlang__orbit_graph_commit_delta`: Submit a batch of changes as an
+  OrbitQLang document. Requires a `SIG` line from a trusted producer key;
+  returns per-operation outcomes including conflicts.
+- `mcp__orbitqlang__orbit_graph_verify_all`: Sweep every open proposal against
+  source and promote what the code substantiates (the harvest step).
+- `mcp__orbitqlang__orbit_graph_refresh_sources`: Mark settled claims `stale`
+  when their recorded excerpt is gone from the source — the graph noticing its
+  facts rot.
+- `mcp__orbitqlang__orbit_graph_heal_stale`: Re-verify stale claims and heal
+  the ones whose fact still holds (the code moved, the fact did not).
+- `mcp__orbitqlang__orbit_graph_divergences`: List every subject where a
+  load-bearing claim and a refuted claim coexist — where sessions settled in
+  opposite directions.
+- `mcp__orbitqlang__orbit_graph_swarm_state`: What the other agent sessions are
+  doing right now.
 
 ## Operating rules
 

@@ -73,7 +73,7 @@ fn test_replay_rejection() {
     // the part under test, but if it ever broke we want the diagnostic here).
     let sig = kp.sign(payload);
     assert!(
-        Keypair::verify(kp.public_key(), payload, &sig),
+        Keypair::verify(&kp.public_key(), payload, &sig),
         "precondition failed: signature must verify before we test replay"
     );
 
@@ -124,9 +124,9 @@ struct PreviousKey {
 impl KeySet {
     fn rotate_from(previous: &Keypair, current: &Keypair, overlap_until: u64) -> Self {
         Self {
-            current_pub: *current.public_key(),
+            current_pub: current.public_key(),
             previous: Some(PreviousKey {
-                pubkey: *previous.public_key(),
+                pubkey: previous.public_key(),
                 overlap_until,
             }),
         }
@@ -167,27 +167,27 @@ fn test_key_rotation_overlap() {
 
     // Within the overlap window: both keys MUST be accepted (§14.3 step 3).
     assert!(
-        keyset.accepts(payload, &sig_old, old_kp.public_key(), t0 + 1),
+        keyset.accepts(payload, &sig_old, &old_kp.public_key(), t0 + 1),
         "old-key signature MUST be accepted inside overlap window"
     );
     assert!(
-        keyset.accepts(payload, &sig_new, new_kp.public_key(), t0 + 1),
+        keyset.accepts(payload, &sig_new, &new_kp.public_key(), t0 + 1),
         "new-key signature MUST be accepted inside overlap window"
     );
     assert!(
-        keyset.accepts(payload, &sig_old, old_kp.public_key(), overlap_until),
+        keyset.accepts(payload, &sig_old, &old_kp.public_key(), overlap_until),
         "old-key signature MUST be accepted at the boundary (inclusive)"
     );
 
     // After the overlap window: old-key signature MUST be rejected
     // (§14.3 step 4: remove old_pubkey from trust store).
     assert!(
-        !keyset.accepts(payload, &sig_old, old_kp.public_key(), overlap_until + 1),
+        !keyset.accepts(payload, &sig_old, &old_kp.public_key(), overlap_until + 1),
         "old-key signature MUST be rejected after overlap_until"
     );
     // New key remains valid forever (until the next rotation).
     assert!(
-        keyset.accepts(payload, &sig_new, new_kp.public_key(), overlap_until + 10_000),
+        keyset.accepts(payload, &sig_new, &new_kp.public_key(), overlap_until + 10_000),
         "new-key signature MUST still verify after overlap_until"
     );
 
@@ -195,7 +195,7 @@ fn test_key_rotation_overlap() {
     // weaken integrity.
     let tampered = b"rotation-sensitive messagX";
     assert!(
-        !keyset.accepts(tampered, &sig_new, new_kp.public_key(), t0 + 1),
+        !keyset.accepts(tampered, &sig_new, &new_kp.public_key(), t0 + 1),
         "tampered payload MUST NOT verify even with the current key"
     );
 }

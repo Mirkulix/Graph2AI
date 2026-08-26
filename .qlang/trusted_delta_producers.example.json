@@ -1,0 +1,33 @@
+{
+  "_comment": [
+    "Producer keys allowed to submit graph deltas. Copy to",
+    "trusted_delta_producers.json and edit — the real file is gitignored.",
+    "",
+    "A missing or malformed file trusts NOBODY, which means every remote",
+    "delta submission is refused. That is the intended failure direction.",
+    "",
+    "Generate a keypair with:  qlang graph keygen --out ~/.qlang/worker.key",
+    "It prints the public half in exactly the shape below.",
+    "",
+    "Timestamps are unix seconds and are judged against the RECEIVER's clock,",
+    "never the delta's own emitted_at — otherwise a submitter could backdate",
+    "past a revocation.",
+    "",
+    "Rotation:  give the new key its own key_id, and set accept_until on the",
+    "old one so in-flight work keeps landing during the switchover.",
+    "Revocation: set revoked_at. It overrides accept_until immediately — a",
+    "leaked key must stop working the moment you know, not when the window ends."
+  ],
+  "producers": {
+    "worker-3": [
+      {
+        "key_id": "k1",
+        "public_key_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+        "active_from": 0,
+        "accept_until": null,
+        "revoked_at": null,
+        "comment": "replace with the public_key_hex that keygen printed"
+      }
+    ]
+  }
+}

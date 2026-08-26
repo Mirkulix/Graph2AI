@@ -25,7 +25,13 @@ package-lock.json
 graphify-out/
 test-results/
 .claude-flow/
-.qlang/
+# Everything in .qlang/ is local state — including the real trust store, which
+# must never be committed. The example below is documentation and holds no key.
+# git will not descend into an excluded directory, so the contents are excluded
+# rather than the directory itself, or the negation could never match.
+.qlang/*
+!.qlang/trusted_delta_producers.example.json
+!.qlang/api_keys.example.json
 .maestro/
 **/*.log
 *.env

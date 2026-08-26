@@ -11,7 +11,7 @@
 //!
 //! Single endpoint: `POST /mcp/v1`.
 
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{extract::{Extension, State}, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -133,6 +133,7 @@ fn text_content(text: impl Into<String>) -> Value {
 
 async fn handle_tools_call(
     state: Arc<AppState>,
+    principal: &crate::api_keys::Principal,
     params: Value,
 ) -> Result<Value, (i32, String)> {
     let name = params
@@ -141,9 +142,10 @@ async fn handle_tools_call(
         .ok_or((-32602, "Missing tool name".to_string()))?;
     let args = params.get("arguments").cloned().unwrap_or(Value::Null);
 
-    // Knowledge-graph tools live in their own module.
+    // Knowledge-graph tools live in their own module (which enforces its own
+    // per-tool role check).
     if crate::routes::knowledge_tools::handles(name) {
-        let out = crate::routes::knowledge_tools::call(state, name, args).await?;
+        let out = crate::routes::knowledge_tools::call(state, principal, name, args).await?;
         return Ok(text_content(out));
     }
 
@@ -157,6 +159,9 @@ async fn handle_tools_call(
             Ok(text_content(result.output))
         }
         "qlang_run_goal" => {
+            if !principal.role.can_write() {
+                return Err((-32001, "this seat is read-only (viewer); it cannot start goals".to_string()));
+            }
             let goal_desc = args
                 .get("goal")
                 .and_then(|v| v.as_str())
@@ -216,6 +221,7 @@ async fn handle_tools_call(
 /// `POST /mcp/v1` — JSON-RPC 2.0 dispatcher for the MCP protocol.
 pub async fn handle_rpc(
     State(state): State<Arc<AppState>>,
+    Extension(principal): Extension<crate::api_keys::Principal>,
     body: Option<Json<Value>>,
 ) -> (StatusCode, Json<Value>) {
     // Parse the envelope. If the body is missing or not a JSON object,
@@ -246,7 +252,7 @@ pub async fn handle_rpc(
     let response = match req.method.as_str() {
         "initialize" => ok(id, server_info()),
         "tools/list" => ok(id, json!({ "tools": tool_definitions() })),
-        "tools/call" => match handle_tools_call(state, req.params).await {
+        "tools/call" => match handle_tools_call(state, &principal, req.params).await {
             Ok(result) => ok(id, result),
             Err((code, msg)) => err(id, code, msg),
         },

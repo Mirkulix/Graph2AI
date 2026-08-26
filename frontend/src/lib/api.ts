@@ -143,6 +143,97 @@ export interface KnowledgeSnapshot {
   claims: KnowledgeClaim[];
 }
 
+/// Verdict of a deterministic source check against a claim.
+export interface KnowledgeSourceVerdict {
+  kind: 'verified' | 'inconclusive' | 'not_proposed' | 'unavailable' | string;
+  status?: string;   // present for `not_proposed`
+  reason?: string;   // present for `inconclusive` and `unavailable`
+}
+
+export interface KnowledgeVerifySourceResult {
+  claim_id: string;
+  verdict: KnowledgeSourceVerdict;
+  terms: string[];
+  matched: number;
+  evidence?: KnowledgeEvidence | null;
+}
+
+/// A proof receipt: a claim plus its whole audit trail, rendered and structured.
+export interface KnowledgeReceipt {
+  claim_id: string;
+  rendered: string;
+  claim: KnowledgeClaim;
+  history: KnowledgeClaim[];
+  related: KnowledgeClaim[];
+}
+
+/// Result of sweeping every open proposal against source.
+export interface KnowledgeSweepResult {
+  checked: number;
+  verified: number;
+  inconclusive: number;
+  unavailable: number;
+}
+
+/// Result of re-checking settled claims against source.
+export interface KnowledgeRefreshResult {
+  checked: number;
+  still_current: number;
+  stale: number;
+  skipped: number;
+}
+
+/// Result of re-verifying stale claims (self-healing).
+export interface KnowledgeHealResult {
+  examined: number;
+  healed: number;
+  remained_stale: number;
+}
+
+/// One divergent subject: claims settled for it, and claims settled against it.
+export interface KnowledgeDivergence {
+  subject: string;
+  load_bearing: KnowledgeClaim[];
+  refuted: KnowledgeClaim[];
+}
+
+/// Where the graph holds both a load-bearing and a refuted claim.
+export interface KnowledgeDivergences {
+  divergences: KnowledgeDivergence[];
+}
+
+/// A merge operation the graph refused to apply, and why.
+export interface KnowledgeConflict {
+  kind: 'unknown_claim' | 'duplicate_claim_id' | 'contradictory_status'
+      | 'stale_source_revision' | 'rejected' | string;
+  detail: string;
+  claim_id?: string | null;
+}
+
+/// One merged OrbitQLang delta, as shown in the live feed.
+export interface KnowledgeDelta {
+  delta_id: string;
+  producer: string;
+  emitted_at: number;
+  applied: number;
+  already_applied: number;
+  conflicts: KnowledgeConflict[];
+  document: string;
+}
+
+export interface KnowledgeDeltaLog {
+  deltas: KnowledgeDelta[];
+  total: number;
+  unresolved_conflicts: number;
+}
+
+export interface CommitDeltaResult {
+  delta_id: string;
+  applied: number;
+  already_applied: number;
+  conflicts: KnowledgeConflict[];
+}
+
 // ─── Consensus (multi-agent fan-out) ─────────────────────────────────
 
 export interface ConsensusRequest {
@@ -493,6 +584,22 @@ export const api = {
   knowledgeStats:    () => get<KnowledgeStats>('/api/knowledge/stats'),
   knowledgeSnapshot: (limit: number = 100) => get<KnowledgeSnapshot>(`/api/knowledge/snapshot?limit=${Math.max(1, Math.min(500, limit))}`),
   knowledgeIndex:    () => post<{ scanned: number; indexed: number; already_known: number; skipped: number; errors: string[] }>('/api/knowledge/index'),
+  knowledgeDeltas:   (limit: number = 50, conflictsOnly = false) =>
+    get<KnowledgeDeltaLog>(`/api/knowledge/deltas?limit=${Math.max(1, Math.min(200, limit))}${conflictsOnly ? '&conflicts_only=true' : ''}`),
+  knowledgeCommitDelta: (document: string) =>
+    post<CommitDeltaResult>('/api/knowledge/delta', { document }),
+  knowledgeVerifySource: (id: string) =>
+    post<KnowledgeVerifySourceResult>('/api/knowledge/verify-source', { id, by: 'cockpit' }),
+  knowledgeReceipt: (claimId: string) =>
+    get<KnowledgeReceipt>(`/api/knowledge/receipt?claim_id=${encodeURIComponent(claimId)}`),
+  knowledgeVerifyAll: (by: string = 'cockpit') =>
+    post<KnowledgeSweepResult>('/api/knowledge/verify-all', { by }),
+  knowledgeRefreshSources: (by: string = 'cockpit') =>
+    post<KnowledgeRefreshResult>('/api/knowledge/refresh-sources', { by }),
+  knowledgeHealStale: (by: string = 'cockpit') =>
+    post<KnowledgeHealResult>('/api/knowledge/heal-stale', { by }),
+  knowledgeDivergences: () =>
+    get<KnowledgeDivergences>('/api/knowledge/divergences'),
 
   // Supervisor
   supervisorState: () => get<{ agents?: AgentInfo[]; tasks?: unknown[]; sessions?: unknown[] }>('/api/supervisor/state'),

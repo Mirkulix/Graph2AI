@@ -124,30 +124,53 @@ pub fn tool_list_dir(path: &str) -> ToolResult {
     }
 }
 
-/// Execute a shell command (sandboxed — only allowed commands)
+/// Execute a read-only command from a fixed allowlist.
+///
+/// Two things here are load-bearing:
+///
+/// - The allowlist is matched **exactly**. It used to also accept anything
+///   whose name merely *ended* with an allowed word, which let `/tmp/evilcat`
+///   and `mygit` through — the check named the program without constraining
+///   which program.
+/// - The command is not handed to a shell. Splitting the arguments and
+///   spawning the program directly means `ls; rm -rf ~` cannot smuggle a
+///   second command past a passing first word. It also works on Windows,
+///   where `sh` does not exist.
 pub fn tool_shell(cmd: &str) -> ToolResult {
-    // Allowlist of safe commands
     let allowed = [
         "ls", "cat", "head", "wc", "grep", "find", "date", "whoami", "uname", "df", "free",
         "uptime", "cargo", "git", "npm",
     ];
-    let first_word = cmd.split_whitespace().next().unwrap_or("");
 
-    if !allowed
-        .iter()
-        .any(|&a| first_word == a || first_word.ends_with(a))
-    {
+    let mut parts = cmd.split_whitespace();
+    let program = parts.next().unwrap_or("");
+    let args: Vec<&str> = parts.collect();
+
+    if !allowed.contains(&program) {
         return ToolResult {
             tool: "shell".into(),
             success: false,
             output: format!(
-                "Nicht erlaubt: '{first_word}'. Erlaubte Befehle: {}",
+                "Nicht erlaubt: '{program}'. Erlaubte Befehle: {}",
                 allowed.join(", ")
             ),
         };
     }
 
-    match Command::new("sh").arg("-c").arg(cmd).output() {
+    // Shell metacharacters are meaningless without a shell, but their presence
+    // means the caller expected one — so the result would not be what they
+    // asked for. Say so instead of running something subtly different.
+    if cmd.contains(['|', ';', '&', '>', '<', '`', '$']) {
+        return ToolResult {
+            tool: "shell".into(),
+            success: false,
+            output: "Shell-Operatoren (| ; & > < ` $) werden nicht unterstützt — \
+                     Befehle laufen ohne Shell."
+                .into(),
+        };
+    }
+
+    match Command::new(program).args(&args).output() {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -733,8 +756,34 @@ mod tests {
 
     #[test]
     fn shell_allows_safe_commands() {
-        let result = tool_shell("date");
-        assert!(result.success);
+        // `cargo` is allowlisted and a real executable on every platform this
+        // test runs on — unlike `date`, which is a shell builtin (not a
+        // spawnable program) on Windows and would fail the direct spawn.
+        let result = tool_shell("cargo --version");
+        assert!(result.success, "{}", result.output);
+    }
+
+    /// The allowlist names programs, so a path or a prefix that merely *ends*
+    /// with an allowed word must not satisfy it.
+    #[test]
+    fn shell_matches_the_allowlist_exactly() {
+        for smuggled in ["/tmp/evilcat", "mygit", "./ls", "notnpm", "xcargo"] {
+            let result = tool_shell(smuggled);
+            assert!(
+                !result.success && result.output.contains("Nicht erlaubt"),
+                "{smuggled} passed the allowlist"
+            );
+        }
+    }
+
+    /// Without a shell, `ls; rm -rf ~` cannot smuggle a second command past an
+    /// allowed first word. The attempt is refused rather than half-executed.
+    #[test]
+    fn shell_refuses_operators_instead_of_running_something_else() {
+        for injection in ["ls; rm -rf /", "date && whoami", "cat /etc/passwd > /tmp/x", "ls `id`"] {
+            let result = tool_shell(injection);
+            assert!(!result.success, "{injection} was executed");
+        }
     }
 
     #[test]
