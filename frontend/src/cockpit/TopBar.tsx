@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Shield, ChevronDown } from 'lucide-react';
-import { api, type BusStats } from '../lib/api';
+import { api, type BusStats, type KnowledgeHealth } from '../lib/api';
 
 interface Props {
   online: boolean;
@@ -10,6 +10,7 @@ interface Props {
 
 export default function TopBar({ online, onProfileClick, profileOpen }: Props) {
   const [stats, setStats] = useState<BusStats | null>(null);
+  const [health, setHealth] = useState<KnowledgeHealth | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -17,6 +18,9 @@ export default function TopBar({ online, onProfileClick, profileOpen }: Props) {
       api.busStats()
         .then(s => { if (alive) setStats(s); })
         .catch(() => { /* silent — pulse will show degraded */ });
+      api.knowledgeHealth()
+        .then(h => { if (alive) setHealth(h); })
+        .catch(() => { /* not available for non-admin or when the graph is empty */ });
     };
     load();
     const t = setInterval(load, 5000);
@@ -43,6 +47,13 @@ export default function TopBar({ online, onProfileClick, profileOpen }: Props) {
         <Pill label={`${(stats?.msgs_per_minute ?? 0).toFixed(0)} msg/min`} mono />
         {stats?.uptime_seconds != null && (
           <Pill label={`uptime ${formatUptime(stats.uptime_seconds)}`} mono subtle />
+        )}
+        {health && (
+          <Pill
+            dot={health.divergences > 0 ? 'var(--alert)' : 'var(--verified)'}
+            label={`${health.load_bearing} reliable${health.divergences > 0 ? ` · ${health.divergences} divergent` : ''}`}
+            mono
+          />
         )}
       </div>
 

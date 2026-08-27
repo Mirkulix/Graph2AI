@@ -1005,6 +1005,20 @@ Das Knowledge-Panel war durch die vielen neuen Sektionen dicht. Jetzt:
 
 ---
 
+## 56. TopBar: Graph-Health-Pill (At-a-Glance)
+
+Die TopBar zeigte Bus-Statistiken, aber nicht den Zustand des Wissensgraphen.
+Jetzt:
+
+- **Pill „N reliable"** (grüner Punkt) bzw. **„N reliable · X divergent"**
+  (roter Punkt) in der TopBar, live aus `GET /api/knowledge/health` (5s-Zyklus),
+  sichtbar in jeder Ansicht.
+- **Verifiziert**: tsc grün, vite build grün, neues Bundle live (200),
+  Health-Endpoint liefert die Daten.
+  → `frontend/src/cockpit/TopBar.tsx`
+
+---
+
 ## Lauffähige Beispiele
 
 ```bash
