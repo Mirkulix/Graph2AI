@@ -251,6 +251,36 @@ The repository is currently focused on the OrbitQLang control-plane path:
 - Frontend production build currently passes via `cd frontend && npm run build`.
 - All non-deterministic ML training and evolution loops have been purged.
 
+## Product Readiness (as of 2026-08-26)
+
+Consolidated answer to "is it a finished product and how is it used":
+
+**Usable today, locally, by an agent system** (this is verified, not claimed):
+
+- One-command setup: `scripts/setup.ps1` builds, configures, starts and runs an
+  MCP self-test (20 tools at `POST /mcp/v1`). Linux/macOS:
+  `install.sh` + `start-qo.sh`. Watch the whole loop:
+  `scripts/e2e-demo.ps1`.
+- **1082 tests, 0 failures** (`cargo test --workspace --no-default-features`),
+  CI on Linux + Windows. Any MCP client (Claude Code, DeepSeek-harness-style
+  agents, scripts) can connect; CLI (`qlang graph …`) covers non-MCP clients.
+- Security posture for a network-bound instance: role-enforced seats
+  (viewer is read-only), per-IP rate + body limits, CORS allow-list, threat
+  model, fail-closed auth, signed+replay-guarded deltas, append-only audit.
+
+**Not yet ready for a public multi-tenant SaaS** — the honest blockers:
+
+- Independent security review (needs a second party).
+- redb *auto-migration* (schema drift fails fast with a re-import hint, but does
+  not migrate in place).
+- Multi-tenancy (one graph per instance today) and a product-focus decision.
+- Release-profile build on Windows-GNU needs a complete mingw-w64 toolchain
+  (`dlltool`), absent in minimal sandboxes.
+
+**Owner decisions pending**: push to GitHub (`git push origin NewWayLLMHandling`
+— credentials live in the operator's environment, not the sandbox), cut the
+first release tag on a full toolchain, and choose the product focus.
+
 ## Intentionally Removed From Active Scope
 
 These areas were removed from the project to ensure a lean, deterministic core:
