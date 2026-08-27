@@ -840,6 +840,78 @@ Ein-Befehl-Weg zurück aus einem redb-Verlust. Jetzt:
 
 ---
 
+## 47. Ein-Befehl-Setup + MCP-Selbsttest (neu)
+
+„Gibt es ein Setup?" — ja, jetzt als verifiziertes Artefakt:
+
+- **`scripts/setup.ps1`** (Windows/PowerShell): baut `qo`+`qlang`
+  (`--no-default-features`), legt `.qlang/`-Config aus den `.example`-Templates
+  an (nie überschreiben, nie Secrets), startet den Server, wartet auf
+  `/api/health`, und führt einen **MCP-Selbsttest** aus: `tools/list` (20 Tools)
+  + `orbit_graph_health`. Druckt danach MCP-Endpoint, CLI-Nutzung und
+  Stop-Befehl. Linux/macOS: `install.sh` + `start-qo.sh` (README).
+- **README** verweist im Quickstart darauf.
+- **Verifiziert**: `./scripts/setup.ps1 -Port 4747` läuft komplett durch
+  (Build → Config → Start → 20 Tools → Health-Antwort). PowerShell-Fallstrick
+  behoben: `$ErrorActionPreference='Continue'` + `$LASTEXITCODE`-Checks, da
+  `cargo`/`npm` auf stderr schreiben.
+  → `scripts/setup.ps1`, `README.md`
+
+---
+
+## 48. redb-Schema-Versionierung — fail-fast statt stillem Falschlesen (neu)
+
+Der letzte selbst-machbare Betriebs-Baustein: Eine DB, die ein inkompatibler
+Binary geschrieben hat, wurde bisher still gelesen (oder mit verwirrenden
+redb-Fehlern). Jetzt:
+
+- **`qo-knowledge::store`** schreibt beim ersten Öffnen eine `schema_version`
+  in eine `k_meta`-Tabelle und **verweigert** das Öffnen mit klarer Meldung,
+  wenn die on-disk Version nicht zur Binary passt: „…not supported… export with
+  a compatible binary and re-import" (Migrationspfad ist immer der portable
+  Export/Import).
+- **Verifiziert**: Unit-Test (Version auf 999 getampert → Öffnen schlägt fehl
+  mit Migrations-Hinweis) + Restart-Beweis am laufenden Server (gleiche DB
+  zweimal öffnen: Version matcht, Claim überlebt). `qo-knowledge` 44 → 45 Tests.
+  → `qo/qo-knowledge/src/store.rs`
+
+---
+
+## 49. Server-E2E-Demo + konfigurierbares Workspace-Root (neu)
+
+„Wann ist es fertig und kann es genutzt werden?" — die Antwort als Skript:
+
+- **`scripts/e2e-demo.ps1`** startet qo gegen ein Scratch-Workspace und führt
+  den **kompletten Wissens-Kreislauf über die echte API** vor: Propose →
+  Kontext bleibt leer (unverified) → verify_source (deterministisch) → Kontext
+  trägt es → Receipt (ganzer Trail) → Health. Verifiziert am laufenden Server
+  (alle 6 Schritte grün).
+- **`QO_WORKSPACE`** (Env) — das Workspace-Root war bisher hart auf das Repo
+  des Binaries gesetzt; ein Operator kann den Server jetzt auf **beliebige
+  Verzeichnisse** zeigen lassen (z. B. das Projekt, an dem ein Agent-Team
+  arbeitet).
+  → `scripts/e2e-demo.ps1`, `src/main.rs`
+
+---
+
+## 50. Release-Prozess — Gate-Skript (neu, Toolchain-Grenze dokumentiert)
+
+„Wann ist es ein fertiges Produkt?" — ein fertiges Produkt hat Versionen.
+Jetzt:
+
+- **`scripts/release.ps1 -Version X.Y.Z`** läuft den Release-Gate: CI-Tests →
+  Release-Build (`--release --bin qo --bin qlang --no-default-features`,
+  inkl. automatischer `dlltool`-Suche im Rust-Toolchain-`self-contained`) →
+  SHA-256-Checksummen → Tag `vX.Y.Z` (nur bei erfolgreichem Build!).
+- **Verifiziert hier**: Test-Gate grün; Release-Build scheitert in dieser
+  Sandbox an der **unvollständigen windows-gnu-Toolchain** (`dlltool` kann
+  keine Import-Libs erzeugen — gleiche Klasse wie das LLVM/gcc-Problem) und
+  bricht **ohne Tag** mit klarer Diagnose ab. Auf einem vollen Toolchain-Rechner
+  läuft das Skript komplett durch.
+  → `scripts/release.ps1`
+
+---
+
 ## Lauffähige Beispiele
 
 ```bash

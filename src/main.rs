@@ -55,7 +55,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Binary is in target/release/ — project root is 2 levels up
     let project_root = exe_dir.join("../../").canonicalize().unwrap_or_else(|_| PathBuf::from("."));
 
-    let static_dir = project_root.join("frontend/dist");
+    // The workspace boundary the server may index. Defaults to the repo the
+    // binary lives in; an operator can point it at any directory with
+    // QO_WORKSPACE (e.g. the project an agent team is actually working on).
+    let workspace_root = std::env::var("QO_WORKSPACE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| project_root.clone());
+
+    let static_dir = workspace_root.join("frontend/dist");
     let static_dir = if static_dir.exists() {
         Some(static_dir)
     } else {
@@ -81,7 +88,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .ok()
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("data")),
-        workspace_root: project_root.clone(),
+        workspace_root: workspace_root,
         obsidian_vault: dirs_home().join("Dokumente/Obsidian Vault/QO"),
         static_dir: static_dir.clone(),
         auth_token: std::env::var("QO_AUTH_TOKEN").ok(),

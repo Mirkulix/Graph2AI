@@ -27,6 +27,22 @@ Bonus: server agents can call internal MCP-style tools (`read_file`, `write_file
 
 Prerequisites: Rust toolchain (MSYS2 MINGW64 on Windows), Node 20+.
 
+**One-command setup (Windows):** `./scripts/setup.ps1` builds the server +
+CLI, ensures the `.qlang` config, starts `qo`, and runs an MCP self-test (20
+tools reachable at `POST /mcp/v1`) — the answer to "how do I run this and
+connect an agent". Linux/macOS: `./scripts/install.sh && ./scripts/start-qo.sh`.
+
+**Cut a release:** `./scripts/release.ps1 -Version 0.1.0` gates on the CI test
+suite, builds the release binaries, prints SHA-256 checksums and tags the
+version.
+
+**Watch it work:** `./scripts/e2e-demo.ps1` starts a scratch server and drives
+the whole knowledge loop over MCP — propose → unverified stays out of context →
+deterministic source verification → context → receipt → health. The server
+indexes the repo by default; point it elsewhere with `QO_WORKSPACE`.
+
+Manual steps:
+
 ```bash
 # 1. Build server + CLI binaries
 cargo build --bin qo --no-default-features

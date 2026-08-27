@@ -31,6 +31,13 @@ const IDX_STATUS: TableDefinition<&str, &str> = TableDefinition::new("k_idx_stat
 /// Signatures already accepted, so a captured delta cannot be replayed.
 /// Key is `producer/delta_id`, value is the signature that was accepted.
 const SEEN_DELTAS: TableDefinition<&str, &str> = TableDefinition::new("k_seen_deltas");
+/// Schema bookkeeping (`schema_version`). Lets the server fail fast instead of
+/// silently misreading a database written by an incompatible binary.
+const META: TableDefinition<&str, &str> = TableDefinition::new("k_meta");
+/// Bump when a knowledge-table layout changes incompatibly. The migration path
+/// is always the portable archive: export with the compatible binary, re-import
+/// with the new one.
+const SCHEMA_VERSION: &str = "1";
 
 const SEP: char = '\u{1}';
 
@@ -76,6 +83,29 @@ impl KnowledgeStore {
             w.open_table(IDX_OBJECT)?;
             w.open_table(IDX_STATUS)?;
             w.open_table(SEEN_DELTAS)?;
+            w.open_table(META)?;
+        }
+        // Fail fast on an incompatible on-disk schema instead of silently
+        // misreading it. A missing key means "first open with this binary":
+        // write the current version so future drift is detectable.
+        {
+            let mut meta = w.open_table(META)?;
+            // Copy the version out first so the immutable read borrow does not
+            // block the later insert.
+            let version = meta.get("schema_version")?.map(|v| v.value().to_string());
+            match version.as_deref() {
+                Some(v) if v != SCHEMA_VERSION => {
+                    return Err(Error::Storage(format!(
+                        "knowledge-store schema version {v:?} is not supported \
+                         (this binary expects {SCHEMA_VERSION}); export with a \
+                         compatible binary and re-import"
+                    )));
+                }
+                None => {
+                    meta.insert("schema_version", SCHEMA_VERSION)?;
+                }
+                _ => {}
+            }
         }
         w.commit()?;
         Ok(())
@@ -510,5 +540,45 @@ impl KnowledgeStore {
             }
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// First open stamps the current schema version; a database written by an
+    /// incompatible binary is refused with a migration hint instead of being
+    /// silently misread.
+    #[test]
+    fn an_incompatible_schema_version_fails_fast() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("k.redb");
+
+        // A normal first open succeeds and stamps the current version.
+        {
+            let store = KnowledgeStore::open(&path).unwrap();
+            assert!(store.claims_with_status(ClaimStatus::Proposed).unwrap().is_empty());
+        }
+
+        // Simulate a future binary's database: bump the version to 999.
+        {
+            let db = redb::Database::create(&path).unwrap();
+            let w = db.begin_write().unwrap();
+            {
+                let mut t = w.open_table(META).unwrap();
+                t.insert("schema_version", "999").unwrap();
+            }
+            w.commit().unwrap();
+        }
+
+        // Re-opening must fail fast with the migration path, not misread data.
+        let err = match KnowledgeStore::open(&path) {
+            Ok(_) => panic!("expected open to refuse an incompatible schema"),
+            Err(e) => e,
+        };
+        let text = err.to_string();
+        assert!(text.contains("not supported"), "{text}");
+        assert!(text.contains("re-import"), "{text}");
     }
 }
