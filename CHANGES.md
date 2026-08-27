@@ -912,6 +912,23 @@ Jetzt:
 
 ---
 
+## 51. „Warum besser?" — PITCH + GO-TO-MARKET auf den Ist-Stand (neu)
+
+Die explizite Ziel-Frage „warum ist es besser als alle anderen" bekommt eine
+aktuelle, ehrliche Antwort:
+
+- **`docs/PITCH.md`**: Testzahl 1013 → **1082**; die veraltete Aussage
+  „extract ist nicht verdrahtet, Agenten schreiben OrbitQLang von Hand" korrigiert
+  (Admission-Gate läuft über `orbit_graph_propose`/`orbit_graph_proposal_prompt`;
+  nur der Prosa→Delta-LLM-Schritt bleibt Client-Sache). Ergänzt: Rollen-
+  Enforcement, Rate-/Body-Limit, CORS, Threat-Model.
+- **`commercial/GO-TO-MARKET.md`**: „210 Tests" → **1082 workspace-weit**;
+  Rollen sind jetzt explizit „enforced, nicht nur gespeichert (Viewer
+  read-only)"; Rate-Limit + Body-Cap + Threat-Model im Security-Absatz.
+  → `docs/PITCH.md`, `commercial/GO-TO-MARKET.md`
+
+---
+
 ## Lauffähige Beispiele
 
 ```bash

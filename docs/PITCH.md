@@ -45,7 +45,7 @@ Three properties make it real rather than a wiki with extra steps:
 
 Every number here is reproducible from the repo:
 
-- **1013 passing tests, 0 failures** across the workspace.
+- **1082 passing tests, 0 failures** across the workspace.
 - The signature path is covered by **33 tests written as attacks** — foreign
   keys, producer impersonation, tampering, replay, backdating past a
   revocation. All rejected.
@@ -56,6 +56,10 @@ Every number here is reproducible from the repo:
 - Works today with **DeepSeek, Groq, and local Ollama**; OpenAI/Anthropic/etc.
   through an OpenAI-compatible gateway. (We do not overstate this: there is one
   shared "cloud" slot, documented honestly in the code.)
+- Multi-user is real: per-seat keys with **enforced** roles (`qlang keys issue
+  --role viewer|member|admin` — a viewer is genuinely read-only), per-IP rate
+  limiting and a body cap, CORS allow-listing, and a threat model
+  (`docs/THREAT-MODEL.md`) that names the residual risks.
 
 ## What it is not, yet
 
@@ -63,8 +67,11 @@ Selling this honestly means saying where the edges are:
 
 - **Not multi-tenant.** Today it's one team, one instance. The SaaS path (below)
   is where that changes.
-- **Agents still write the delta format by hand** (or are prompted to). The
-  automatic "extract findings from a task" step is on the roadmap, not done.
+- **The deterministic admission gate is wired** (`orbit_graph_propose`,
+  `orbit_graph_proposal_prompt` over MCP/HTTP), so a model's proposals are
+  validated before they land. What is *not* wired server-side is the prose→delta
+  LLM call itself: the model produces the document (guided by the proposal
+  prompt), the server validates it deterministically.
 - **The trust store says *who* may write, not *what about*.** Per-entity write
   policy is a refinement, not shipped.
 

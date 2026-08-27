@@ -21,14 +21,18 @@ Built and verified, not planned:
   which is a trust asset, not a weakness.
 - **Per-seat access.** `qlang keys issue|list|revoke` gives an admin real
   seats: one key per person, individually revocable, three roles
-  (member/admin/viewer). Verified end to end — no key → 401, valid seat → 200,
-  and an instance with issued seats binds to the network instead of loopback.
-  This is the single feature that turns "one shared token" into "something you
-  can charge per seat for."
+  (member/admin/viewer). Roles are *enforced*, not just stored — a viewer seat
+  is genuinely read-only (403 on every write route and write MCP tool).
+  Verified end to end — no key → 401, valid seat → 200, and an instance with
+  issued seats binds to the network instead of loopback. This is the single
+  feature that turns "one shared token" into "something you can charge per seat
+  for."
 - **The security story a buyer's reviewer will ask about.** Ed25519-signed
   deltas, a managed trust store, replay protection, fail-closed auth, an
-  append-only audit trail. 210 passing tests across the two core crates; the
-  signature path alone has 33 tests written as attacks.
+  append-only audit trail, per-IP rate limiting, a body cap, and a threat model
+  that names the residual risks. **1082 passing tests** across the workspace
+  (`cargo test --workspace --no-default-features`); the signature path alone
+  has 33 tests written as attacks.
 
 ## What is deliberately NOT built yet
 
