@@ -993,6 +993,18 @@ Die letzte große UI-Lücke: Seats waren nur per CLI verwaltbar. Jetzt komplett
 
 ---
 
+## 55. Panel aufgeräumt — Seats/Events einklappbar (neu)
+
+Das Knowledge-Panel war durch die vielen neuen Sektionen dicht. Jetzt:
+
+- **Seats** und **Events** sind einklappbar (Seats default zugeklappt — Admin-
+  Aktionen auf Abruf; Events default offen). Der Graph + Health + Divergenz
+  stehen direkt im Blick, Operator-Sektionen stören nicht mehr.
+- **Verifiziert**: tsc grün, vite build grün, neues Bundle live am Server (200).
+  → `frontend/src/cockpit/secondary/KnowledgeGraphPanel.tsx`
+
+---
+
 ## Lauffähige Beispiele
 
 ```bash

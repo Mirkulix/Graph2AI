@@ -69,6 +69,8 @@ export function KnowledgeGraphPanel() {
   const [seatBusy, setSeatBusy] = useState(false);
   const [seatResult, setSeatResult] = useState<string | null>(null);
   const [seatSecret, setSeatSecret] = useState<string | null>(null);
+  const [seatsOpen, setSeatsOpen] = useState(false);
+  const [eventsOpen, setEventsOpen] = useState(true);
 
   const refresh = useCallback(async () => {
     try {
@@ -304,8 +306,13 @@ export function KnowledgeGraphPanel() {
           health: {health.load_bearing} load-bearing · {health.proposed} proposals · {health.stale} stale · {health.refuted} refuted · {health.divergences} divergences · {health.entities} entities
         </div>
       )}
-      <div style={{ marginBottom: 10, padding: 8, border: '1px solid var(--rule-faint)', borderRadius: 3, background: 'var(--bg-raised)' }}>
-        <div style={eventsTitle}>seats · {seats.filter((s) => !s.revoked).length} active</div>
+      <div style={{ marginBottom: 10, border: '1px solid var(--rule-faint)', borderRadius: 3, overflow: 'hidden' }}>
+        <button onClick={() => setSeatsOpen((o) => !o)} style={divergenceHeader}>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--ink-bright)' }}>seats · {seats.filter((s) => !s.revoked).length} active</span>
+          <span style={{ color: 'var(--ink-faint)' }}>{seatsOpen ? 'hide' : 'manage'}</span>
+        </button>
+        {seatsOpen && (
+          <div style={{ padding: 8, borderTop: '1px solid var(--rule-faint)', background: 'var(--bg-raised)' }}>
         {seats.map((seat) => (
           <div key={seat.label} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0', fontFamily: 'var(--font-mono)', fontSize: 10 }}>
             <span style={{ color: 'var(--ink-bright)' }}>{seat.label}</span>
@@ -336,6 +343,8 @@ export function KnowledgeGraphPanel() {
         </div>
         {seatResult && <div style={indexResultStyle}>{seatResult}</div>}
         {seatSecret && <div style={{ ...receiptPre, marginTop: 6 }}>secret (shown once): {seatSecret}</div>}
+          </div>
+        )}
       </div>
       <div style={{ marginBottom: 10 }}>
         <button onClick={() => setProposeOpen((o) => !o)} style={indexButton}><CircleDot size={12} /> {proposeOpen ? 'hide propose' : 'propose document'}</button>
@@ -410,8 +419,11 @@ export function KnowledgeGraphPanel() {
           </div>
           {events.length > 0 && (
             <div style={eventsFeed}>
-              <div style={eventsTitle}>knowledge events (recent)</div>
-              {events.map((event) => (
+              <button onClick={() => setEventsOpen((o) => !o)} style={divergenceHeader}>
+                <span style={eventsTitle}>knowledge events (recent)</span>
+                <span style={{ color: 'var(--ink-faint)' }}>{eventsOpen ? 'hide' : 'show'}</span>
+              </button>
+              {eventsOpen && events.map((event) => (
                 <div key={event.id} style={eventsRow}>
                   <span style={{ color: 'var(--ink-faint)' }}>{new Date(event.timestamp * 1000).toLocaleTimeString()}</span>
                   <span style={{ color: 'var(--accent)' }}>{event.action_type.replace('knowledge_', '')}</span>
