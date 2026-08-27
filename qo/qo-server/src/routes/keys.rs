@@ -4,15 +4,22 @@
 //! persisted back to the same file the CLI edits, so a seat issued here
 //! survives a restart. Secrets are returned exactly once, at issue time.
 
-use axum::extract::State;
+use axum::extract::{Extension, State};
 use axum::http::StatusCode;
 use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-use crate::api_keys::{ApiKeyStore, Role};
+use crate::api_keys::{ApiKeyStore, Principal, Role};
 use crate::AppState;
+
+/// `GET /api/me` — the authenticated seat's own identity (label + role).
+/// Any authenticated principal may call it; the open (no-seats) case reports
+/// the implicit `root` admin.
+pub async fn me(Extension(principal): Extension<Principal>) -> Json<Value> {
+    Json(json!({ "label": principal.label, "role": principal.role.as_str() }))
+}
 
 #[derive(Deserialize)]
 pub struct IssueRequest {

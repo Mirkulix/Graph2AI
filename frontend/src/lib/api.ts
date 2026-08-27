@@ -687,6 +687,7 @@ export const api = {
                      post<SeatIssueResult>('/api/keys/issue', { label, role }),
   seatRevoke:     (label: string) =>
                      post<{ revoked: string; active_seats: number }>('/api/keys/revoke', { label }),
+  me:             () => get<{ label: string; role: string }>('/api/me'),
 
   // Supervisor
   supervisorState: () => get<{ agents?: AgentInfo[]; tasks?: unknown[]; sessions?: unknown[] }>('/api/supervisor/state'),

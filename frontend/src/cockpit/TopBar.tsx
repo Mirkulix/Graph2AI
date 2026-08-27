@@ -11,6 +11,7 @@ interface Props {
 export default function TopBar({ online, onProfileClick, profileOpen }: Props) {
   const [stats, setStats] = useState<BusStats | null>(null);
   const [health, setHealth] = useState<KnowledgeHealth | null>(null);
+  const [me, setMe] = useState<{ label: string; role: string } | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -21,6 +22,9 @@ export default function TopBar({ online, onProfileClick, profileOpen }: Props) {
       api.knowledgeHealth()
         .then(h => { if (alive) setHealth(h); })
         .catch(() => { /* not available for non-admin or when the graph is empty */ });
+      api.me()
+        .then(m => { if (alive) setMe(m); })
+        .catch(() => { /* not authenticated / not available */ });
     };
     load();
     const t = setInterval(load, 5000);
@@ -67,7 +71,7 @@ export default function TopBar({ online, onProfileClick, profileOpen }: Props) {
       >
         <Shield size={13} strokeWidth={1.6} style={{ color: 'var(--verified)' }} />
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ink-primary)' }}>
-          guardian
+          {me ? `${me.label} · ${me.role}` : 'guardian'}
         </span>
         <ChevronDown size={13} strokeWidth={1.6} style={{ color: 'var(--ink-muted)', transform: profileOpen ? 'rotate(180deg)' : 'none', transition: 'transform 180ms' }} />
       </button>

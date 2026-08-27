@@ -1019,6 +1019,23 @@ Jetzt:
 
 ---
 
+## 57. „Wer bin ich?" — Seat-Identität im Cockpit (neu)
+
+Nach der Seat-/Auth-Arbeit wusste die UI nicht, als welcher Seat man
+authentifiziert ist. Jetzt:
+
+- **Backend**: `GET /api/me` (read, jeder authentifizierte Principal) liefert
+  `{label, role}` aus den Request-Extensions; der offene Fall meldet den
+  impliziten `root`-Admin.
+- **UI**: Die TopBar zeigt statt des hartcodierten „guardian" den echten Seat
+  (`label · role`, live aus `/api/me`, 5s-Zyklus).
+- **Verifiziert**: Server-Test (Route 200), Wire-Beweis
+  (`{"label":"admin","role":"admin"}`), tsc + vite grün, neues Bundle live.
+  → `qo/qo-server/src/routes/keys.rs`, `lib.rs`, `frontend/src/cockpit/TopBar.tsx`,
+  `frontend/src/lib/api.ts`
+
+---
+
 ## Lauffähige Beispiele
 
 ```bash

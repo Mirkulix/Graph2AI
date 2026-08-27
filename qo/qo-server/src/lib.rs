@@ -921,7 +921,9 @@ pub async fn build_app(
         .route("/supervisor/legacy", get(routes::supervisor::cockpit_legacy))
         // MCP is one POST endpoint that dispatches read AND write tools; the
         // per-tool role check lives in the dispatcher, not here.
-        .route("/mcp/v1", post(routes::mcp_server::handle_rpc));
+        .route("/mcp/v1", post(routes::mcp_server::handle_rpc))
+        // The authenticated seat's own identity.
+        .route("/api/me", get(routes::keys::me));
 
     // ---- Write routes: a member (or admin) seat. A viewer is 403'd here. ----
     let write_router = Router::new()
@@ -1671,6 +1673,12 @@ mod knowledge_route_tests {
         // Admin lists seats.
         assert_eq!(
             call("GET", "/api/keys", "admin-secret", "").await.unwrap().status(),
+            StatusCode::OK
+        );
+
+        // The authenticated seat can ask who it is.
+        assert_eq!(
+            call("GET", "/api/me", "admin-secret", "").await.unwrap().status(),
             StatusCode::OK
         );
 
