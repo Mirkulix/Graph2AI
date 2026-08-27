@@ -21,7 +21,7 @@ The repository is currently focused on the OrbitQLang control-plane path:
 ## Confirmed Working Surfaces
 
 - `cargo check --workspace --all-targets` passes clean, and
-  `cargo test --workspace --no-default-features` (JIT disabled) is **1070
+  `cargo test --workspace --no-default-features` (JIT disabled) is **1082
   passing tests with 0 failures** (re-measured 2026-08-26). The full with-JIT
   suite (`cargo test --workspace`) additionally needs LLVM 18 — `llvm-sys`'s
   build script requires `gcc`, so it does not run on a machine without that

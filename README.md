@@ -179,16 +179,18 @@ docs/        ARCHITECTURE.md, BUILD.md, QUICKSTART.md, vault/
 
 ## Honest status
 
-Daily-driver-ready: yes — 1070 tests pass (`cargo test --workspace
+Daily-driver-ready: yes — 1082 tests pass (`cargo test --workspace
 --no-default-features`) with CI on Linux and Windows, role-enforced seats,
-rate/body limits, structured tracing and an append-only audit log, all verified
-end-to-end against a running server. Production-ready for a *public multi-tenant
-SaaS*: not yet — it still lacks a formal threat model and an independent
-security review, a release process and a redb migration story, and multi-tenancy
-(one graph per instance today). Conversation history is browser-localStorage
-only, the tool sandbox is `/workspace`-scoped, and the internal `<tool/>`
-markers are not yet real MCP JSON-RPC. Use it, file issues, don't bet your job
-on it yet.
+rate/body limits, structured tracing and an append-only audit log, a threat
+model (`docs/THREAT-MODEL.md`), a release gate (`scripts/release.ps1`) and a
+one-command setup — all verified end-to-end against a running server.
+Production-ready for a *public multi-tenant SaaS*: not yet — it still lacks an
+independent security review, redb *auto-migration* (schema changes fail fast
+with a re-import hint, but do not migrate in place), multi-tenancy (one graph
+per instance today) and a product-focus decision. Conversation history is
+browser-localStorage only, the tool sandbox is `/workspace`-scoped, and the
+internal `<tool/>` markers are not yet real MCP JSON-RPC. Use it, file issues,
+don't bet your job on it yet.
 
 ## License
 
