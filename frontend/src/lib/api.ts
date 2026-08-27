@@ -634,7 +634,7 @@ export const api = {
   providerCosts:   () => get<{ total_usd?: number; by_provider?: Record<string, number> }>('/api/providers/costs'),
   providerAdd:     (config: { template_id: string; api_key: string; model: string }) =>
                      post<ProviderConfig>('/api/providers/add', config),
-  providerTest:    (id: string) => post<{ ok: boolean; latency_ms?: number; error?: string }>(`/api/providers/test`, { id }),
+  providerTest:    (id: string) => post<{ success: boolean; latency_ms?: number; message?: string }>(`/api/providers/test`, { id }),
   providerToggle:  (id: string, enabled: boolean) => put<ProviderConfig>(`/api/providers/${id}/toggle`, { enabled }),
   providerEdit:    (id: string, patch: Partial<ProviderConfig>) => put<ProviderConfig>(`/api/providers/${id}/edit`, patch),
   providerDelete:  (id: string) => del<void>(`/api/providers/${id}`),

@@ -82,6 +82,9 @@ export default function ProvidersDetail() {
 
 function ConfiguredRow({ cfg, onChange }: { cfg: ProviderConfig; onChange: () => void }) {
   const [busy, setBusy] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [online, setOnline] = useState<boolean | null>(null);
+  const [latency, setLatency] = useState<number | undefined>(undefined);
 
   async function toggle() {
     setBusy(true);
@@ -104,6 +107,20 @@ function ConfiguredRow({ cfg, onChange }: { cfg: ProviderConfig; onChange: () =>
     }
   }
 
+  async function test() {
+    setTesting(true);
+    setOnline(null);
+    try {
+      const result = await api.providerTest(cfg.id);
+      setOnline(result.success);
+      setLatency(result.latency_ms);
+    } catch {
+      setOnline(false);
+    } finally {
+      setTesting(false);
+    }
+  }
+
   return (
     <div style={{
       display: 'flex',
@@ -116,8 +133,8 @@ function ConfiguredRow({ cfg, onChange }: { cfg: ProviderConfig; onChange: () =>
     }}>
       <span style={{
         width: 6, height: 6, borderRadius: 3,
-        background: cfg.enabled ? 'var(--verified)' : 'var(--ink-faint)',
-        boxShadow: cfg.enabled ? '0 0 6px var(--verified-glow)' : 'none',
+        background: online === false ? 'var(--alert)' : (online === true ? 'var(--verified)' : (cfg.enabled ? 'var(--verified)' : 'var(--ink-faint)')),
+        boxShadow: (online !== false && cfg.enabled) ? '0 0 6px var(--verified-glow)' : 'none',
       }} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 12, color: 'var(--ink-bright)', fontWeight: 500 }}>
@@ -128,7 +145,17 @@ function ConfiguredRow({ cfg, onChange }: { cfg: ProviderConfig; onChange: () =>
             {cfg.model}
           </div>
         )}
+        {online != null && (
+          <div style={{ fontSize: 9, fontFamily: 'var(--font-mono)', marginTop: 2, color: online ? 'var(--verified)' : 'var(--alert-bright)' }}>
+            {online ? `connection online${latency != null ? ` · ${latency}ms` : ''}` : 'connection offline'}
+          </div>
+        )}
       </div>
+      {cfg.enabled && (
+        <button onClick={test} disabled={testing} style={testBtn} title="test the live connection">
+          {testing ? 'testing…' : 'test'}
+        </button>
+      )}
       <button
         onClick={toggle}
         disabled={busy}
@@ -321,4 +348,15 @@ const iconBtn: React.CSSProperties = {
   justifyContent: 'center',
   borderRadius: 3,
   transition: 'background 120ms',
+};
+
+const testBtn: React.CSSProperties = {
+  padding: '3px 7px',
+  fontSize: 9,
+  fontFamily: 'var(--font-mono)',
+  color: 'var(--ink-bright)',
+  background: 'var(--bg-raised)',
+  border: '1px solid var(--rule-default)',
+  borderRadius: 3,
+  cursor: 'pointer',
 };

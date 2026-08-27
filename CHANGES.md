@@ -1036,6 +1036,25 @@ authentifiziert ist. Jetzt:
 
 ---
 
+## 58. Provider-Status im UI — „Verbindung online/offline" (neu)
+
+Vorher gab es **keinen** Online-Indikator für die LLM-Verbindung (das „live"
+in der TopBar ist nur der Server selbst). Jetzt:
+
+- **Providers-Panel**: jeder konfigurierte Provider hat einen **„test"-Button**
+  (echter LLM-Call über `POST /api/providers/test`), der **„connection online ·
+  Xms"** (grün) bzw. **„connection offline"** (rot) anzeigt; der Status-Punkt
+  färbt sich entsprechend.
+- **Fix**: `api.ts` las das falsche Feld (`ok` statt `success` des Backends) —
+  die Status-Anzeige hätte immer „offline" gezeigt.
+- **Ehrlich verifiziert**: In dieser Sandbox zeigt DeepSeek „offline", weil
+  `api.deepseek.com` netzwerk-seitig blockiert ist (Lookup findet den Provider
+  jetzt, der Call scheitert nur am Netz). Auf einem Rechner mit Internet zeigt
+  derselbe Button „online".
+  → `frontend/src/cockpit/detail/ProvidersDetail.tsx`, `frontend/src/lib/api.ts`
+
+---
+
 ## Lauffähige Beispiele
 
 ```bash
