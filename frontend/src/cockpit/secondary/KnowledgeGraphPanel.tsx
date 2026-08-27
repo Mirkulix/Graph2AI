@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CircleDot, Database, FileCheck2, Receipt, RefreshCw, Search, ShieldCheck } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { CircleDot, Database, Download, FileCheck2, Receipt, RefreshCw, Search, ShieldCheck, Upload } from 'lucide-react';
 import {
   api,
   type KnowledgeBackupEntry,
@@ -58,6 +58,11 @@ export function KnowledgeGraphPanel() {
   const [proposeDoc, setProposeDoc] = useState('');
   const [proposing, setProposing] = useState(false);
   const [proposeResult, setProposeResult] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportResult, setExportResult] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -196,6 +201,38 @@ export function KnowledgeGraphPanel() {
     } finally { setProposing(false); }
   }
 
+  async function exportGraph() {
+    setExporting(true);
+    try {
+      const archive = await api.knowledgeExport();
+      const entities = Array.isArray(archive.entities) ? archive.entities.length : 0;
+      const claims = Array.isArray(archive.claims) ? archive.claims.length : 0;
+      const blob = new Blob([JSON.stringify(archive, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `knowledge-graph-${Date.now()}.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setExportResult(`exported ${entities} entities, ${claims} revisions (${blob.size} bytes) — saved as download`);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Export failed'); }
+    finally { setExporting(false); }
+  }
+
+  async function importGraph(file: File | undefined) {
+    if (!file) return;
+    setImporting(true);
+    try {
+      const text = await file.text();
+      const archive = JSON.parse(text) as Record<string, unknown>;
+      const result = await api.knowledgeImport(archive);
+      setImportResult(`imported ${result.entities_added} entities, ${result.claims_added} claims · ${result.claims_skipped.length} skipped (additive)`);
+      await refresh();
+    } catch (cause) {
+      setImportResult(cause instanceof Error ? cause.message : 'Import failed');
+    } finally { setImporting(false); }
+  }
+
   return (
     <section style={panel}>
       <div style={heading}>
@@ -203,13 +240,22 @@ export function KnowledgeGraphPanel() {
           <div className="eyebrow">durable knowledge graph</div>
           <div style={title}><ShieldCheck size={17} /> verified project memory</div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
           <button onClick={() => void sweepProposals()} disabled={sweeping} style={indexButton}><ShieldCheck size={12} /> {sweeping ? 'sweeping…' : 'sweep proposals'}</button>
           <button onClick={() => void refreshSources()} disabled={refreshing} style={indexButton}><RefreshCw size={12} /> {refreshing ? 'refreshing…' : 'refresh sources'}</button>
           <button onClick={() => void healStale()} disabled={healing} style={indexButton}><ShieldCheck size={12} /> {healing ? 'healing…' : 'heal stale'}</button>
           <button onClick={() => void indexWorkspace()} disabled={indexing} style={indexButton}><RefreshCw size={12} /> {indexing ? 'scanning…' : 'scan workspace'}</button>
           <button onClick={() => void backupNow()} disabled={backingUp} style={indexButton}><Database size={12} /> {backingUp ? 'backing up…' : 'backup'}</button>
           <button onClick={() => void restoreLatest()} disabled={restoring} style={indexButton}><FileCheck2 size={12} /> {restoring ? 'restoring…' : 'restore'}</button>
+          <button onClick={() => void exportGraph()} disabled={exporting} style={indexButton}><Download size={12} /> {exporting ? 'exporting…' : 'export'}</button>
+          <button onClick={() => fileInputRef.current?.click()} disabled={importing} style={indexButton}><Upload size={12} /> {importing ? 'importing…' : 'import'}</button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="application/json,.json"
+            style={{ display: 'none' }}
+            onChange={(event) => { void importGraph(event.target.files?.[0]); event.target.value = ''; }}
+          />
           <div style={loadBearing}><FileCheck2 size={14} /> {stats.load_bearing} reliable</div>
         </div>
       </div>
@@ -219,6 +265,8 @@ export function KnowledgeGraphPanel() {
       {healResult && <div style={indexResultStyle}>heal: {healResult}</div>}
       {backupResult && <div style={indexResultStyle}>backup: {backupResult}</div>}
       {restoreResult && <div style={indexResultStyle}>restore: {restoreResult}</div>}
+      {exportResult && <div style={indexResultStyle}>export: {exportResult}</div>}
+      {importResult && <div style={indexResultStyle}>import: {importResult}</div>}
       {health && (
         <div style={healthLine}>
           health: {health.load_bearing} load-bearing · {health.proposed} proposals · {health.stale} stale · {health.refuted} refuted · {health.divergences} divergences · {health.entities} entities

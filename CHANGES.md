@@ -952,6 +952,22 @@ Knowledge-Panel:
 
 ---
 
+## 53. Cockpit: Export/Import-Buttons (Portabilität im UI)
+
+Ergänzung zu §52:
+
+- **Export-Button** lädt den kompletten Graphen (alle Entitäten + Revisionen)
+  als `knowledge-graph-<ts>.json` herunter (`GET /api/knowledge/export`).
+- **Import-Button** (Datei-Auswahl) liest ein Archiv-JSON und spielt es
+  **additiv** ein (`POST /api/knowledge/import`), mit Report
+  (entities/claims added, skipped).
+- **`api.ts`**: `knowledgeExport` + `knowledgeImport` + `KnowledgeImportResult`.
+- **Verifiziert**: tsc grün, vite build grün (neues Bundle live am Server),
+  Export→Import am laufenden Server idempotent (skipped=1).
+  → `frontend/src/cockpit/secondary/KnowledgeGraphPanel.tsx`, `frontend/src/lib/api.ts`
+
+---
+
 ## Lauffähige Beispiele
 
 ```bash

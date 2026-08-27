@@ -245,6 +245,13 @@ export interface KnowledgeEvent {
   details: string;
 }
 
+/// Result of an import (additive restore of a portable archive).
+export interface KnowledgeImportResult {
+  entities_added: number;
+  claims_added: number;
+  claims_skipped: string[];
+}
+
 /// A merge operation the graph refused to apply, and why.
 export interface KnowledgeConflict {
   kind: 'unknown_claim' | 'duplicate_claim_id' | 'contradictory_status'
@@ -655,6 +662,10 @@ export const api = {
     post<KnowledgeProposeResult>('/api/knowledge/propose', { document }),
   knowledgeEvents: (limit: number = 20) =>
     get<KnowledgeEvent[]>(`/api/history?limit=${Math.max(1, Math.min(100, limit))}`),
+  knowledgeExport: () =>
+    get<Record<string, unknown>>('/api/knowledge/export'),
+  knowledgeImport: (archive: Record<string, unknown>) =>
+    post<KnowledgeImportResult>('/api/knowledge/import', archive),
 
   // Supervisor
   supervisorState: () => get<{ agents?: AgentInfo[]; tasks?: unknown[]; sessions?: unknown[] }>('/api/supervisor/state'),
