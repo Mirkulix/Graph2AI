@@ -131,8 +131,12 @@ pub struct AppState {
     pub delta_trust: qo_knowledge::TrustStore,
     /// Per-seat API keys, loaded from `.qlang/api_keys.json`. The multi-user
     /// half of auth: an admin issues one key per person and can revoke them
-    /// individually, instead of everyone sharing one `QO_AUTH_TOKEN`.
-    pub api_keys: api_keys::ApiKeyStore,
+    /// individually, instead of everyone sharing one `QO_AUTH_TOKEN`. Behind a
+    /// lock because the admin routes mutate it while auth reads it.
+    pub api_keys: Arc<tokio::sync::RwLock<api_keys::ApiKeyStore>>,
+    /// Where the key store is persisted, so seats issued over HTTP survive a
+    /// restart (the same file the `qlang keys` CLI edits).
+    pub api_keys_path: std::path::PathBuf,
 }
 
 pub struct QoConfig {
@@ -369,7 +373,8 @@ pub async fn build_app(
         multi_agent_events_tx: broadcast::channel::<routes::multi_agent::MultiAgentRunEvent>(256).0,
         delta_log: Arc::new(tokio::sync::RwLock::new(VecDeque::new())),
         delta_trust: load_delta_trust(".qlang/trusted_delta_producers.json"),
-        api_keys: load_api_keys(&config.api_keys_path),
+        api_keys: Arc::new(tokio::sync::RwLock::new(load_api_keys(&config.api_keys_path))),
+        api_keys_path: config.api_keys_path,
     });
 
     // Background drain: subscribe to the bus and append every message to
@@ -982,6 +987,10 @@ pub async fn build_app(
         .route("/api/supervisor/install-preset", post(routes::supervisor::install_preset))
         .route("/api/supervisor/daemon/start", post(routes::supervisor::daemon_start))
         .route("/api/supervisor/daemon/stop", post(routes::supervisor::daemon_stop))
+        // Seat management — the cockpit half of `qlang keys`.
+        .route("/api/keys", get(routes::keys::list_keys))
+        .route("/api/keys/issue", post(routes::keys::issue_key))
+        .route("/api/keys/revoke", post(routes::keys::revoke_key))
         .layer(middleware::from_fn(auth::require_admin));
 
     // Rate limit before auth: an unauthenticated flood must be stopped before
@@ -1607,5 +1616,87 @@ mod knowledge_route_tests {
         )
         .await;
         assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
+    }
+
+    /// Seat management is an admin-only surface, and issued seats are
+    /// persisted to the same file the CLI edits.
+    #[tokio::test]
+    async fn seat_management_is_admin_only_and_persists() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let keys_path = dir.path().join("api_keys.json");
+        std::fs::write(
+            &keys_path,
+            r#"{"keys":[
+                {"label":"admin","secret":"admin-secret","role":"admin","revoked":false},
+                {"label":"member","secret":"member-secret","role":"member","revoked":false}
+            ]}"#,
+        )
+        .unwrap();
+
+        let (router, _state) = crate::build_app(QoConfig {
+            data_dir: dir.path().join("data"),
+            workspace_root: dir.path().join("ws"),
+            api_keys_path: keys_path.clone(),
+            ..Default::default()
+        })
+        .await
+        .expect("build app");
+
+        let call = |method: &str, path: &str, token: &str, body: &str| {
+            let mut builder = Request::builder()
+                .method(method)
+                .uri(path)
+                .header("authorization", format!("Bearer {token}"));
+            let request = if body.is_empty() {
+                builder.body(Body::empty()).unwrap()
+            } else {
+                builder
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap()
+            };
+            router.clone().oneshot(request)
+        };
+
+        // A member is refused at the admin gate.
+        assert_eq!(
+            call("GET", "/api/keys", "member-secret", "").await.unwrap().status(),
+            StatusCode::FORBIDDEN
+        );
+
+        // Admin lists seats.
+        assert_eq!(
+            call("GET", "/api/keys", "admin-secret", "").await.unwrap().status(),
+            StatusCode::OK
+        );
+
+        // Admin issues a viewer seat; the secret comes back once and the store
+        // is persisted to the file.
+        assert_eq!(
+            call("POST", "/api/keys/issue", "admin-secret", r#"{"label":"dash","role":"viewer"}"#)
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        let persisted = std::fs::read_to_string(&keys_path).unwrap();
+        assert!(persisted.contains("dash"), "issued seat must be persisted");
+
+        // Admin revokes it.
+        assert_eq!(
+            call("POST", "/api/keys/revoke", "admin-secret", r#"{"label":"dash"}"#)
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        assert!(
+            std::fs::read_to_string(&keys_path).unwrap().contains("\"revoked\": true"),
+            "revoked seat must be persisted"
+        );
     }
 }

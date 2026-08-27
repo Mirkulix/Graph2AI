@@ -25,3 +25,4 @@ pub mod llm_proxy;
 pub mod hardware;
 pub mod git;
 pub mod broadcast;
+pub mod keys;

@@ -119,6 +119,19 @@ impl ApiKeyStore {
         });
     }
 
+    /// Revoke the first active key with this label. Returns whether one was
+    /// revoked (false when the label is unknown or already revoked).
+    pub fn revoke(&mut self, label: &str) -> bool {
+        let mut hit = false;
+        for key in &mut self.keys {
+            if key.label == label && !key.revoked {
+                key.revoked = true;
+                hit = true;
+            }
+        }
+        hit
+    }
+
     /// Resolve a presented bearer token to a principal.
     ///
     /// Every non-revoked key is compared in constant time, and the loop does

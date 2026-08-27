@@ -63,16 +63,23 @@ export function KnowledgeGraphPanel() {
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [seats, setSeats] = useState<{ label: string; role: string; revoked: boolean }[]>([]);
+  const [seatLabel, setSeatLabel] = useState('');
+  const [seatRole, setSeatRole] = useState<'viewer' | 'member' | 'admin'>('member');
+  const [seatBusy, setSeatBusy] = useState(false);
+  const [seatResult, setSeatResult] = useState<string | null>(null);
+  const [seatSecret, setSeatSecret] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
-      const [nextStats, nextSnapshot, nextDivergences, nextHealth, nextBackups, nextEvents] = await Promise.all([
+      const [nextStats, nextSnapshot, nextDivergences, nextHealth, nextBackups, nextEvents, nextSeats] = await Promise.all([
         api.knowledgeStats(),
         api.knowledgeSnapshot(150),
         api.knowledgeDivergences().catch(() => ({ divergences: [] as KnowledgeDivergence[] })),
         api.knowledgeHealth().catch(() => null),
         api.knowledgeBackups().catch(() => ({ backups: [] as KnowledgeBackupEntry[] })),
         api.knowledgeEvents(15).catch(() => [] as KnowledgeEvent[]),
+        api.seats().catch(() => ({ seats: [] as { label: string; role: string; revoked: boolean }[], active_seats: 0 })),
       ]);
       setStats(nextStats);
       setSnapshot(nextSnapshot);
@@ -84,6 +91,7 @@ export function KnowledgeGraphPanel() {
           .filter((e) => e.action_type.startsWith('knowledge_') || e.action_type.startsWith('orbit_graph_'))
           .slice(0, 8),
       );
+      setSeats(nextSeats.seats ?? []);
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Knowledge graph unavailable');
@@ -233,6 +241,30 @@ export function KnowledgeGraphPanel() {
     } finally { setImporting(false); }
   }
 
+  async function issueSeat() {
+    if (!seatLabel.trim()) return;
+    setSeatBusy(true);
+    try {
+      const result = await api.seatIssue(seatLabel.trim(), seatRole);
+      setSeatResult(`issued ${result.role} seat "${result.label}"`);
+      setSeatSecret(result.secret);
+      setSeatLabel('');
+      await refresh();
+    } catch (cause) { setSeatResult(cause instanceof Error ? cause.message : 'Issue failed'); }
+    finally { setSeatBusy(false); }
+  }
+
+  async function revokeSeat(label: string) {
+    setSeatBusy(true);
+    try {
+      const result = await api.seatRevoke(label);
+      setSeatResult(`revoked "${result.revoked}" (${result.active_seats} active seats left)`);
+      setSeatSecret(null);
+      await refresh();
+    } catch (cause) { setSeatResult(cause instanceof Error ? cause.message : 'Revoke failed'); }
+    finally { setSeatBusy(false); }
+  }
+
   return (
     <section style={panel}>
       <div style={heading}>
@@ -272,6 +304,39 @@ export function KnowledgeGraphPanel() {
           health: {health.load_bearing} load-bearing · {health.proposed} proposals · {health.stale} stale · {health.refuted} refuted · {health.divergences} divergences · {health.entities} entities
         </div>
       )}
+      <div style={{ marginBottom: 10, padding: 8, border: '1px solid var(--rule-faint)', borderRadius: 3, background: 'var(--bg-raised)' }}>
+        <div style={eventsTitle}>seats · {seats.filter((s) => !s.revoked).length} active</div>
+        {seats.map((seat) => (
+          <div key={seat.label} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0', fontFamily: 'var(--font-mono)', fontSize: 10 }}>
+            <span style={{ color: 'var(--ink-bright)' }}>{seat.label}</span>
+            <span style={{ color: seat.role === 'admin' ? 'var(--ok)' : 'var(--accent)' }}>{seat.role}</span>
+            {seat.revoked && <span style={{ color: 'var(--danger)' }}>revoked</span>}
+            {!seat.revoked && (
+              <button onClick={() => void revokeSeat(seat.label)} disabled={seatBusy} style={indexButton}><ShieldCheck size={12} /> revoke</button>
+            )}
+          </div>
+        ))}
+        <div style={{ display: 'flex', gap: 6, marginTop: 6, alignItems: 'center' }}>
+          <input
+            value={seatLabel}
+            onChange={(e) => setSeatLabel(e.target.value)}
+            placeholder="label (person or CI)"
+            style={{ ...searchInput, background: 'var(--bg-void)', padding: '4px 6px', border: '1px solid var(--rule-default)', borderRadius: 3 }}
+          />
+          <select
+            value={seatRole}
+            onChange={(e) => setSeatRole(e.target.value as 'viewer' | 'member' | 'admin')}
+            style={{ background: 'var(--bg-void)', color: 'var(--ink-bright)', border: '1px solid var(--rule-default)', borderRadius: 3, fontFamily: 'var(--font-mono)', fontSize: 10 }}
+          >
+            <option value="viewer">viewer</option>
+            <option value="member">member</option>
+            <option value="admin">admin</option>
+          </select>
+          <button onClick={() => void issueSeat()} disabled={seatBusy} style={indexButton}><Database size={12} /> {seatBusy ? '…' : 'issue seat'}</button>
+        </div>
+        {seatResult && <div style={indexResultStyle}>{seatResult}</div>}
+        {seatSecret && <div style={{ ...receiptPre, marginTop: 6 }}>secret (shown once): {seatSecret}</div>}
+      </div>
       <div style={{ marginBottom: 10 }}>
         <button onClick={() => setProposeOpen((o) => !o)} style={indexButton}><CircleDot size={12} /> {proposeOpen ? 'hide propose' : 'propose document'}</button>
         {proposeOpen && (

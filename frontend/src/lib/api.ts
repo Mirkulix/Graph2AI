@@ -252,6 +252,20 @@ export interface KnowledgeImportResult {
   claims_skipped: string[];
 }
 
+/// One per-seat API key as the UI may see it (never the secret).
+export interface SeatInfo {
+  label: string;
+  role: 'viewer' | 'member' | 'admin';
+  revoked: boolean;
+}
+
+/// Result of issuing a seat — the secret is returned exactly once.
+export interface SeatIssueResult {
+  label: string;
+  role: string;
+  secret: string;
+}
+
 /// A merge operation the graph refused to apply, and why.
 export interface KnowledgeConflict {
   kind: 'unknown_claim' | 'duplicate_claim_id' | 'contradictory_status'
@@ -666,6 +680,13 @@ export const api = {
     get<Record<string, unknown>>('/api/knowledge/export'),
   knowledgeImport: (archive: Record<string, unknown>) =>
     post<KnowledgeImportResult>('/api/knowledge/import', archive),
+
+  // Seats — admin-only seat management (the cockpit half of `qlang keys`).
+  seats:          () => get<{ seats: SeatInfo[]; active_seats: number }>('/api/keys'),
+  seatIssue:      (label: string, role: 'viewer' | 'member' | 'admin') =>
+                     post<SeatIssueResult>('/api/keys/issue', { label, role }),
+  seatRevoke:     (label: string) =>
+                     post<{ revoked: string; active_seats: number }>('/api/keys/revoke', { label }),
 
   // Supervisor
   supervisorState: () => get<{ agents?: AgentInfo[]; tasks?: unknown[]; sessions?: unknown[] }>('/api/supervisor/state'),

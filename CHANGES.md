@@ -968,6 +968,31 @@ Ergänzung zu §52:
 
 ---
 
+## 54. Seat-Verwaltung im Cockpit (Admin) + Deadlock-Fix (neu)
+
+Die letzte große UI-Lücke: Seats waren nur per CLI verwaltbar. Jetzt komplett
+über HTTP + UI:
+
+- **Backend**: `GET /api/keys` (Liste ohne Secrets), `POST /api/keys/issue`
+  (Secret genau einmal), `POST /api/keys/revoke` — alle Admin-only. Der Store
+  ist jetzt hinter einem `RwLock` und wird bei issue/revoke **zurück auf die
+  Datei persistiert** (`api_keys_path`), sodass Seats einen Neustart überleben
+  (dieselbe Datei, die `qlang keys` editiert). `ApiKeyStore::revoke` neu.
+- **UI**: Seats-Block im Knowledge-Panel (Liste mit Rollen, issue-Formular mit
+  Label+Rolle, revoke-Buttons, Secret-Einmalanzeige).
+- **Wichtiger Deadlock-Fix**: `auth_middleware` hielt den `RwLock`-Read-Guard
+  aus einer `if let`-Bedingung über `next.run()` hinaus (Temporär-Lifetime) —
+  ein Write-Lock in `issue_key` auf demselben Runtime blockierte. Fix: Guard
+  vor `next.run` droppen. Ein seltener, realer Concurrency-Fund.
+- **Verifiziert**: 99 Server-Tests (+1 Seat-Route-Test inkl. Persistenz);
+  Wire-Beweis (issue → Viewer authentifiziert aber read-only 403 → revoke →
+  401); CI-Gate 17 Binaries grün.
+  → `qo/qo-server/src/routes/keys.rs` (neu), `auth.rs`, `api_keys.rs`,
+  `lib.rs`, `routes/mod.rs`, `src/main.rs`,
+  `frontend/src/cockpit/secondary/KnowledgeGraphPanel.tsx`, `frontend/src/lib/api.ts`
+
+---
+
 ## Lauffähige Beispiele
 
 ```bash

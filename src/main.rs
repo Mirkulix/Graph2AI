@@ -173,7 +173,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // the network, so an instance with *no* way to authenticate is confined
     // to loopback. Either a token or at least one issued API key counts as a
     // way to authenticate.
-    let has_seats = !state.api_keys.keys.is_empty();
+    let has_seats = !state.api_keys.read().await.keys.is_empty();
     let bind_host = if has_auth_token || has_seats {
         "0.0.0.0"
     } else {

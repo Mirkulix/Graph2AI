@@ -47,7 +47,7 @@ pub async fn auth_middleware(
     next: Next,
 ) -> Result<Response, StatusCode> {
     let env_token = std::env::var("QO_AUTH_TOKEN").ok().filter(|t| !t.is_empty());
-    let store_has_keys = !state.api_keys.keys.is_empty();
+    let store_has_keys = !state.api_keys.read().await.keys.is_empty();
 
     // Fully open only when there is nothing configured to check against.
     if env_token.is_none() && !store_has_keys {
@@ -67,8 +67,15 @@ pub async fn auth_middleware(
         }
     }
 
-    // Then the per-seat store.
-    if let Some(principal) = state.api_keys.authenticate(&token) {
+    // Then the per-seat store. The read guard must drop BEFORE `next.run`:
+    // a guard bound inside an `if let` condition lives until the end of the
+    // block, which would deadlock a handler that takes the write lock
+    // (e.g. seat issue) against the same runtime.
+    let principal = {
+        let store = state.api_keys.read().await;
+        store.authenticate(&token)
+    };
+    if let Some(principal) = principal {
         request.extensions_mut().insert(principal);
         return Ok(next.run(request).await);
     }
