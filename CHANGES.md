@@ -929,6 +929,29 @@ aktuelle, ehrliche Antwort:
 
 ---
 
+## 52. Cockpit aufgerüstet — Backup/Restore, Propose, Health, Events im Panel (neu)
+
+Die Operator-Aktionen, die bisher nur in API/CLI existierten, sind jetzt im
+Knowledge-Panel:
+
+- **Backup + Restore-Buttons** im Header (inkl. Backup-Liste; Restore additiv
+  über `/api/knowledge/restore`).
+- **„propose document"-Textfeld**: OrbitQLang-Dokument einfügen →
+  `POST /api/knowledge/propose` durch die Admission-Gate, mit Zeilen-Fehlern
+  bei Ablehnung.
+- **Health-Zeile** (load-bearing/proposals/stale/refuted/divergences/entities,
+  aus `/api/knowledge/health`).
+- **Knowledge-Events-Feed** (letzte `knowledge_*`/`orbit_graph_*`-Aktionen aus
+  `/api/history`), aktualisiert im 4s-Zyklus.
+- **`api.ts`**: neue Typen + Methoden (`knowledgeHealth`, `knowledgeBackup(s)`,
+  `knowledgeRestore`, `knowledgePropose`, `knowledgeEvents`).
+- **Verifiziert**: `tsc --noEmit` grün, `vite build` grün (neues Bundle wird
+  vom laufenden Server ausgeliefert), alle neuen Endpunkte am laufenden Server
+  200, Propose via UI-Codepfad applied=2.
+  → `frontend/src/cockpit/secondary/KnowledgeGraphPanel.tsx`, `frontend/src/lib/api.ts`
+
+---
+
 ## Lauffähige Beispiele
 
 ```bash

@@ -202,6 +202,49 @@ export interface KnowledgeDivergences {
   divergences: KnowledgeDivergence[];
 }
 
+/// The operator's one-block health summary of the graph.
+export interface KnowledgeHealth {
+  load_bearing: number;
+  verified: number;
+  observed: number;
+  proposed: number;
+  stale: number;
+  refuted: number;
+  divergences: number;
+  entities: number;
+}
+
+/// One timestamped backup snapshot on the server.
+export interface KnowledgeBackupEntry {
+  path: string;
+  exported_at: number;
+}
+
+/// Result of a propose — an admission-gated proposal submission.
+export interface KnowledgeProposeResult {
+  delta_id: string;
+  applied: number;
+  already_applied: number;
+  conflicts: unknown[];
+}
+
+/// Result of a restore — recovery from a backup.
+export interface KnowledgeRestoreResult {
+  restored_from: string;
+  entities_added: number;
+  claims_added: number;
+  claims_skipped: string[];
+}
+
+/// One entry of the append-only action log.
+export interface KnowledgeEvent {
+  id: number;
+  timestamp: number;
+  action_type: string;
+  description: string;
+  details: string;
+}
+
 /// A merge operation the graph refused to apply, and why.
 export interface KnowledgeConflict {
   kind: 'unknown_claim' | 'duplicate_claim_id' | 'contradictory_status'
@@ -600,6 +643,18 @@ export const api = {
     post<KnowledgeHealResult>('/api/knowledge/heal-stale', { by }),
   knowledgeDivergences: () =>
     get<KnowledgeDivergences>('/api/knowledge/divergences'),
+  knowledgeHealth: () =>
+    get<KnowledgeHealth>('/api/knowledge/health'),
+  knowledgeBackup: () =>
+    post<{ path: string }>('/api/knowledge/backup'),
+  knowledgeBackups: () =>
+    get<{ backups: KnowledgeBackupEntry[] }>('/api/knowledge/backups'),
+  knowledgeRestore: (exportedAt?: number) =>
+    post<KnowledgeRestoreResult>('/api/knowledge/restore', exportedAt ? { exported_at: exportedAt } : {}),
+  knowledgePropose: (document: string) =>
+    post<KnowledgeProposeResult>('/api/knowledge/propose', { document }),
+  knowledgeEvents: (limit: number = 20) =>
+    get<KnowledgeEvent[]>(`/api/history?limit=${Math.max(1, Math.min(100, limit))}`),
 
   // Supervisor
   supervisorState: () => get<{ agents?: AgentInfo[]; tasks?: unknown[]; sessions?: unknown[] }>('/api/supervisor/state'),

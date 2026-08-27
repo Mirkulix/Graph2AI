@@ -2,9 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CircleDot, Database, FileCheck2, Receipt, RefreshCw, Search, ShieldCheck } from 'lucide-react';
 import {
   api,
+  type KnowledgeBackupEntry,
   type KnowledgeClaim,
   type KnowledgeDivergence,
   type KnowledgeEntity,
+  type KnowledgeEvent,
+  type KnowledgeHealth,
   type KnowledgeReceipt,
   type KnowledgeSnapshot,
   type KnowledgeStats,
@@ -44,17 +47,38 @@ export function KnowledgeGraphPanel() {
   const [healResult, setHealResult] = useState<string | null>(null);
   const [divergences, setDivergences] = useState<KnowledgeDivergence[]>([]);
   const [divergencesOpen, setDivergencesOpen] = useState(false);
+  const [health, setHealth] = useState<KnowledgeHealth | null>(null);
+  const [backups, setBackups] = useState<KnowledgeBackupEntry[]>([]);
+  const [events, setEvents] = useState<KnowledgeEvent[]>([]);
+  const [backingUp, setBackingUp] = useState(false);
+  const [backupResult, setBackupResult] = useState<string | null>(null);
+  const [restoring, setRestoring] = useState(false);
+  const [restoreResult, setRestoreResult] = useState<string | null>(null);
+  const [proposeOpen, setProposeOpen] = useState(false);
+  const [proposeDoc, setProposeDoc] = useState('');
+  const [proposing, setProposing] = useState(false);
+  const [proposeResult, setProposeResult] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
-      const [nextStats, nextSnapshot, nextDivergences] = await Promise.all([
+      const [nextStats, nextSnapshot, nextDivergences, nextHealth, nextBackups, nextEvents] = await Promise.all([
         api.knowledgeStats(),
         api.knowledgeSnapshot(150),
         api.knowledgeDivergences().catch(() => ({ divergences: [] as KnowledgeDivergence[] })),
+        api.knowledgeHealth().catch(() => null),
+        api.knowledgeBackups().catch(() => ({ backups: [] as KnowledgeBackupEntry[] })),
+        api.knowledgeEvents(15).catch(() => [] as KnowledgeEvent[]),
       ]);
       setStats(nextStats);
       setSnapshot(nextSnapshot);
       setDivergences(nextDivergences.divergences ?? []);
+      setHealth(nextHealth);
+      setBackups(nextBackups.backups ?? []);
+      setEvents(
+        (nextEvents ?? [])
+          .filter((e) => e.action_type.startsWith('knowledge_') || e.action_type.startsWith('orbit_graph_'))
+          .slice(0, 8),
+      );
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Knowledge graph unavailable');
@@ -135,6 +159,43 @@ export function KnowledgeGraphPanel() {
     finally { setHealing(false); }
   }
 
+  async function backupNow() {
+    setBackingUp(true);
+    try {
+      const result = await api.knowledgeBackup();
+      setBackupResult(`written: ${result.path.split(/[\\/]/).pop()}`);
+      await refresh();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Backup failed'); }
+    finally { setBackingUp(false); }
+  }
+
+  async function restoreLatest() {
+    if (backups.length === 0) { setRestoreResult('no backups on the server yet'); return; }
+    setRestoring(true);
+    try {
+      const result = await api.knowledgeRestore();
+      setRestoreResult(
+        `restored ${result.claims_added} claim(s) from ${result.restored_from.split(/[\\/]/).pop()} · ${result.claims_skipped.length} skipped (additive)`,
+      );
+      await refresh();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Restore failed'); }
+    finally { setRestoring(false); }
+  }
+
+  async function proposeDocument() {
+    if (!proposeDoc.trim()) return;
+    setProposing(true);
+    try {
+      const result = await api.knowledgePropose(proposeDoc);
+      setProposeResult(`accepted: ${result.applied} operation(s) from ${result.delta_id} (all claims proposed)`);
+      setProposeDoc('');
+      await refresh();
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : 'Propose failed';
+      setProposeResult(`rejected: ${message.length > 320 ? `${message.slice(0, 319)}…` : message}`);
+    } finally { setProposing(false); }
+  }
+
   return (
     <section style={panel}>
       <div style={heading}>
@@ -147,6 +208,8 @@ export function KnowledgeGraphPanel() {
           <button onClick={() => void refreshSources()} disabled={refreshing} style={indexButton}><RefreshCw size={12} /> {refreshing ? 'refreshing…' : 'refresh sources'}</button>
           <button onClick={() => void healStale()} disabled={healing} style={indexButton}><ShieldCheck size={12} /> {healing ? 'healing…' : 'heal stale'}</button>
           <button onClick={() => void indexWorkspace()} disabled={indexing} style={indexButton}><RefreshCw size={12} /> {indexing ? 'scanning…' : 'scan workspace'}</button>
+          <button onClick={() => void backupNow()} disabled={backingUp} style={indexButton}><Database size={12} /> {backingUp ? 'backing up…' : 'backup'}</button>
+          <button onClick={() => void restoreLatest()} disabled={restoring} style={indexButton}><FileCheck2 size={12} /> {restoring ? 'restoring…' : 'restore'}</button>
           <div style={loadBearing}><FileCheck2 size={14} /> {stats.load_bearing} reliable</div>
         </div>
       </div>
@@ -154,6 +217,31 @@ export function KnowledgeGraphPanel() {
       {sweepResult && <div style={indexResultStyle}>sweep: {sweepResult}</div>}
       {refreshResult && <div style={indexResultStyle}>source refresh: {refreshResult}</div>}
       {healResult && <div style={indexResultStyle}>heal: {healResult}</div>}
+      {backupResult && <div style={indexResultStyle}>backup: {backupResult}</div>}
+      {restoreResult && <div style={indexResultStyle}>restore: {restoreResult}</div>}
+      {health && (
+        <div style={healthLine}>
+          health: {health.load_bearing} load-bearing · {health.proposed} proposals · {health.stale} stale · {health.refuted} refuted · {health.divergences} divergences · {health.entities} entities
+        </div>
+      )}
+      <div style={{ marginBottom: 10 }}>
+        <button onClick={() => setProposeOpen((o) => !o)} style={indexButton}><CircleDot size={12} /> {proposeOpen ? 'hide propose' : 'propose document'}</button>
+        {proposeOpen && (
+          <div style={{ marginTop: 8 }}>
+            <textarea
+              value={proposeDoc}
+              onChange={(e) => setProposeDoc(e.target.value)}
+              placeholder={'DELTA|1|d-1\nBY|worker-3|1700000000\n+E|file|src/auth.rs\n+C|c1|file:src/auth.rs|auth uses bcrypt'}
+              spellCheck={false}
+              style={proposeTextarea}
+            />
+            <div style={actionRow}>
+              <button onClick={() => void proposeDocument()} disabled={proposing} style={actionButton}><CircleDot size={12} /> {proposing ? 'submitting…' : 'submit proposal'}</button>
+            </div>
+            {proposeResult && <div style={indexResultStyle}>{proposeResult}</div>}
+          </div>
+        )}
+      </div>
       {divergences.length > 0 && (
         <div style={divergenceBox}>
           <button onClick={() => setDivergencesOpen((o) => !o)} style={divergenceHeader}>
@@ -207,6 +295,18 @@ export function KnowledgeGraphPanel() {
             <GraphMap entities={graphEntities} claims={visibleClaims} selectedId={selected} onSelect={setSelected} />
             <ClaimInspector key={selectedClaim?.id ?? 'none'} claim={selectedClaim} claims={visibleClaims} onSelect={setSelected} onChanged={refresh} />
           </div>
+          {events.length > 0 && (
+            <div style={eventsFeed}>
+              <div style={eventsTitle}>knowledge events (recent)</div>
+              {events.map((event) => (
+                <div key={event.id} style={eventsRow}>
+                  <span style={{ color: 'var(--ink-faint)' }}>{new Date(event.timestamp * 1000).toLocaleTimeString()}</span>
+                  <span style={{ color: 'var(--accent)' }}>{event.action_type.replace('knowledge_', '')}</span>
+                  <span style={{ color: 'var(--ink-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{event.description}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </>
       )}
     </section>
@@ -419,3 +519,8 @@ const divergenceBox: React.CSSProperties = { marginBottom: 12, border: '1px soli
 const divergenceHeader: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', padding: '7px 10px', background: 'transparent', border: 0, cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 10 };
 const divergenceRow: React.CSSProperties = { padding: '6px 10px', borderTop: '1px solid var(--rule-faint)' };
 const divergenceMeta: React.CSSProperties = { marginTop: 3, fontFamily: 'var(--font-mono)', fontSize: 9, overflowWrap: 'anywhere', lineHeight: 1.4 };
+const healthLine: React.CSSProperties = { marginBottom: 10, padding: '7px 9px', color: 'var(--ok)', border: '1px solid var(--ok)', borderRadius: 3, fontFamily: 'var(--font-mono)', fontSize: 10 };
+const proposeTextarea: React.CSSProperties = { width: '100%', minHeight: 96, padding: 8, background: 'var(--bg-void)', color: 'var(--ink-bright)', border: '1px solid var(--rule-default)', borderRadius: 3, fontFamily: 'var(--font-mono)', fontSize: 10, lineHeight: 1.5, outline: 0 };
+const eventsFeed: React.CSSProperties = { marginTop: 12, padding: 8, border: '1px solid var(--rule-faint)', borderRadius: 3, background: 'var(--bg-raised)' };
+const eventsTitle: React.CSSProperties = { fontFamily: 'var(--font-mono)', fontSize: 9, textTransform: 'uppercase', color: 'var(--ink-faint)', marginBottom: 5 };
+const eventsRow: React.CSSProperties = { display: 'flex', gap: 8, alignItems: 'baseline', padding: '2px 0', fontFamily: 'var(--font-mono)', fontSize: 9, minWidth: 0 };
