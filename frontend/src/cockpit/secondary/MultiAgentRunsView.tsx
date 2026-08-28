@@ -378,6 +378,16 @@ export default function MultiAgentRunsView() {
   );
 }
 
+/// Green only when a different vendor actually reviewed the work; a
+/// self-review is shown as a warning, never as a quiet success.
+const councilStyle = (crossVendor: boolean): React.CSSProperties => ({
+  padding: '10px 12px',
+  borderRadius: 6,
+  border: `1px solid ${crossVendor ? 'var(--verified)' : 'var(--warn)'}`,
+  background: crossVendor ? 'rgba(22,163,74,0.06)' : 'rgba(217,119,6,0.07)',
+  color: crossVendor ? 'var(--verified)' : 'var(--warn)',
+});
+
 function RunInspector({ run }: { run: StoredMultiAgentRun }) {
   const latestWorker = run.worker_rounds[run.worker_rounds.length - 1];
   const latestReviewer = run.reviewer_rounds[run.reviewer_rounds.length - 1];
@@ -402,6 +412,20 @@ function RunInspector({ run }: { run: StoredMultiAgentRun }) {
         <MiniStat label="detected files" value={String(countArtifacts(run))} />
         <MiniStat label="written files" value={String(countWrittenArtifacts(run))} />
       </div>
+
+      {run.council && (
+        <div style={councilStyle(run.council.cross_vendor)}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <ShieldCheck size={14} strokeWidth={1.7} />
+            <strong style={{ fontSize: 12 }}>
+              {run.council.cross_vendor ? 'unabhaengiges Review' : 'KEIN unabhaengiges Review'}
+            </strong>
+            <span style={roundMetaChipStyle}>worker: {run.council.worker_tier}</span>
+            <span style={roundMetaChipStyle}>reviewer: {run.council.reviewer_tier}</span>
+          </div>
+          <p style={{ margin: '6px 0 0', fontSize: 11, lineHeight: 1.5 }}>{run.council.note}</p>
+        </div>
+      )}
 
       {run.plan ? (
         <InspectorSection title="plan">

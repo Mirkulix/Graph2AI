@@ -481,6 +481,15 @@ export interface MultiAgentRunStartedResponse {
   run_id: number;
 }
 
+/// Which vendor reviewed whom. `cross_vendor: false` means the same model
+/// checked its own work — the UI must never present that as independent.
+export interface CouncilRouting {
+  worker_tier: string;
+  reviewer_tier: string;
+  cross_vendor: boolean;
+  note: string;
+}
+
 export interface StoredMultiAgentRun {
   run_id: number;
   started_at: number;
@@ -494,6 +503,7 @@ export interface StoredMultiAgentRun {
   planner?: MultiAgentAgentOutput | null;
   worker_rounds: MultiAgentWorkerRound[];
   reviewer_rounds: MultiAgentReviewerRound[];
+  council?: CouncilRouting | null;
   deliverable?: string | null;
   final_answer?: string | null;
   error?: string | null;
@@ -729,7 +739,7 @@ export const api = {
   values:          () => get<Record<string, number>>('/api/values'),
   valuesPost:      (patch: Record<string, number>) => post<Record<string, number>>('/api/values', patch),
 
-  // Attached coding systems (Claude Code, Codex, Gemini, deepseek-harnessâ€¦).
+  // Attached coding systems (Claude Code, Codex, Gemini, deepseek-harness…).
   // Read-only: the registry is fed by MCP traffic, never by the client.
   harnesses:       () => get<HarnessOverview>('/api/harness'),
 

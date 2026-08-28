@@ -1055,6 +1055,38 @@ in der TopBar ist nur der Server selbst). Jetzt:
 
 ---
 
+## 59. KI-Konzil mit echtem Mehrwert — anbieterübergreifendes Review (neu)
+
+Vorher war der Multi-Agent-Lauf ein **Selbstgespräch**: Planner, Worker und
+Reviewer riefen alle `call_deepseek_agent`, und die Funktion **erzwang** sogar
+DeepSeek (`if tier != Tier::DeepSeek → Err`). DeepSeek prüfte also seine eigene
+Arbeit — ein Review, das genau die Blindstellen teilt, die es finden soll.
+
+Umgebaut zu einem echten Konzil:
+
+- **`pick_reviewer_tier`**: Der Reviewer wird bewusst auf einen **anderen**
+  verfügbaren Anbieter geroutet (Präferenz Cloud → DeepSeek → Groq → Local),
+  niemals auf den des Workers.
+- **Reviewer-Prompt**: sagt dem Modell explizit, dass es von einem anderen
+  Anbieter stammt und gezielt nach unbelegten Annahmen, übersehenen
+  Randfällen und erfundenen Fakten suchen soll.
+- **`CouncilRouting`** im Run-Record (`worker_tier`, `reviewer_tier`,
+  `cross_vendor`, `note`): Ein Selbst-Review wird **ehrlich als solches
+  ausgewiesen** statt als unabhängige Prüfung zu erscheinen.
+- **Keine DeepSeek-Pflicht mehr**: `validate_request` akzeptiert jeden
+  konfigurierten Anbieter — Claude-/Gemini-/rein-lokale Deployments waren
+  vorher hart blockiert.
+- **UI**: Banner im Run-Inspector — grün „unabhaengiges Review" nur bei
+  echtem Anbieterwechsel, sonst gelb „KEIN unabhaengiges Review".
+- **Verifiziert**: 4 neue Routing-Tests (anderer Anbieter erzwungen;
+  Ein-Anbieter-Fallback wird nicht als unabhängig markiert; Deployment ohne
+  DeepSeek läuft; Präferenz Lineage vor Endpoint), CI-Gate 17 Binaries grün,
+  tsc + vite grün.
+  → `qo/qo-server/src/routes/multi_agent.rs`,
+  `frontend/src/cockpit/secondary/MultiAgentRunsView.tsx`, `frontend/src/lib/api.ts`
+
+---
+
 ## Lauffähige Beispiele
 
 ```bash

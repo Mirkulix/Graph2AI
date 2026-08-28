@@ -20,20 +20,53 @@ use crate::routes::workspace::write_artifact_to_disk;
 use crate::AppState;
 
 const PLANNER_SYSTEM_PROMPT: &str = "\
-Du bist Planner in einem DeepSeek-basierten Multi-Agent-System. \
+Du bist Planner in einem Multi-Agent-System. \
 Du strukturierst Ziele fuer einen Worker und einen Reviewer. \
 Antworte immer auf Deutsch und liefere nur valides JSON.";
 
 const WORKER_SYSTEM_PROMPT: &str = "\
-Du bist Worker in einem DeepSeek-basierten Multi-Agent-System. \
+Du bist Worker in einem Multi-Agent-System. \
 Setze den Plan konkret um. Antworte auf Deutsch. \
 Wenn du Dateien erzeugst, gib sie als <qo:file path=\"workspace/...\">...</qo:file> aus.";
 
+/// The reviewer is told it comes from a different vendor on purpose: the
+/// instruction to hunt for what the author could not see is what turns a
+/// second opinion into an actual check rather than a paraphrase.
 const REVIEWER_SYSTEM_PROMPT: &str = "\
-Du bist Reviewer in einem DeepSeek-basierten Multi-Agent-System. \
+Du bist Reviewer in einem Multi-Agent-System und stammst bewusst von einem \
+ANDEREN Anbieter/Modell als der Worker. Deine Aufgabe ist es, genau die Fehler \
+zu finden, die der Autor selbst nicht sehen kann: unbelegte Annahmen, \
+uebersehene Randfaelle, erfundene Fakten, nicht erfuellte Abnahmekriterien. \
+Bestaetige nichts, was du nicht am gelieferten Material pruefen kannst. \
 Pruefe hart gegen Ziel und Abnahmekriterien. Antworte auf Deutsch und liefere nur valides JSON.";
 
-const MULTI_AGENT_MODE: &str = "deepseek_first_planner_worker_reviewer";
+const MULTI_AGENT_MODE: &str = "cross_vendor_planner_worker_reviewer";
+
+/// Tiers the reviewer prefers, in order, when looking for a vendor that is
+/// **not** the one that produced the work.
+///
+/// This is the whole point of the council: a model reviewing its own output
+/// shares its blind spots, so a same-vendor review mostly confirms what the
+/// worker already believed. Ordering favours a genuinely different training
+/// lineage (Cloud = OpenAI/Anthropic/Gemini slot) over merely a different
+/// endpoint, and keeps a cheap local model as the last resort.
+const REVIEWER_TIER_PREFERENCE: [Tier; 4] =
+    [Tier::Cloud, Tier::DeepSeek, Tier::Groq, Tier::Local];
+
+/// How a role was routed, including whether the reviewer really ran on a
+/// different vendor than the worker. Reported verbatim so the cockpit can
+/// never imply an independent review that did not happen.
+#[derive(Debug, Clone, Serialize)]
+pub struct CouncilRouting {
+    /// Tier that served the worker.
+    pub worker_tier: String,
+    /// Tier that served the reviewer.
+    pub reviewer_tier: String,
+    /// True only when reviewer and worker ran on different tiers.
+    pub cross_vendor: bool,
+    /// Human-readable reason, e.g. why a cross-vendor review was impossible.
+    pub note: String,
+}
 
 const MULTI_AGENT_RUN_HISTORY_CAP: usize = 100;
 
@@ -110,6 +143,9 @@ pub struct MultiAgentRunResponse {
     pub planner: AgentOutput,
     pub worker_rounds: Vec<WorkerRound>,
     pub reviewer_rounds: Vec<ReviewerRound>,
+    /// Who actually reviewed whom. Absent on runs recorded before the
+    /// cross-vendor council existed.
+    pub council: Option<CouncilRouting>,
     pub deliverable: String,
     pub final_answer: String,
 }
@@ -128,6 +164,8 @@ pub struct StoredMultiAgentRun {
     pub planner: Option<AgentOutput>,
     pub worker_rounds: Vec<WorkerRound>,
     pub reviewer_rounds: Vec<ReviewerRound>,
+    /// Who actually reviewed whom. `None` until the reviewer tier is picked.
+    pub council: Option<CouncilRouting>,
     pub deliverable: Option<String>,
     pub final_answer: Option<String>,
     pub error: Option<String>,
@@ -222,6 +260,7 @@ pub async fn start_run(
         status: "queued".to_string(),
         phase: "queued".to_string(),
         request: req.clone(),
+        council: None,
         plan: None,
         planner: None,
         worker_rounds: Vec::new(),
@@ -268,13 +307,17 @@ async fn validate_request(
     if req.goal.trim().is_empty() {
         return Err((StatusCode::BAD_REQUEST, "goal must be non-empty".to_string()));
     }
-    if !state.llm.tier_available(Tier::DeepSeek).await {
-        return Err((
-            StatusCode::PRECONDITION_FAILED,
-            "DeepSeek provider is not configured".to_string(),
-        ));
+    // Any configured vendor can drive the council; requiring DeepSeek in
+    // particular would lock out Claude/Gemini/local-only deployments.
+    for tier in REVIEWER_TIER_PREFERENCE {
+        if state.llm.tier_available(tier).await {
+            return Ok(());
+        }
     }
-    Ok(())
+    Err((
+        StatusCode::PRECONDITION_FAILED,
+        "no LLM provider is configured; add one under Providers".to_string(),
+    ))
 }
 
 async fn execute_multi_agent_core(
@@ -299,8 +342,29 @@ async fn execute_multi_agent_core(
         .await;
     }
 
+    // The worker's vendor drives planning too (they must share an idiom); the
+    // reviewer is deliberately routed elsewhere further down.
+    let worker_tier = primary_tier(state).await;
+    let (reviewer_tier, council_note) = pick_reviewer_tier(state, worker_tier).await;
+    let council = CouncilRouting {
+        worker_tier: tier_label(worker_tier).to_string(),
+        reviewer_tier: tier_label(reviewer_tier).to_string(),
+        cross_vendor: reviewer_tier != worker_tier,
+        note: council_note,
+    };
+
+    if live {
+        let council_for_run = council.clone();
+        update_run(state, run_id, "council", move |run| {
+            run.council = Some(council_for_run);
+        })
+        .await;
+    }
+
     let planner_prompt = build_planner_prompt(&goal);
-    let planner = call_deepseek_agent(state, "planner", PLANNER_SYSTEM_PROMPT, &planner_prompt).await?;
+    let planner =
+        call_agent_on_tier(state, "planner", worker_tier, PLANNER_SYSTEM_PROMPT, &planner_prompt)
+            .await?;
     let plan = parse_plan(&goal, &planner.output);
 
     if live {
@@ -326,7 +390,9 @@ async fn execute_multi_agent_core(
         }
 
         let worker_prompt = build_worker_prompt(&goal, &plan, reviewer_feedback.as_deref(), attempt);
-        let worker = call_deepseek_agent(state, "worker", WORKER_SYSTEM_PROMPT, &worker_prompt).await?;
+        let worker =
+            call_agent_on_tier(state, "worker", worker_tier, WORKER_SYSTEM_PROMPT, &worker_prompt)
+                .await?;
         let artifacts = extract_artifacts(&worker.output);
         let artifact_writes = maybe_write_artifacts(&artifacts, req.write_artifacts);
         final_deliverable = worker.output.clone();
@@ -358,8 +424,14 @@ async fn execute_multi_agent_core(
         }
 
         let reviewer_prompt = build_reviewer_prompt(&goal, &plan, &worker.output);
-        let reviewer =
-            call_deepseek_agent(state, "reviewer", REVIEWER_SYSTEM_PROMPT, &reviewer_prompt).await?;
+        let reviewer = call_agent_on_tier(
+            state,
+            "reviewer",
+            reviewer_tier,
+            REVIEWER_SYSTEM_PROMPT,
+            &reviewer_prompt,
+        )
+        .await?;
         let review = parse_review(&worker.output, &reviewer.output);
         final_answer = review.final_answer.clone();
         reviewer_feedback = Some(review.feedback.clone());
@@ -411,6 +483,7 @@ async fn execute_multi_agent_core(
         mode: MULTI_AGENT_MODE.to_string(),
         goal,
         status: final_status.clone(),
+        council: Some(council.clone()),
         plan,
         planner,
         worker_rounds,
@@ -491,9 +564,63 @@ fn build_reviewer_prompt(goal: &str, plan: &MultiAgentPlan, worker_output: &str)
     )
 }
 
-async fn call_deepseek_agent(
+/// The tier that drives planning and the actual work: the first configured
+/// vendor in preference order. Deployments without DeepSeek simply use
+/// whatever they do have.
+async fn primary_tier(state: &Arc<AppState>) -> Tier {
+    for candidate in [Tier::DeepSeek, Tier::Cloud, Tier::Groq, Tier::Local] {
+        if state.llm.tier_available(candidate).await {
+            return candidate;
+        }
+    }
+    Tier::DeepSeek
+}
+
+/// Pick the reviewer's tier: the first *available* tier that differs from the
+/// one that produced the work.
+///
+/// Returns the chosen tier plus an honest note. When no second vendor is
+/// configured the worker's own tier is returned and the note says so — the
+/// run then still completes, but it is never labelled a cross-vendor review.
+async fn pick_reviewer_tier(state: &Arc<AppState>, worker_tier: Tier) -> (Tier, String) {
+    pick_reviewer_tier_on(&state.llm, worker_tier).await
+}
+
+/// The routing decision itself, independent of `AppState` so it can be tested
+/// against a router configured with an exact set of vendors.
+async fn pick_reviewer_tier_on(router: &qo_llm::LlmRouter, worker_tier: Tier) -> (Tier, String) {
+    for candidate in REVIEWER_TIER_PREFERENCE {
+        if candidate == worker_tier {
+            continue;
+        }
+        if router.tier_available(candidate).await {
+            return (
+                candidate,
+                format!(
+                    "independent review: {} reviewed work produced by {}",
+                    tier_label(candidate),
+                    tier_label(worker_tier)
+                ),
+            );
+        }
+    }
+    (
+        worker_tier,
+        format!(
+            "no second provider configured; {} reviewed its own output (blind spots are shared)",
+            tier_label(worker_tier)
+        ),
+    )
+}
+
+/// Run one role on a requested tier. Unlike the previous DeepSeek-only path
+/// this never fails when another vendor serves the call — it reports the tier
+/// that actually answered, because the council's value depends on knowing who
+/// really spoke.
+async fn call_agent_on_tier(
     state: &Arc<AppState>,
     agent: &str,
+    preferred: Tier,
     system_prompt: &str,
     user_prompt: &str,
 ) -> Result<AgentOutput, String> {
@@ -503,19 +630,15 @@ async fn call_deepseek_agent(
         "reviewer" => "researcher",
         other => other,
     };
-    let (tier, model_override) = model_for_agent(routed_agent);
-    if tier != Tier::DeepSeek {
-        return Err(format!(
-            "{agent} is mapped to {:?} instead of DeepSeek; fix agent_models routing",
-            tier
-        ));
-    }
+    let (_default_tier, model_override) = model_for_agent(routed_agent);
 
     let (output, tier) = state
         .llm
         .chat_with_model(
-            Some(tier),
-            model_override,
+            Some(preferred),
+            // A model pinned for one vendor is meaningless on another, so the
+            // override only applies when the requested tier is served.
+            if preferred == _default_tier { model_override } else { None },
             vec![
                 ("system".to_string(), system_prompt.to_string()),
                 ("user".to_string(), user_prompt.to_string()),
@@ -523,13 +646,6 @@ async fn call_deepseek_agent(
         )
         .await
         .map_err(|e| format!("{agent} call failed: {e}"))?;
-
-    if tier != Tier::DeepSeek {
-        return Err(format!(
-            "{agent} unexpectedly ran on {:?} instead of DeepSeek",
-            tier
-        ));
-    }
 
     Ok(AgentOutput {
         agent: agent.to_string(),
@@ -840,6 +956,7 @@ fn record_from_response(
         mode: response.mode.clone(),
         status: response.status.clone(),
         phase: "complete".to_string(),
+        council: response.council.clone(),
         plan: Some(response.plan.clone()),
         planner: Some(response.planner.clone()),
         worker_rounds: response.worker_rounds.clone(),
@@ -881,6 +998,88 @@ fn summarize_run(run: &StoredMultiAgentRun) -> MultiAgentRunSummary {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    /// Build a router with exactly the tiers a deployment has configured.
+    fn router_with(groq: bool, cloud: bool, ollama: bool) -> qo_llm::LlmRouter {
+        qo_llm::LlmRouter::new(
+            groq.then(|| "groq-key".to_string()),
+            cloud.then(|| {
+                (
+                    "cloud-key".to_string(),
+                    "https://example.invalid/v1".to_string(),
+                    "test-model".to_string(),
+                )
+            }),
+            ollama.then(|| ("http://127.0.0.1:11434".to_string(), "local".to_string())),
+        )
+    }
+
+    /// The council's core promise: when a second vendor exists, the reviewer
+    /// runs on it — not on the model that produced the work.
+    #[tokio::test]
+    async fn reviewer_is_routed_to_a_different_vendor_than_the_worker() {
+        let router = router_with(true, true, false);
+
+        // Worker on Cloud -> reviewer must land somewhere else (Groq here).
+        let (reviewer, note) = pick_reviewer_tier_on(&router, Tier::Cloud).await;
+        assert_ne!(reviewer, Tier::Cloud, "reviewer must not share the worker's tier");
+        assert_eq!(reviewer, Tier::Groq);
+        assert!(note.contains("independent review"), "note was: {note}");
+
+        // And symmetrically when the worker runs on Groq.
+        let (reviewer, _) = pick_reviewer_tier_on(&router, Tier::Groq).await;
+        assert_eq!(reviewer, Tier::Cloud);
+    }
+
+    /// With only one vendor configured a cross-vendor review is impossible.
+    /// The run must still work, but must never *claim* independence.
+    #[tokio::test]
+    async fn single_vendor_review_is_reported_as_not_independent() {
+        let router = router_with(false, true, false);
+
+        let (reviewer, note) = pick_reviewer_tier_on(&router, Tier::Cloud).await;
+        assert_eq!(reviewer, Tier::Cloud, "nothing else is configured");
+        assert!(
+            note.contains("reviewed its own output"),
+            "the note must admit the shared blind spots, was: {note}"
+        );
+
+        let council = CouncilRouting {
+            worker_tier: tier_label(Tier::Cloud).to_string(),
+            reviewer_tier: tier_label(reviewer).to_string(),
+            cross_vendor: reviewer != Tier::Cloud,
+            note,
+        };
+        assert!(!council.cross_vendor, "self-review must not be flagged cross-vendor");
+    }
+
+    /// A deployment without DeepSeek still gets a working council — the old
+    /// code hard-failed unless DeepSeek was configured.
+    #[tokio::test]
+    async fn a_deployment_without_deepseek_still_has_a_primary_vendor() {
+        let router = router_with(true, false, false);
+        assert!(router.tier_available(Tier::Groq).await);
+        assert!(!router.tier_available(Tier::DeepSeek).await);
+
+        let (reviewer, _) = pick_reviewer_tier_on(&router, Tier::Groq).await;
+        assert_eq!(reviewer, Tier::Groq, "only one vendor, so self-review");
+    }
+
+    /// Three vendors: the reviewer must prefer a genuinely different lineage
+    /// (Cloud) over merely a different endpoint, and never pick the worker's.
+    #[tokio::test]
+    async fn reviewer_prefers_a_different_lineage_over_a_different_endpoint() {
+        let router = router_with(true, true, true);
+
+        // Worker on the local model: Cloud outranks Groq and Local.
+        let (reviewer, _) = pick_reviewer_tier_on(&router, Tier::Local).await;
+        assert_eq!(reviewer, Tier::Cloud);
+
+        // Worker on Cloud: the next preferred *available* vendor is Groq
+        // (DeepSeek is not configured in this deployment).
+        let (reviewer, _) = pick_reviewer_tier_on(&router, Tier::Cloud).await;
+        assert_eq!(reviewer, Tier::Groq);
+    }
 
     #[test]
     fn extracts_first_json_object_with_wrapping_text() {
@@ -946,6 +1145,7 @@ after
                 max_revisions: 1,
                 write_artifacts: true,
             },
+            council: None,
             goal: "goal".to_string(),
             mode: "local".to_string(),
             status: "approved".to_string(),
@@ -1025,6 +1225,7 @@ after
                         max_revisions: 1,
                         write_artifacts: false,
                     },
+                    council: None,
                     goal: format!("goal-{idx}"),
                     mode: "local".to_string(),
                     status: "approved".to_string(),
