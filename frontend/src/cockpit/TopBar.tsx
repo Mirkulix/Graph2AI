@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Shield, ChevronDown } from 'lucide-react';
 import { api, type BusStats, type KnowledgeHealth } from '../lib/api';
 
@@ -12,6 +12,7 @@ export default function TopBar({ online, onProfileClick, profileOpen }: Props) {
   const [stats, setStats] = useState<BusStats | null>(null);
   const [health, setHealth] = useState<KnowledgeHealth | null>(null);
   const [me, setMe] = useState<{ label: string; role: string } | null>(null);
+  const [llmStatus, setLlmStatus] = useState<{ id: string; online: boolean; latency?: number; testing: boolean } | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -30,6 +31,22 @@ export default function TopBar({ online, onProfileClick, profileOpen }: Props) {
     const t = setInterval(load, 5000);
     return () => { alive = false; clearInterval(t); };
   }, []);
+
+  // The primary enabled LLM provider's live connection status. Tested once on
+  // mount and on click (every test is a real model call — never poll it).
+  const checkLlm = useCallback(() => {
+    setLlmStatus((current) => (current ? { ...current, testing: true } : current));
+    api.providers()
+      .then((providers) => {
+        const enabled = (providers ?? []).find((p) => p.enabled);
+        if (!enabled) { setLlmStatus(null); return; }
+        return api.providerTest(enabled.id)
+          .then((result) => setLlmStatus({ id: enabled.id, online: result.success, latency: result.latency_ms, testing: false }))
+          .catch(() => setLlmStatus({ id: enabled.id, online: false, testing: false }));
+      })
+      .catch(() => { /* not authenticated or no providers */ });
+  }, []);
+  useEffect(() => { void checkLlm(); }, [checkLlm]);
 
   return (
     <header style={topbarStyle}>
@@ -58,6 +75,19 @@ export default function TopBar({ online, onProfileClick, profileOpen }: Props) {
             label={`${health.load_bearing} reliable${health.divergences > 0 ? ` · ${health.divergences} divergent` : ''}`}
             mono
           />
+        )}
+        {llmStatus && (
+          <button
+            onClick={() => void checkLlm()}
+            title={`${llmStatus.id} connection — click to re-test`}
+            style={llmPillButton}
+          >
+            <Pill
+              dot={llmStatus.testing ? 'var(--ink-faint)' : (llmStatus.online ? 'var(--verified)' : 'var(--alert)')}
+              label={llmStatus.testing ? `${llmStatus.id} · testing…` : `${llmStatus.id} · ${llmStatus.online ? `online${llmStatus.latency != null ? ` ${llmStatus.latency}ms` : ''}` : 'offline'}`}
+              mono
+            />
+          </button>
         )}
       </div>
 
@@ -153,4 +183,12 @@ const profileBtnStyle: React.CSSProperties = {
   cursor: 'pointer',
   transition: 'all 120ms',
   flexShrink: 0,
+};
+
+const llmPillButton: React.CSSProperties = {
+  display: 'inline-flex',
+  background: 'transparent',
+  border: 0,
+  padding: 0,
+  cursor: 'pointer',
 };
