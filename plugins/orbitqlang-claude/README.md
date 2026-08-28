@@ -1,19 +1,46 @@
 # OrbitQLang für Claude Code
 
-Dieses Plugin verbindet Claude Code mit dem lokalen OrbitQLang-QO-Control-Plane.
-Es stellt drei QO-MCP-Werkzeuge bereit: Recherche, asynchrone Ziel-Orchestrierung
-und einen eingeschränkten Workspace-Lesezugriff.
+Dieses Plugin verbindet Claude Code mit dem lokalen OrbitQLang-QO-Control-Plane
+und stellt **20 MCP-Werkzeuge** bereit: den Wissensgraphen (17 `orbit_graph_*`
+Tools: Kontext, Vorschlag, Verifikation gegen Quellcode, Belege, Divergenzen,
+Health), Recherche, Ziel-Orchestrierung und einen eingeschränkten
+Workspace-Lesezugriff.
+
+## Schnellstart (lokal, eine Maschine)
+
+1. **Server starten** — `start-cockpit.cmd` im Repository-Stamm. Baut beim
+   ersten Mal selbst und öffnet das Cockpit als eigenes Fenster.
+2. **Prüfen, dass es läuft:**
+
+   ```powershell
+   .\scripts\verify-install.ps1
+   ```
+
+   Sechs Checks vom Handshake bis zum echten Tool-Aufruf. Bei einem Fehler
+   nennt die Ausgabe den Fix, nicht nur das Problem. Startet selbst einen
+   Server, falls keiner läuft, und beendet nur den selbst gestarteten.
+3. **Claude Code neu starten**, damit das Plugin greift.
+
+## Warum kein Token nötig ist
+
+`start-cockpit.cmd` setzt `QO_LOCAL_MODE=1`. Damit gilt: Ein Aufruf **von
+dieser Maschine** ist der Operator und braucht kein Token — und der Server
+bindet ausschließlich auf `127.0.0.1`, ist also aus dem Netz nicht erreichbar.
+
+Das löst ein konkretes Problem: Sobald in `.qlang/api_keys.json` auch nur ein
+Seat ausgestellt ist, verlangte vorher **jede** Route ein Token. Ein lokal
+installierter MCP-Client bekam dann `401` — was Claude Code als
+`JSON Parse error: Unrecognized token ' '` meldet, weil die leere Antwort kein
+JSON ist. Die Fehlermeldung zeigt nicht auf die Ursache.
+
+Für eine Instanz im Netz: `QO_LOCAL_MODE` weglassen und `QO_AUTH_TOKEN` oder
+einen ausgestellten Seat verwenden. Beide Wege funktionieren unverändert.
 
 ## Voraussetzungen
 
 - Claude Code ist installiert und angemeldet.
-- QO ist aus diesem Repository gebaut und kann lokal auf Port `4646` laufen.
-- Für Tool-Aufrufe muss QO separat gestartet werden. Das Plugin startet keinen
-  Server selbst:
-
-  ```powershell
-  cargo run --bin qo -- --offline
-  ```
+- QO ist aus diesem Repository gebaut (`start-cockpit.cmd` erledigt das).
+- QO läuft auf Port `4646` — darauf zeigt die `.mcp.json` des Plugins.
 
 ## Lokal installieren
 

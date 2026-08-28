@@ -174,7 +174,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // to loopback. Either a token or at least one issued API key counts as a
     // way to authenticate.
     let has_seats = !state.api_keys.read().await.keys.is_empty();
-    let bind_host = if has_auth_token || has_seats {
+
+    // Local mode trades the token requirement for a hard network boundary: a
+    // caller on this machine is treated as the operator, so the instance MUST
+    // NOT be reachable from the network. This is the enforcement half of the
+    // check in `auth::auth_middleware` — without it, "came from loopback"
+    // would be a claim rather than a fact.
+    let local_mode = std::env::var("QO_LOCAL_MODE")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+
+    let bind_host = if local_mode {
+        tracing::info!(
+            "QO_LOCAL_MODE is on: clients on this machine authenticate as admin \
+             without a token, so the server binds to 127.0.0.1 only. Unset it \
+             (and use QO_AUTH_TOKEN or an issued seat) to accept remote clients."
+        );
+        "127.0.0.1"
+    } else if has_auth_token || has_seats {
         "0.0.0.0"
     } else {
         tracing::warn!(

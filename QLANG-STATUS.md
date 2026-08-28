@@ -248,6 +248,61 @@ The repository is currently focused on the OrbitQLang control-plane path:
   model it is reference data, not instructions, and must not steer tool calls.
   This is a deterministic mitigation for prompt injection, not a proof — an LLM
   may still follow injected text.
+- **Single-machine local mode (first-run experience)**: `QO_LOCAL_MODE=1` lets
+  a caller on loopback authenticate as the operator without a token, and
+  `main.rs` binds such an instance to `127.0.0.1` only — the enforcement half,
+  without which "came from loopback" would be a claim rather than a fact
+  (verified: the process listens on `127.0.0.1:<port>`, never `0.0.0.0`).
+  It closes a real first-run trap: issuing even one seat in
+  `.qlang/api_keys.json` previously made **every** route token-only, so a
+  locally installed MCP client got `401` — which Claude Code surfaces as
+  `JSON Parse error: Unrecognized token ' '`, because an empty body is not
+  JSON. The error named neither the cause nor the fix. `start-cockpit.cmd`
+  sets the flag, so a local install works with no token handling at all;
+  network instances are unchanged (`QO_AUTH_TOKEN` or an issued seat).
+  Fail-closed by construction: a request with no peer address is *not* treated
+  as local, and the flag is off unless explicitly set (4 unit tests).
+- **Install self-check**: `scripts/verify-install.ps1` proves a local install
+  works — server up, unauthenticated MCP handshake, `tools/list`, a real
+  (read-only) tool call, the harness registry recording that call, and the
+  plugin's configured port matching. It starts a server if none is running and
+  stops only the one it started. Each failure prints the fix, not just the
+  symptom. Verified against the real repo state (seats present, no token):
+  **6/6 passed, exit 0**.
+- **Harness integration surface**: `qo-server::routes::harness` records which
+  *coding systems* drive this control plane — Claude Code, Codex, Gemini,
+  deepseek-harness — as distinct from `providers` (models QO calls outward).
+  The registry is fed passively from the MCP `initialize` handshake and from
+  every `tools/call`, so the cockpit shows attachments that actually happened
+  rather than declared configuration; `clientInfo` was previously parsed and
+  discarded. An unrecognised client is recorded as `Other` **under its own
+  reported name**, never dropped — that is the extension path: an extended
+  `deepseek-harness` or an in-house runner appears with no code change, and
+  `classify` matches `deepseek…harness` before the bare provider name so a
+  fork named `deepseek-harness-v2` stays a harness. In-memory and bounded
+  (64 sessions, 15-min TTL); a restart must not resurrect a detached agent.
+  Exposed as `GET /api/harness`; the cockpit's **Integrations** view is the
+  new first entry in the secondary nav and carries copy-paste attach snippets.
+  9 unit tests. Verified end to end against a live instance: five clients
+  handshook and called tools → all four known kinds reported `attached`,
+  `deepseek-harness-v2` classified as `deepseek_harness`, the unknown
+  `acme-inhouse-runner` kept its own label, and per-session call counts and
+  de-duplicated recent tools rendered in the UI.
+- **Native desktop shell**: `qo-desktop` (`src/desktop.rs`) runs the cockpit as
+  an app window instead of a browser tab — own taskbar entry, no tab strip or
+  omnibox, and its own WebView2 profile so cockpit storage is not shared with
+  the operator's browsing. It supervises `qo` as a child process: it polls
+  `/api/health` before opening the window (a crashed child is reported rather
+  than waited out), reuses an instance that is already listening instead of
+  fighting over the port or the redb file, and stops on window close with a
+  grace period so redb can flush. Not Tauri: that links WebView2 through MSVC,
+  which is not installed here, so the launcher drives the already-present
+  WebView2/Edge runtime through `--app=` and depends on nothing beyond `std`.
+  Verified end to end on port 4848: server start → ready → window renders the
+  cockpit (HTTP 200, `OrbitQO Cockpit`) → close → server stopped, no orphaned
+  process and the port released (5 unit tests, 0 clippy warnings).
+  Entry points: `start-cockpit.cmd` (builds on first run) and a Desktop
+  shortcut.
 - Frontend production build currently passes via `cd frontend && npm run build`.
 - All non-deterministic ML training and evolution loops have been purged.
 
@@ -275,7 +330,12 @@ Consolidated answer to "is it a finished product and how is it used":
   not migrate in place).
 - Multi-tenancy (one graph per instance today) and a product-focus decision.
 - Release-profile build on Windows-GNU needs a complete mingw-w64 toolchain
-  (`dlltool`), absent in minimal sandboxes.
+  (`dlltool`), absent in minimal sandboxes. On a machine that has mingw-w64
+  installed but not on `PATH`, this presents as
+  `error calling dlltool 'dlltool.exe': program not found` — prepending
+  `%USERPROFILE%\mingw64\bin` fixes it, which `start-cockpit.cmd` does
+  automatically. Verified: `cargo build --release --bin qo --bin qo-desktop
+  --no-default-features` completes in ~1m43s with binutils 2.42 / gcc 14.2.
 
 **Owner decisions pending**: push to GitHub (`git push origin NewWayLLMHandling`
 — credentials live in the operator's environment, not the sandbox), cut the
