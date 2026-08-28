@@ -74,6 +74,16 @@ path = "src/main.rs"
 name = "qlang"
 path = "src/cli.rs"
 
+# Native desktop shell: supervises `qo` and hosts the cockpit in an app window.
+# Deliberately depends on nothing beyond std so it builds on the gnu toolchain
+# without MSVC (see the module docs for why this is not Tauri).
+[[bin]]
+name = "qo-desktop"
+path = "src/desktop.rs"
+
+[dev-dependencies]
+tempfile = "3"
+
 [features]
 default = ["llvm"]
 llvm = ["inkwell", "qlang-compile/llvm"]
