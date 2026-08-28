@@ -70,6 +70,11 @@ pub struct AppState {
     /// QLANG Message Bus — routes GraphMessages between AI agents.
     pub message_bus: Arc<MessageBus>,
 
+    /// Which external coding systems (Claude Code, Codex, Gemini,
+    /// deepseek-harness, …) are attached to this control plane. Fed passively
+    /// from the MCP handshake and tool calls — see [`routes::harness`].
+    pub harnesses: routes::harness::HarnessRegistry,
+
     pub obsidian: ObsidianBridge,
     pub agents: Mutex<AgentRegistry>,
     pub supervisor_daemon: Mutex<routes::supervisor::SupervisorDaemonState>,
@@ -349,6 +354,7 @@ pub async fn build_app(
         workspace_root: config.workspace_root,
         backup_dir: config.data_dir.join("backups"),
         llm_routing: config.llm_routing,
+        harnesses: routes::harness::HarnessRegistry::new(),
         obsidian,
         agents: Mutex::new(agents_reg),
         configured_providers: Mutex::new(configured_providers),
@@ -912,6 +918,9 @@ pub async fn build_app(
         .route("/api/workspace/tree", get(routes::workspace::tree))
         .route("/api/workspace/file", get(routes::workspace::read_file))
         .route("/api/presence", get(routes::presence::list))
+        // Which coding systems are attached to this control plane. Read-only:
+        // the registry is fed by MCP traffic, never by a client asserting it.
+        .route("/api/harness", get(routes::harness::list_harnesses))
         .route("/api/neo/hardware", get(routes::neo::hardware))
         .route("/api/neo/memory", get(routes::neo::memory))
         .route("/api/neo/status", get(routes::neo::status))

@@ -70,6 +70,34 @@ fn tool_definitions() -> Value {
     Value::Array(tools)
 }
 
+/// How many tools a harness gains by attaching. Derived from the same
+/// definitions `tools/list` returns, so the cockpit can never advertise a
+/// count that drifts from what is actually exposed.
+pub fn tool_count() -> usize {
+    match tool_definitions() {
+        Value::Array(tools) => tools.len(),
+        _ => 0,
+    }
+}
+
+/// Extract `clientInfo.name` / `.version` from an MCP `initialize` payload.
+///
+/// Returns `None` when the client sends no name — the spec makes `clientInfo`
+/// required, but a lenient server must not fabricate an identity for a client
+/// that omits it.
+fn client_info(params: &Value) -> Option<(String, Option<String>)> {
+    let info = params.get("clientInfo")?;
+    let name = info.get("name")?.as_str()?.trim();
+    if name.is_empty() {
+        return None;
+    }
+    let version = info
+        .get("version")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    Some((name.to_string(), version))
+}
+
 #[derive(Deserialize)]
 pub struct RpcRequest {
     #[allow(dead_code)]
@@ -250,12 +278,43 @@ pub async fn handle_rpc(
     let id = req.id.clone();
 
     let response = match req.method.as_str() {
-        "initialize" => ok(id, server_info()),
+        "initialize" => {
+            // The handshake is the only place a client names itself. Capturing
+            // it here is what makes an attached harness visible in the cockpit.
+            if let Some((name, version)) = client_info(&req.params) {
+                state.harnesses.record_handshake(&name, version);
+            }
+            ok(id, server_info())
+        }
         "tools/list" => ok(id, json!({ "tools": tool_definitions() })),
-        "tools/call" => match handle_tools_call(state, &principal, req.params).await {
-            Ok(result) => ok(id, result),
-            Err((code, msg)) => err(id, code, msg),
-        },
+        "tools/call" => {
+            // Attribute the call before `state` moves into the handler. A
+            // client that never sent `initialize` may still identify itself
+            // per-call via `_meta.client`; without either it stays anonymous
+            // rather than being attributed to the wrong harness.
+            let tool = req
+                .params
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let caller = client_info(&req.params)
+                .map(|(name, _)| name)
+                .or_else(|| {
+                    req.params
+                        .get("_meta")
+                        .and_then(|m| m.get("client"))
+                        .and_then(|c| c.as_str())
+                        .map(|s| s.to_string())
+                });
+            if let Some(name) = caller {
+                state.harnesses.record_call(&name, &tool);
+            }
+            match handle_tools_call(state, &principal, req.params).await {
+                Ok(result) => ok(id, result),
+                Err((code, msg)) => err(id, code, msg),
+            }
+        }
         other => err(id, -32601, format!("Method not found: {}", other)),
     };
 

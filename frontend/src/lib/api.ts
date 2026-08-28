@@ -69,6 +69,35 @@ export interface ProviderConfig {
   source?: string;                           // 'env' or 'config'
 }
 
+/// One coding system attached to the control plane, as /api/harness reports it.
+export interface HarnessSession {
+  id: string;
+  kind: 'claude_code' | 'codex' | 'gemini' | 'deepseek_harness' | 'other';
+  /// Product name for a recognised system; the client's own reported name
+  /// for an unrecognised one, so it stays identifiable.
+  label: string;
+  version?: string;
+  connected_at: number;
+  last_seen_at: number;
+  calls: number;
+  recent_tools: string[];
+  online: boolean;
+}
+
+export interface HarnessKnownKind {
+  kind: HarnessSession['kind'];
+  label: string;
+  attached: boolean;
+}
+
+export interface HarnessOverview {
+  sessions: HarnessSession[];
+  online: number;
+  mcp_endpoint: string;
+  tools: number;
+  known_kinds: HarnessKnownKind[];
+}
+
 export interface PresenceEntry {
   identity: string;
   ide_name?: string;
@@ -699,6 +728,10 @@ export const api = {
   // Werte (5 values)
   values:          () => get<Record<string, number>>('/api/values'),
   valuesPost:      (patch: Record<string, number>) => post<Record<string, number>>('/api/values', patch),
+
+  // Attached coding systems (Claude Code, Codex, Gemini, deepseek-harnessâ€¦).
+  // Read-only: the registry is fed by MCP traffic, never by the client.
+  harnesses:       () => get<HarnessOverview>('/api/harness'),
 
   // Presence (online IDE clients)
   presence:        () => get<PresenceEntry[]>('/api/presence'),

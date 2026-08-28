@@ -5,6 +5,7 @@ import AgentsPane from './cockpit/AgentsPane';
 import ConversationPane from './cockpit/ConversationPane';
 import DetailPane, { type DetailContext } from './cockpit/DetailPane';
 import ProfileMenu, { type SecondaryView } from './cockpit/ProfileMenu';
+import IntegrationsView from './cockpit/secondary/IntegrationsView';
 import HardwareView from './cockpit/secondary/HardwareView';
 import KnowledgeView from './cockpit/secondary/KnowledgeView';
 import MultiAgentRunsView from './cockpit/secondary/MultiAgentRunsView';
@@ -232,6 +233,7 @@ export default function App() {
 function readSecondaryFromUrl(): SecondaryView | null {
   const raw = new URLSearchParams(window.location.search).get('secondary');
   switch (raw) {
+    case 'integrations':
     case 'providers':
     case 'hardware':
     case 'knowledge3d':
@@ -272,6 +274,7 @@ function SecondaryHost({ view, onBack }: { view: SecondaryView; onBack: () => vo
         <span className="eyebrow" style={{ marginLeft: 8 }}>secondary view · {view}</span>
       </div>
       <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+        {view === 'integrations'    && <IntegrationsView />}
         {view === 'hardware'        && <HardwareView />}
         {view === 'knowledge3d'     && <KnowledgeView />}
         {view === 'multi-agent'     && <MultiAgentRunsView />}

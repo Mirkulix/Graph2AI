@@ -4,6 +4,7 @@ pub mod consensus;
 
 pub mod goals;
 pub mod graphs;
+pub mod harness;
 pub mod health;
 pub mod history;
 pub mod memory;

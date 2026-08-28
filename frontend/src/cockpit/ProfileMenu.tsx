@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react';
-import { Bot, Cable, Compass, Cpu, GitBranch, Network, Settings as SettingsIcon } from 'lucide-react';
+import { Bot, Cable, Compass, Cpu, GitBranch, Network, Plug, Settings as SettingsIcon } from 'lucide-react';
 
 export type SecondaryView =
+  | 'integrations'
   | 'providers'
   | 'hardware'
   | 'knowledge3d'
@@ -18,6 +19,10 @@ interface Item {
 }
 
 const ITEMS: Item[] = [
+  // First: the question the cockpit exists to answer — which coding system
+  // is actually driving this graph. Providers (models QO calls outward) is a
+  // different question and stays below it.
+  { id: 'integrations',    label: 'Integrations',    hint: 'Claude Code · Codex · Gemini · deepseek-harness',  icon: Plug },
   { id: 'providers',       label: 'Providers',       hint: 'configure LLMs (DeepSeek, Claude, OpenAI…)',      icon: Cable },
   { id: 'hardware',        label: 'Hardware',        hint: 'CPU · GPU · memory',                              icon: Cpu },
   { id: 'knowledge3d',     label: 'Knowledge',       hint: 'conversation ledger · timeline · drill-down',     icon: Compass },
